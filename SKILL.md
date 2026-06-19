@@ -142,6 +142,48 @@ Then LOOP (hands-off): ack your post, re-arm the watcher in the background
   act on each new orchestrator message, stop only on STATUS: released.
 ```
 
+## Spinning up a NEW orchestrator (a second group) — the orchestrator-bootstrap prompt
+
+Sometimes a *distinct* workstream deserves its own orchestrator + lanes rather than another lane in the current group
+— a separate project, a parallel initiative the current group shouldn't be entangled with, or work the human wants
+tracked + watched on its own. That's a SECOND orchestrator (`o2`, `o3`, …) running concurrently with the first (see
+*Naming sessions + mailboxes*).
+
+You don't start it by hand-running an orchestrator. You **write a self-contained orchestrator-bootstrap prompt and
+hand it to the human to paste into ONE fresh session** (then `/rename o<N>: <subject>`). **An orchestrator is an
+*interactive* session** — it must stay responsive to watch mailboxes + gate merges — **so only its WORKERS are
+headless, never the orchestrator itself.** One human paste births the orchestrator; that orchestrator then self-
+launches its own headless workers (HYBRID mode). This is the orchestrator analog of the *Worker-prompt template*
+above. Fill every field:
+
+```
+You are o<N>, the orchestrator for a NEW workstream: <one-line goal>. Title this session "o<N>: <subject>".
+
+FIRST, read your operating manual + context:
+1. Invoke the `orchestrating-parallel-sessions` skill — it governs how you run (disjoint lanes; append-only
+   mailboxes + the inference-free watch_mailbox.py; HYBRID self-launch of workers headless via `claude -p`;
+   o<N>/o<N>L<m> naming; ASK before releasing a lane; the viewable-doc mandate).
+2. Read <the specific memory notes / docs / repos carrying THIS workstream's context>.
+3. Orient on the codebase if relevant (codesight summary / read the key files).
+
+GOAL + SCOPE: <what this orchestrator owns; in / out of scope; research/planning vs build>.
+REPOS/ACCESS: <repos + the MCPs/CLIs/tokens/paths the lanes will need>.
+LAUNCH MODE: HYBRID by default (self-launch workers headless; the human watches the mailbox .md files) unless the
+   human prefers manual. Begin launching immediately; don't pause to ask which mode unless genuinely unsure.
+
+SET UP a NON-dotted mailbox dir <…/workstream-name/mailboxes/> (non-dotted so it shows in the human's sidebar),
+copy watch_mailbox.py + PROTOCOL-template.md from the skill, seed each lane's MSG 1, then launch these disjoint lanes:
+- o<N>L1 — <deliverable + its OWN files/scope + how to verify + the VIEWABLE URL/path where the human SEES it>.
+- o<N>L2 — <…>.   (as many as the disjoint decomposition needs)
+
+Gate each lane (re-verify its output), keep mailboxes current, surface every viewable doc URL/path, ASK before
+releasing a lane, and DON'T do heavy work yourself — delegate to the lanes and stay responsive.
+```
+
+Hand it to the human with explicit routing: **"→ paste into a NEW session, then `/rename o<N>: <subject>`."** The new
+orchestrator shares the coordination dir with peers collision-free because every id carries its group prefix
+(`o2L*` mailboxes, watcher `--role o2`).
+
 ## Variations used in practice
 
 These extend the core model; reach for them as the work calls for it.
