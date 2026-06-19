@@ -1,0 +1,5 @@
+# orchestrating-parallel-sessions
+
+A Claude Code skill for running multiple Claude Code sessions in parallel on one or more codebases without them colliding, duplicating work, or stalling on a human relaying messages between them. One responsive **orchestrator** session decomposes work into disjoint, area-scoped lanes, hands each to a **worker** session, holds the live lane-map, and gates every merge — while an inference-free file **watcher** (`scripts/watch_mailbox.py`, Python stdlib only) and per-lane **mailboxes** carry the back-and-forth hands-off.
+
+**Install as a Claude Code skill:** drop this directory into your skills path (`~/.claude/skills/orchestrating-parallel-sessions/`, or a plugin's `skills/` dir), keeping `SKILL.md` and the `scripts/` subdir together. Claude Code auto-discovers it; invoke it whenever you're coordinating parallel sessions. `scripts/PROTOCOL-template.md` and `scripts/watch_mailbox.py` are copied next to a `mailboxes/` directory at runtime to wire up the hands-off relay.
