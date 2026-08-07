@@ -25,7 +25,7 @@ into this skill. Ask once, record, and stop asking:
 | what | why it matters | where it lives |
 |---|---|---|
 | **What do I call you?** | the plate heading and every "needs your ruling" line are addressed to a name | their config / a `.orchdoc-me`-style file |
-| **Launch mode: manual or hybrid?** | manual = you paste each worker prompt; hybrid = the orchestrator self-launches headless workers and you watch the mailbox | **their standing choice**, recorded once |
+| **Launch mode: manual or hybrid?** | manual = they paste every worker prompt (direct control, but it clutters the session list and bottlenecks on them); hybrid = the orchestrator launches workers itself and collates their reports. **Lanes reach the hundreds** — see *Launching workers* before answering | **their standing choice**, recorded once |
 | **Where do decision docs live?** | so every orchestrator writes to the same place and can read each other's | a path in their config |
 | **Which repos / areas are in scope?** | lanes are scoped by area; without a map there is nothing to make disjoint | the lane map |
 | **One project, or several?** | *optional* — capture it if you already know; if not, start with one and let the boundaries show themselves | — |
@@ -268,11 +268,29 @@ A reusable watcher + protocol template ship with this skill: copy `scripts/watch
 Two modes, and **the human picks once**:
 
 - **MANUAL** — the orchestrator writes each worker prompt and the human pastes it into a fresh
-  session. Best when they want live eyes on each worker, the work needs interactive judgment,
-  or only they can supply something (a credential, an approval, their voice).
-- **HYBRID** — the orchestrator self-launches headless workers and the human watches the lane
-  mailbox. Best when the work is well-specified and they would rather review results than
-  births.
+  session.
+  - They get **more direct control** and can talk to the lane worker themselves. The
+    orchestrator can still talk to it too, so this adds a channel rather than replacing one.
+  - ⚠️ **Large numbers clutter the session list** over time, and the list is how they find
+    anything.
+  - ⚠️ **It bottlenecks on them.** Every lane waits on a human paste, so the fleet launches at
+    the speed of one person's attention.
+- **HYBRID** — the orchestrator self-launches headless workers.
+  - The human **watches the lane mailbox if they want to track it directly**. Otherwise the
+    worker reports to the orchestrator, and **the orchestrator collates and reports to them**.
+  - Questions go **through the orchestrator**: they ask it, it passes the question to the
+    worker, and the answer comes back the same way.
+  - ⭐ **Much faster — the orchestrator launches every worker instantly, with no human step in
+    the loop.**
+
+⭐ **To decide, know the scale: lanes routinely number into the HUNDREDS, and can reach four
+digits.** That is the fact the choice actually turns on, and a reader has no way to guess it.
+At five lanes, manual is a mild inconvenience. At four hundred it is not a mode anyone would
+pick — the session list becomes unnavigable and the copy-and-paste alone is hours.
+
+**So the useful question is not "which mode do I prefer?" but "which specific lanes do I need to
+touch myself?"** Be judicious: pick the handful where direct interaction genuinely earns its
+cost, and let the rest run headless and report up.
 
 ⛔ **DO NOT ASK WHICH, EVERY TASK.** Read it:
 
