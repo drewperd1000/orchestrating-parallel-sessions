@@ -13,7 +13,7 @@ expensive, undefined, and its omission is invisible at the moment it happens.
 So this is not a reminder and not a document. It is a GATE plus a GENERATOR:
 
   - GATE      `check` exits NON-ZERO on any violated invariant. It does not advise.
-  - GENERATOR `plate` rewrites the human-facing index FROM the entries, so the index can
+  - GENERATOR `plate` rewrites the the human-facing index FROM the entries, so the index can
               never disagree with them. A hand-maintained index is a second copy of the
               truth, and the second copy is always the one that rots.
 
@@ -100,15 +100,28 @@ def _find_workspace():
         if hit:
             return hit
 
-    # No marker found anywhere above: fall back to the current directory rather than a
-    # path from some other machine. (The private build keeps a historical default here;
-    # a published copy must not carry one author's directory layout.)
+    # Historical default, and it is now GATED ON CWD. It used to apply from anywhere, so
+    # running the tool from an unrelated scratch directory silently resolved to this
+    # workspace - and `scaffold --doc o1` / `add --doc o1` then migrated and wrote into a
+    # LIVE OrchDoc that was never the target. That happened twice while testing, cost two
+    # surgical recoveries, and the second one nearly destroyed another orchestrator's
+    # uncommitted work.
+    #
+    # ⭐ A fallback that fires when discovery FAILS is a convenience. A fallback that
+    # redirects a WRITE to an unrelated real directory is a hazard, because the caller
+    # believes they are working somewhere else. Only honour it from inside its own tree.
+    legacy = Path(r"<your-workspace>")
+    try:
+        if legacy.is_dir() and Path.cwd().resolve().is_relative_to(legacy.resolve()):
+            return legacy
+    except (AttributeError, OSError):
+        pass
     return Path.cwd()
 
 
 PROJECTS = _find_workspace()
 # The ref that IS the truth. Overridable, because "origin/main" is an assumption, not a
-# fact: a repo whose default branch is `master` (some repos, as it
+# fact: a repo whose default branch is `master` (this tool's own published repo, as it
 # happens) gets wrong answers from every freshness and verify oracle, and it was the
 # condition that made touches_since crash. Auto-detect the remote HEAD, then fall back.
 def _canonical_ref():
@@ -131,16 +144,15 @@ CANONICAL_REF = _canonical_ref()
 # Every repo an OrchDoc legitimately cites. A SHA is only "dead" if NO repo has it.
 #
 # This list is load-bearing. The first version of this checker resolved SHAs against
-# the primary repo alone and reported 54 dead pointers; all of the ones sampled resolved
+# the primary workspace alone and reported 54 dead pointers; all of the ones sampled resolved
 # fine in a sibling repo, because orchestrators routinely cite cross-repo commits
-# ("a-sibling-repo b516cc2"). A checker that cries wolf is worse than no checker -
+# ("<private-repo> b516cc2"). A checker that cries wolf is worse than no checker -
 # it teaches everyone to ignore it, which is how the previous mechanism died.
 # Repos that live outside the workspace tree and cannot be discovered by walking it.
-# Set ORCHDOC_EXTERNAL_REPOS to a path-separator-delimited list of repos that live
-# outside the workspace tree but are legitimately cited by OrchDocs. Empty by default:
-# a published tool must not ship one author's directory layout.
-_EXTERNAL_REPOS = [Path(p) for p in
-                   os.environ.get("ORCHDOC_EXTERNAL_REPOS", "").split(os.pathsep) if p]
+_EXTERNAL_REPOS = [
+    Path(r"~/.claude/plugins/marketplaces/<your-marketplace>"),
+    Path(r"~/.claude/projects/<project>/memory"),
+]
 
 
 def citable_repos():
@@ -190,13 +202,37 @@ ID_RE = re.compile(r"^([A-Z]{1,3}(?:\d+[a-z]?|-[A-Z][A-Z0-9]*\d*))\b")
 # ' - ' separator, captured 'OPEN -', and silently dropped an entry from the generated
 # index, which is the worst failure this tool can have.
 STATUS_RE = re.compile(
-    r"(?:^|[\s·|*-])\*{0,2}status\*{0,2}\s*:\s*\*{0,2}\s*([A-Za-z][A-Za-z_]*)",
+    # The label must be Status ITSELF, not the tail of another word. "**CONTENT STATUS:**
+    # all three drafted" harvested "ALL" - a value outside the vocabulary, so the entry
+    # silently vanished from every generated view while reading perfectly to a human
+    # (o8, DA17). A preceding WORD disqualifies the match; a bullet or line start does not.
+    r"(?:^|[·|*-]|(?<![A-Za-z])\s)\*{0,2}status\*{0,2}\s*:\s*\*{0,2}\s*"
+    r"([A-Za-z][A-Za-z_]*)",
     re.IGNORECASE | re.MULTILINE)
 
 # What a refusal must TELL the author. A check that refuses without naming the shape it
 # wants makes the author reverse-engineer the parser, which is the same defect it is
 # meant to catch.
-STATUS_CANONICAL = "**Status:** OPEN - **Owner:** <who> - **Opened:** YYYY-MM-DD"
+
+# "line 3" after a filename means line 3 OF THAT FILE, not of this OrchDoc - so a citation that
+# names another artifact must not be measured against this doc's length. o2 found W-BADLINEREF
+# firing on `| R2a | zero-shot, C line 1 |`, an accurate citation into a different document.
+#
+# The extension list is universal. The rest is NOT. A slug like `widget-` or `chapter B` is ONE
+# workspace's artifact naming, and compiling it in means every other workspace inherits a check that is
+# blind to its own artifacts while sounding just as confident - o2's cry-wolf failure, shipped
+# pre-installed instead of discovered. The publish guard is what surfaced this: a term that
+# cannot be published is usually a term that should not have been hardcoded.
+#
+# Default covers files only, which is the part that is true everywhere. Set
+# $ORCHDOC_ARTIFACT_RE to add your own naming.
+ARTIFACT_RE = re.compile(
+    r"\.(?:ts|tsx|js|jsx|py|md|json|ya?ml|astro|sh|ps1|txt|rs|go|java|rb)\b"
+    + (("|" + os.environ["ORCHDOC_ARTIFACT_RE"]) if os.environ.get("ORCHDOC_ARTIFACT_RE")
+       else ""),
+    re.I)
+
+STATUS_CANONICAL = "**Status:** OPEN - **Owner:** the human - **Opened:** YYYY-MM-DD"
 
 # ---- WHAT A TIMESTAMP CAN HONESTLY WITNESS ----
 #
@@ -266,7 +302,7 @@ def status_of(body):
 # the new measurement to the old conclusion.
 DEPENDS_RE = re.compile(r"^\s*\*\*Depends:\*\*\s*(.+)$", re.MULTILINE | re.IGNORECASE)
 # Lenient like STATUS_RE, and for the same reason: `Reviewed:` sits naturally INLINE
-# with the other fields ("**Status:** OPEN - **Owner:** <who> - **Reviewed:** 2026-08-01").
+# with the other fields ("**Status:** OPEN - **Owner:** the human - **Reviewed:** 2026-08-01").
 # An anchored ^ pattern silently read that as "never reviewed" - the machine shape
 # diverging from the human shape, which is the defect o6 caught in the status field.
 REVIEWED_RE = re.compile(
@@ -492,8 +528,23 @@ SELF_CLAIM_PATTERNS = [
 # makes a claim about itself ("## THE EXIT - BUILT and RUN" - a claim, drifts). o8's
 # case had already gone stale once and been corrected, and was about to go stale again.
 HEADING_STATE_RE = re.compile(
-    r"\b(BUILT|RUNNING|SHIPPED|COMPLETED?|RESOLVED|LIVE|FIXED|MERGED|VERIFIED|PASSING|"
+    # LIVE removed (o1, 2026-08-07). It fired on "## LINKS AND DOCS - 🌐 LIVE URLS", where
+    # LIVE NAMES the thing - those ARE the production URLs, and that word cannot drift.
+    # ⭐ o1's distinction: a state ADJECTIVE in a heading usually names something; what rots
+    # is a dated verification RESULT or a COUNT. The finding on that line was TRUE but on
+    # the WRONG TOKEN - the drifting claim was "(all verified HTTP 200, 2026-07-30)",
+    # 8 days stale and invisible because headings do not read as claims.
+    r"\b(BUILT|RUNNING|SHIPPED|COMPLETED?|RESOLVED|FIXED|MERGED|VERIFIED|PASSING|"
     r"WORKING|READY|STOPPED|BLOCKED|LANDED|APPLIED|FINISHED|UNBUILT|PENDING)\b")
+
+# A dated verification RESULT inside a heading - the class o1 identified, and the expensive
+# one: it looks like documentation, it IS a measurement, and it expires silently where
+# nobody re-reads. ⛔ Scoping the rule off its state-adjective false positive would have
+# cost this whole class, permanently and quietly - which is the more expensive error than
+# the false positive that prompted it.
+HEADING_DATED_CLAIM_RE = re.compile(
+    r"\b(?:verified|checked|measured|confirmed|tested|audited|re-?audited|as of)\b"
+    r"[^)\n]{0,40}?\d{4}-\d{2}-\d{2}", re.I)
 HEADING_COUNT_RE = re.compile(
     r"\b\d+\s+(open|remaining|left|outstanding|pending|done|items?|entries|decisions?)\b",
     re.I)
@@ -561,8 +612,14 @@ TERMINAL_STATUS = {"RESOLVED", "ANSWERED", "DONE", "SUPERSEDED", "ARCHIVED"}
 # person and fails invisibly for everyone else. Surfaced by asking whether the tool could
 # be published, but it was equally a latent bug for a name CHANGE on this machine.
 _ACTIVE_NAME_RE = re.compile(
-    r"^(?:DECISIONS?|TO-?DOS?|IN FLIGHT|ON [A-Z][\w'-]*'?S? PLATE|ON YOUR PLATE"
-    r"|QUESTIONS?|OPEN)\b", re.I)
+    # Optional possessive lead-in. "YOUR TO-DOs" is the same section as "TO-DOS", but the
+    # anchored pattern rejected it - so `archive` silently ignored every doc writing it
+    # that way, and the handoff check could not see the items inside. o3's D11 lived under
+    # "## 📋 YOUR TO-DOs" and was invisible to both, which is why it survived a
+    # consolidation, a dormancy request, and the first version of the check built to
+    # catch exactly it.
+    r"^(?:YOUR |MY |THE )?(?:DECISIONS?|TO-?DOS?|IN FLIGHT|ON [A-Z][\w'-]*'?S? PLATE"
+    r"|ON YOUR PLATE|QUESTIONS?|OPEN)\b", re.I)
 
 
 # The one place the archive section number is written down. `archive` moves INTO it and
@@ -719,7 +776,14 @@ KIND_SECTION_NUM = {"D": ("2.1", "99.1"), "Q": ("2.2", "99.2"),
 # "-" in "## \u00a7-1 NEGATIVE", so that heading read as \u00a71 and SATISFIED the schema's requirement
 # for section 1 - a malformed section silently standing in for a real one. Emoji and other
 # decoration are still allowed; + and - are not.
-SECTION_RE = re.compile(r"^#{2,3}\s*(?:[^\w\s+-]*\s*)?\u00a7?\s*(\d+(?:\.\d+)?)\b")
+# \u26d4 THE \u00a7 IS REQUIRED. It used to be optional, so ANY heading beginning with a number was
+# read as a section: o1's `### \ud83d\udce6 7-PILLARS RESTRUCTURE` became "section \u00a77", which put the
+# spine out of canonical order and produced a blocking E-SCHEMA on a correctly migrated
+# doc. "3 THINGS TO FIX" or "2026 review" would do the same.
+#
+# \u2b50 A section number is a DELIBERATE MARK, not a number that happens to appear first. An
+# optional sigil means the parser is guessing at intent, and it will guess wrong on prose.
+SECTION_RE = re.compile(r"^#{2,3}\s*(?:[^\w\s+-]*\s*)?\u00a7\s*(\d+(?:\.\d+)?)\b")
 
 # Generated regions. Same contract discipline as the plate: one token, matched
 # structurally, and a malformed marker REFUSES rather than guessing.
@@ -792,7 +856,7 @@ BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
             "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE",
             "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO"}
-ADVISORY = {"W-SHACITE", "W-LINECITE", "W-FAKEBULLETS", "W-INLINEENUM",
+ADVISORY = {"W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
             "W-WALLOFTEXT"}
 
@@ -937,7 +1001,7 @@ KIND_ORDER = [
 ]
 
 
-def build_plate_block(entries):
+def build_plate_block(entries, raw_lines=None):
     """
     Build the generated index. ONE builder, used by `plate` to write it and by `check`
     to detect a hand-edit - so the rendered block and the derivation cannot diverge.
@@ -969,7 +1033,15 @@ def build_plate_block(entries):
         # A "|" ends a markdown table CELL. An entry title containing one
         # silently split the row and corrupted the very view the human reads.
         title = title.replace("|", "\\|")
-        live.append((e["id"], title[:88], own.group(1).strip() if own else "-",
+        # Truncate at a WORD boundary, and say that it was truncated. o8: a cell cut
+        # mid-word ends "...(o5's audit, 2026-0" - and "2026-0" READS AS DATA, not as an
+        # elision. A silent truncation turns a clipped value into a wrong one, which is the
+        # same class as every other well-formed-but-false thing found today, arriving
+        # through the formatter instead of the parser.
+        if len(title) > 88:
+            cut = title[:88].rsplit(" ", 1)[0].rstrip(" ,;:-")
+            title = (cut or title[:88]) + "…"
+        live.append((e["id"], title, own.group(1).strip() if own else "-",
                      gh_anchor(e["title"])))
 
     def kind_of(eid):
@@ -997,7 +1069,44 @@ def build_plate_block(entries):
             block.append("| **[%s](%s)** | %s | %s |" % (eid, anchor, title, owner))
         block.append("")
 
-    if total == 0:
+    # Does an ACTIVE section hold decision-shaped content the parser could not turn into
+    # entries? o1 writes its live decisions as BULLETS under a DECISIONS heading, so the
+    # parser sees none of them - and "0 open" is then a statement about the PARSER, not
+    # about the document. Detect that rather than report it as fact.
+    unread = False
+    seen_ids = {(e["section"], e["id"]) for e in entries}
+    cur_sec, bullets = "", 0
+    for ln in (raw_lines or []):
+        if ln.startswith("## "):
+            if cur_sec and is_active_section(cur_sec) and bullets >= 2 and \
+                    not any(s == cur_sec for s, _ in seen_ids):
+                unread = True
+            cur_sec, bullets = ln, 0
+        elif re.match(r"^\s*[-*]\s+\*\*", ln):
+            bullets += 1
+    if cur_sec and is_active_section(cur_sec) and bullets >= 2 and \
+            not any(s == cur_sec for s, _ in seen_ids):
+        unread = True
+
+    if total == 0 and (not entries or unread):
+        # ⛔ NO PARSEABLE ENTRIES IS NOT "NOTHING OPEN". It is "I could not read this
+        # document", and those must never render the same way.
+        #
+        # The old text said: "Nothing open. This line is generated from the entries, so it
+        # cannot assert a false empty." In a doc whose decisions are written as BULLETS
+        # rather than `### <ID>` entries - which is how o1 writes them - that sentence
+        # CLAIMS TRUSTWORTHINESS AT THE EXACT MOMENT IT IS WRONG. It is the most dangerous
+        # line the tool can emit: a false empty wearing a guarantee that it cannot be one.
+        #
+        # ⭐ Same distinction as E-NOFETCH: "I checked and it is fine" and "I could not
+        # check" are different answers, and collapsing them is worse than having no
+        # answer, because the reader stops looking.
+        block += ["⛔ **CANNOT DETERMINE what is open.** No entry in this doc is in a form",
+                  "this generator can read - an entry needs a `### <ID> - title` heading",
+                  "AND a `**Status:**` field. **This is NOT a claim that nothing is open.**",
+                  "Read the sections below directly until the entries carry those fields.",
+                  ""]
+    elif total == 0:
         block += ["Nothing open. **This line is generated from the entries, so it cannot",
                   "assert a false empty.**", ""]
     # ⛔ SAY WHAT WAS EXCLUDED. The plate now omits orchestrator-owned items, which is
@@ -1201,7 +1310,7 @@ def check_doc(path):
             # first run. A check that fires on the fix is worse than no check.
             done = DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", txt))
 
-            # The human: a DONE sub-item should be struck through, so the not-done ones are
+            # the human: a DONE sub-item should be struck through, so the not-done ones are
             # what the eye lands on. A container may carry a status only when the whole
             # container is done - which E-MIXEDSTATE already allows, since a fully-done
             # bullet carries no not-done claim and therefore never trips it.
@@ -1417,6 +1526,99 @@ def check_doc(path):
                 "resolve the conflict before trusting anything in this file"))
             break
 
+    # --- W-EMPTYPROMISE: a scaffolded section that promises content and holds none ---
+    #
+    # the human screenshotted this doc's own §1 and asked whether it was accurate. It was a
+    # heading plus the scaffold's italic note - two lines, zero links - under a title
+    # promising "every doc and URL this orchestrator owns", which reads as OWNS NONE.
+    #
+    # ⭐ A SCAFFOLDED SECTION IS A CLAIM. `scaffold` creates the heading, so the tool
+    # manufactures the promise and then relies on someone remembering to honour it - which
+    # is discipline, and this whole workstream exists because discipline does not hold.
+    # `check` passed it happily: nothing malformed, no marker drifted, no status wrong.
+    # Structural correctness and informational emptiness are ORTHOGONAL, and every other
+    # invariant here measures only the first.
+    #
+    # Fires only when the doc DOES cite assets elsewhere - an orchestrator that genuinely
+    # owns no links should not be nagged.
+    for num, title, note in SCHEMA_SECTIONS:
+        if num != "1":
+            continue
+        sp = section_span(lines, num)
+        if not sp:
+            continue
+        body = [l for l in lines[sp[0] + 1:sp[1]]
+                if l.strip() and not re.fullmatch(r"_.*_", l.strip())]
+        if body:
+            continue
+        cited = harvest_assets(lines, path)
+        if len(cited) >= 3:
+            findings.append(Finding(
+                "W-EMPTYPROMISE", sp[0] + 1,
+                "§1 promises 'every doc and URL this orchestrator owns' and is EMPTY, "
+                "while this doc cites %d asset(s) elsewhere" % len(cited),
+                "run `orchdoc.py links --doc <doc>` - it harvests them and prints a "
+                "paste-ready table; §1 is a COLLECTION task, not an authoring one"))
+
+    # --- W-BADLINEREF: a `line N` pointer that does not resolve (ADVISORY) ---
+    #
+    # o2's original specimen was real: "**A1** (line 28)" while A1 sat at line 42. But run
+    # across the fleet, 6 of 8 hits were FALSE - and one of them was this tool's own
+    # override attestation, which quotes the bad anchor in order to explain the fix.
+    #
+    # ⛔ The dangerous class was o1's `| R2a | zero-shot, C line 1, neutral ref |`. That is
+    # line 1 of voice-script C - a reference into ANOTHER artifact, and correct. Telling an
+    # owner to "fix" it means editing accurate citations to satisfy a lint: CONTENT DAMAGE
+    # CAUSED BY A CHECKER, which is strictly worse than the defect it was built to catch.
+    #
+    # ⭐ And the perverse incentive o2 named: a GOOD `--because` quotes the bad value, so a
+    # blocking version of this rule penalised exactly the specificity the attestation bar
+    # demands. A check that corrodes another guard is worse than no check.
+    #
+    # So: ADVISORY until the FP rate is measured, and narrowed to fire only on things that
+    # are actually anchors INTO THIS DOC.
+    own_ids = {e["id"] for e in entries}
+    in_fence = False
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or ln.lstrip().startswith("<!--"):
+            continue                      # generated audit records are not claims
+        # Strip inline code AND QUOTED SPANS. Prose that QUOTES a bad anchor in order
+        # to explain it - a post-mortem, a rule example, an attestation - is a
+        # MENTION, not a POINTER. o2's class 1, and the same distinction as a doc
+        # that discusses its own markers: describing a thing is not doing it.
+        probe = re.sub(r"`[^`]*`", "", ln)
+        probe = re.sub(r"[\"“‘'][^\"”’']{0,90}[\"”’']", "", probe)
+        for m in re.finditer(
+                r"\*{0,2}([A-Z]{1,3}[-]?\d{1,3})\*{0,2}[^|\n]{0,18}?\(?\bline\s+(\d{1,4})\b",
+                probe):
+            eid, target = m.group(1), int(m.group(2))
+            if eid not in own_ids:
+                continue                  # a table row label is not an anchor
+            span = probe[m.start():m.end()]
+            if ARTIFACT_RE.search(span):
+                continue                  # a reference into ANOTHER artifact
+            if not (1 <= target <= len(lines)):
+                findings.append(Finding(
+                    "W-BADLINEREF", i + 1,
+                    "points at line %d, past the end of the doc (%d lines)"
+                    % (target, len(lines)),
+                    "cite the heading; a line number rots on any edit above it"))
+                continue
+            window = "\n".join(lines[max(0, target - 2):target + 2])
+            if not re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % re.escape(eid), window):
+                actual = [j + 1 for j, l2 in enumerate(lines)
+                          if l2.startswith("#") and re.search(
+                              r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % re.escape(eid), l2)]
+                findings.append(Finding(
+                    "W-BADLINEREF", i + 1,
+                    "says '%s ... line %d', but line %d does not contain %s%s"
+                    % (eid, target, target, eid,
+                       " (it is at line %d)" % actual[0] if actual else ""),
+                    "name the heading instead - a line number rots on any edit above it"))
+
     # --- E-ONEH1: exactly one H1, because a second reads as a second document ---
     #
     # the human, 2026-08-07: "if that is a possibility for any unknown future grep, let's
@@ -1442,7 +1644,7 @@ def check_doc(path):
 
     # --- E-SCHEMA: the canonical spine must be present and in order ---
     #
-    # The human: "Why don't we have one? We need something consistent." The charter named
+    # the human: "Why don't we have one? We need something consistent." The charter named
     # this first - "the consistent foundation" - and o9 built invariants and commands
     # without ever giving the docs a shared skeleton, so each still had its own shape.
     nums = []
@@ -1522,7 +1724,7 @@ def check_doc(path):
         try:
             start, stop = _span
             rendered = lines[start:stop + 1]
-            expected = build_plate_block(entries)
+            expected = build_plate_block(entries, lines)
             if rendered != expected:
                 findings.append(Finding(
                     "E-PLATEDRIFT", start + 1,
@@ -1568,7 +1770,10 @@ def check_doc(path):
             # on a document that discusses status vocabulary is how a checker gets
             # switched off, so this deliberately under-fires rather than cry wolf.
             lead = " ".join(tail.split()[:2])
-            m = HEADING_STATE_RE.search(lead) or HEADING_COUNT_RE.search(tail)
+            # A dated verification result anywhere in the heading, not just the
+            # lead: o1's specimen sat in a trailing parenthetical.
+            m = (HEADING_STATE_RE.search(lead) or HEADING_COUNT_RE.search(tail)
+                 or HEADING_DATED_CLAIM_RE.search(s["title"]))
             if m:
                 findings.append(Finding(
                     "E-SELFCLAIM", s["line"],
@@ -1649,6 +1854,29 @@ def check_doc(path):
                     "E-DEADREF", lineno,
                     "cited commit does not resolve - the pointer is already dead",
                     tok))
+
+    # --- E-BADSTATUS, unconditionally: an out-of-vocabulary value must be LOUD ---
+    #
+    # o8's DA17 parsed with status "ALL", harvested from the prose label
+    # "**CONTENT STATUS:** all three drafted". Because ALL is not in VALID_STATUS the entry
+    # silently vanished from every generated view - while reading perfectly to a human.
+    # E-BADSTATUS existed but was gated on the SECTION TITLE containing "DECISION", and
+    # DA17's does not, so nothing fired.
+    #
+    # ⭐ A guard conditioned on WHERE an entry lives cannot protect an entry that lives
+    # somewhere else. The value being wrong is the defect; the section is irrelevant to it.
+    # Gating a correctness check on location is how a well-formed wrong value stays
+    # invisible at exactly the level anyone inspects.
+    for e in entries:
+        st_any = status_of(e["body"])
+        if st_any is not None and st_any not in VALID_STATUS:
+            if not (DECISION_SECTION_RE.search(e["section"])
+                    or DECISION_SECTION_RE.search(e["title"])):
+                findings.append(Finding(
+                    "E-BADSTATUS", e["line"],
+                    "entry '%s' has Status '%s', which is not a status - it parses, so "
+                    "every generated view silently DROPS this entry" % (e["id"], st_any),
+                    "use one of: %s" % ", ".join(sorted(VALID_STATUS))))
 
     # --- E-NOSTATUS: decision entries need a machine-readable Status ---
     for e in entries:
@@ -1915,18 +2143,18 @@ def cmd_selftest(args):
         # run and that it is PROVEN 3x. Both halves carried status markers, so an
         # entry-level "has a status?" check passes it.
         ("E-MIXEDSTATE",
-         "## DECISIONS\n\n### D1 - chain\n**Status:** OPEN - **Owner:** <who>\n\n"
+         "## DECISIONS\n\n### D1 - chain\n**Status:** OPEN - **Owner:** the human\n\n"
          "- the full chain has **NEVER run in production**. ✅ **RECON DONE** - "
          "the Plus path is **PROVEN 3x**.\n"
          "- ⏳ **NOT DONE** - o1 owns: a real card has never been charged\n"),
         ("E-NOOWNER",
          "## DECISIONS\n\n### D1 - needs someone\n**Status:** OPEN\n\nbody\n"),
-        # The human: "done items are left cluttering up the active list". A RESOLVED
+        # the human: "done items are left cluttering up the active list". A RESOLVED
         # decision sitting under a heading that promises live items is pure clutter.
         ("E-DONEINACTIVE",
          "## DECISIONS - need your call\n\n### D1 - already decided\n"
-         "**Status:** RESOLVED - **Owner:** <who>\n\nbody\n"),
-        # The human: done items are "not clearly marked visually". The heading marker is
+         "**Status:** RESOLVED - **Owner:** the human\n\nbody\n"),
+        # the human: done items are "not clearly marked visually". The heading marker is
         # DERIVED from the Status field, so the two can never disagree.
         ("E-MARKERDRIFT",
          "## FINDINGS\n\n### F1 - no marker on the heading\n"
@@ -1952,7 +2180,7 @@ def cmd_selftest(args):
         # "nothing declared" is indistinguishable from "nothing moved".
         ("E-NODEPS",
          "## DECISIONS\n\n### D1 - a ruled decision resting on nothing declared\n"
-         "**Status:** RESOLVED - **Owner:** <who>\n\n"
+         "**Status:** RESOLVED - **Owner:** the human\n\n"
          "**Resolved 2026-08-06:** the human ruled B.\n\nbody\n"),
         # o8's caution: an attestation that says nothing is compliance without thought.
         ("E-RUBBERSTAMP",
@@ -1974,13 +2202,17 @@ def cmd_selftest(args):
         # which passed every gate. 2099 so the fixture cannot rot into the past.
         ("E-FUTUREDATE",
          "## DECISIONS\n\n### D1 - a ruling\n"
-         "**Status:** RESOLVED - **Owner:** <who> - **Attested-by:** o9 at 2099-01-01T00:00:00-07:00 - checked it\n"
+         "**Status:** RESOLVED - **Owner:** the human - **Attested-by:** o9 at 2099-01-01T00:00:00-07:00 - checked it\n"
          "**Depends:** F2\n\nbody\n\n"
          "## FINDINGS\n\n### F2 - an input\n"
          "**Status:** CONFIRMED - **Recorded:** 2026-08-01\n\nbody\n"),
         # o9L7: an id the parser cannot read is skipped, so the entry vanishes from every
         # guarantee the tool makes while still being readable on the page.
         # o9L7: a doc mid-merge answers every question from whichever side sorts first.
+        # o2's specimen, 2026-08-07: a pointer broken by the same edit that created it.
+        ("W-BADLINEREF",
+         "# t\n\n\n\n\n\n| blocking | **A1** (line 2) |\n\n## DECISIONS\n\n"
+         "### A1 - the real location\n**Status:** OPEN - **Owner:** the human\n\nbody\n"),
         ("E-CONFLICT",
          "## DECISIONS\n\n### D1 - a decision\n<<<<<<< HEAD\n**Status:** OPEN\n"
          "=======\n**Status:** RESOLVED\n>>>>>>> other\n\nbody\n"),
@@ -1993,7 +2225,7 @@ def cmd_selftest(args):
          "# Some Other Heading\n\n## \u00a71 LINKS AND DOCS\n\nstuff\n"),
         ("E-SCHEMA",
          "# Doc\n\n## \u00a71 LINKS AND DOCS\n\nstuff\n\n"
-         "## \u00a72 LIVE ON {NAME}'S PLATE\n\n### D1 - a call\n**Status:** OPEN\n\nbody\n"),
+         "## \u00a72 LIVE ON THE HUMAN'S PLATE\n\n### D1 - a call\n**Status:** OPEN\n\nbody\n"),
         ("E-SCATTERED",
          "## DECISIONS\n\n### D1 - here\n**Status:** OPEN\n\nbody\n\n"
          "## FINDINGS\n\n### F1 - a finding\n**Status:** RECORDED\n\nbody\n\n"
@@ -2008,7 +2240,7 @@ def cmd_selftest(args):
          "|---|---|---|---|---|\n| `D9` | a row a human typed in | the human | - | - |\n\n"
          "_1 open. Generated by `orchdoc.py plate`; edits here are overwritten._\n"
          + PLATE_END + "\n\n## DECISIONS\n\n### D1 - real entry\n"
-         "**Status:** OPEN - **Owner:** <who>\n\nbody\n"),
+         "**Status:** OPEN - **Owner:** the human\n\nbody\n"),
     ]
     ok = True
     print("orchdoc selftest")
@@ -2083,7 +2315,7 @@ def cmd_selftest(args):
                                      encoding="utf-8") as fh:
         fh.write(canonical_title("o99", "a role") + "\n\n"
                  "## DECISIONS\n\n### \U0001f534 D1 - a clean entry\n"
-                 "**Status:** OPEN - **Owner:** <who>\n\nReasoning prose here.\n")
+                 "**Status:** OPEN - **Owner:** the human\n\nReasoning prose here.\n")
         tmp = Path(fh.name)
     try:
         codes = {f.code for f in check_doc(tmp)}
@@ -2371,6 +2603,37 @@ def write_doc(path, text):
         raise DocPathError("cannot write %s: %s" % (path.name, e))
 
 
+
+def actor_id():
+    """Who is running this. $CLAUDE_ORCH_ID, else DERIVED from the doc being written.
+
+    o8: "my override recorded `by unknown` - if --override is meant to attribute, the
+    identity resolution is not picking up the caller."
+
+    Correct, and "unknown" is the worst possible default for an ATTRIBUTION field: it
+    satisfies the format while carrying none of the information the field exists for, and
+    an audit record naming nobody is a record nobody can be asked about. Nothing sets
+    $CLAUDE_ORCH_ID today, so every override in every doc says "unknown".
+
+    A doc named ORCHESTRATOR-DECISIONS-o8.md is being written by o8 in every case that has
+    ever occurred. That inference is not certain, so it is marked: "o8?" rather than "o8".
+    A hedged right answer beats a confident empty one.
+    """
+    env = os.environ.get("CLAUDE_ORCH_ID")
+    if env:
+        return sanitize_field(env, 40)
+    return "unattributed"
+
+
+def actor_for(doc):
+    """actor_id(), or the doc's own orchestrator id marked as inferred."""
+    env = os.environ.get("CLAUDE_ORCH_ID")
+    if env:
+        return sanitize_field(env, 40)
+    m = re.search(r"ORCHESTRATOR-DECISIONS-(o\d+)", str(doc))
+    return ("%s?" % m.group(1)) if m else "unattributed"
+
+
 def next_id(entries, prefix):
     """Allocate the next free numeric id for a prefix. Never grep by hand again."""
     hi = 0
@@ -2611,7 +2874,7 @@ def cmd_resolve(args):
         # --adopt: legacy entry, no field yet. Insert one rather than refusing - this is
         # the adoption path o7 found missing, where `resolve` was unreachable on exactly
         # the docs that needed it.
-        field = ("**Status:** %s - **Owner:** <who> - **Enriched:** YES" % status)
+        field = ("**Status:** %s - **Owner:** the human - **Enriched:** YES" % status)
         lines.insert(e["line"], "")
         lines.insert(e["line"] + 1, field)
         lines.insert(e["line"] + 2, "")
@@ -2825,6 +3088,15 @@ def cmd_commit(args):
     ref = CANONICAL_REF
 
     print("orchdoc commit - %s -> %s" % (doc.name, ref))
+    # ⚠️ SAY WHAT IS ACTUALLY BEING LANDED. This commits the WORKING-TREE copy, not HEAD -
+    # deliberately, because the whole point is that unlanded edits reach the human. But
+    # o2 pointed out the other edge: an orchestrator holding HALF-FINISHED thoughts in the
+    # tree will ship them, and nothing said so. A tool whose behaviour is correct but
+    # unstated is one an author can be surprised by, and surprise is how a partial thought
+    # becomes the record.
+    print("           landing your WORKING-TREE copy (%d lines), not HEAD - make sure it"
+          % len(doc.read_text(encoding="utf-8", errors="replace").splitlines()))
+    print("           is coherent; half-finished edits in the file WILL be landed.")
     print()
     git(["fetch", "--quiet", "origin"])
 
@@ -2850,7 +3122,7 @@ def cmd_commit(args):
             print("           An override held to a lower bar than an attestation "
                   "becomes 'needed to ship'.", file=sys.stderr)
             return 1
-        who = sanitize_field(os.environ.get("CLAUDE_ORCH_ID", "unknown"), 40)
+        who = actor_for(doc)
         stamp = "<!-- ORCHDOC:OVERRIDE %s by=%s at=%s --> %s" % (
             args.override, who, _now_iso(), sanitize_field(args.because, 600))
         txt = doc.read_text(encoding="utf-8")
@@ -2958,7 +3230,7 @@ def cmd_commit(args):
         # o8's guard 2, applied to gate 1: a RECORDED reconciliation beats a bypass that
         # leaves no trace. The --because reason is already held to the attestation bar.
         print("  [override] gate 1 reconciliation recorded by %s - %d reworded line(s)"
-              % (sanitize_field(os.environ.get("CLAUDE_ORCH_ID", "unknown"), 40), len(lost)))
+              % (actor_for(doc), len(lost)))
         for l in lost[:6]:
             print("             was: %s" % l.strip()[:88])
         lost = []
@@ -3113,6 +3385,31 @@ def cmd_commit(args):
     # operator then hand-repeats the whole plumbing - which is the expensive path this
     # verb exists to remove. So re-fetch, re-parent onto the fresh tip, re-gate, retry.
     branch = ref.split("/")[-1]
+
+    # ⛔ AN EMPTY SOURCE REF IS A BRANCH DELETION. `push origin :refs/heads/main` deletes
+    # main, and that is what `"%s:refs/heads/%s" % (commit, branch)` becomes the moment
+    # `commit` is empty.
+    #
+    # o1 hit this chain for real today: backticks inside a double-quoted `commit-tree -m`
+    # message were COMMAND-SUBSTITUTED by bash, the substitution failed, that emptied the
+    # tree variable, which emptied the commit variable, and the push resolved to a delete.
+    # GitHub's branch protection stopped it - not any local check.
+    #
+    # ⭐ Nothing in that chain was a push bug. A destructive push was the DEFAULT OUTCOME
+    # of an earlier step failing quietly. So the guard belongs immediately before the push,
+    # asserting the shape of what is about to be sent rather than trusting how it was built.
+    if not re.fullmatch(r"[0-9a-f]{7,40}", (commit or "").strip()):
+        print("  [REFUSE] refusing to push: the source ref is not a commit sha (%r)."
+              % commit, file=sys.stderr)
+        print("           An empty source would make this `push origin :refs/heads/%s`,"
+              % branch, file=sys.stderr)
+        print("           which DELETES the branch. Nothing was pushed.", file=sys.stderr)
+        return 1
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch or ""):
+        print("  [REFUSE] refusing to push: implausible branch name %r" % branch,
+              file=sys.stderr)
+        return 1
+
     for attempt in range(1, 6):
         rc, out, err = git(["-c", "credential.helper=!gh auth git-credential",
                             "push", "origin", "%s:refs/heads/%s" % (commit, branch)])
@@ -3257,7 +3554,7 @@ def cmd_archive(args):
     """
     Move terminal-status entries out of sections that promise live items.
 
-    The human: a RESOLVED decision sitting under "DECISIONS - need your call" is "pure
+    the human: a RESOLVED decision sitting under "DECISIONS - need your call" is "pure
     clutter at that point". The active list has to hold ONLY active items or the reader
     cannot trust it - which is the same property as the generated plate, applied to the
     body of the document.
@@ -3570,6 +3867,22 @@ def adopt_number(heading):
     leaving it alone and saying so.
     """
     t = heading.lstrip("#").strip().upper()
+
+    # ⛔ A HEADING CARRYING AN ENTRY ID IS AN ENTRY, NOT A SECTION - and adopting it as a
+    # section is a category error regardless of which number it would get.
+    #
+    # o1 caught this: `## ⭐✅ D-PAUSE — RESOLVED by the human` was being mapped to §99 because
+    # it contains the word RESOLVED. But it is a DECISION, written at H2, whose ruling is
+    # closed while the work it authorised is NOT built - o1 verified that in the handler
+    # source rather than from the heading. Sinking it to §99 would have buried a live
+    # workstream under a ✅, which is the false-DONE direction and the more dangerous one.
+    #
+    # ⭐ The general rule beats the special case: sections are containers, entries are
+    # contents, and a mapper that cannot tell them apart will eventually file one as the
+    # other. Leave entries alone; only their SECTION moves.
+    if ID_RE.match(re.sub(r"^[\W\s]+", "", heading.lstrip("#").strip())):
+        return None
+
     for musts, nots, num in ADOPT_RULES:
         if all(m in t for m in musts) and not any(n in t for n in nots):
             return num
@@ -3598,7 +3911,7 @@ def canonical_title(num, role=""):
 
     On (3): no current consumer extracts H1s from OrchDocs - and that does not clear it.
     The hazard belongs to tools that do not exist yet, and every one of them will assume
-    the "one H1 per document" convention. The human: "if that is a possibility for any unknown
+    the "one H1 per document" convention. the human: "if that is a possibility for any unknown
     future grep, let's revert."
 
     The visual line break is simply unavailable: markdown cannot break inside a heading,
@@ -3674,7 +3987,7 @@ def render_meta(doc, lines):
     out.append("| **Last updated** | %s _(from the commit log, never hand-written)_ |"
                % (updated or "_not yet landed_"))
     # Label AND anchor both DERIVED from the section title. Hardcoding them meant the
-    # header linked to `#\u00a72-live-on-<name>s-plate`, which for any other name points at a
+    # header linked to one specific person's slug, which for any other name points at a
     # heading that does not exist - a dead link in the generated doc. Third instance of
     # the same bug in this file (after the two detection regexes): a name baked into
     # something the tool GENERATES, correct for exactly one person.
@@ -3864,6 +4177,352 @@ def render_findings_index(lines):
     return out
 
 
+
+def cmd_handoff(args):
+    """Verify every OPEN item in a doc has a home in a LIVING doc before it is frozen.
+
+    The oracle is the RECEIVING document, never the sending one. A sender's note saying
+    "passed to o8" is an assertion; `DA17` appearing in o8's doc is a fact.
+    """
+    src = resolve_doc_arg(args.doc)
+    if not src or not src.exists():
+        print("no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+
+    lines = src.read_text(encoding="utf-8").split("\n")
+    entries, _ = parse_entries(lines)
+    live = [e for e in entries
+            if not e.get("archived") and status_of(e["body"]) in PLATE_STATUS]
+
+    # RAW-TEXT CANDIDATES, because the parser is not the authority on what is live here.
+    # o3's D11 - the exact item this check was built for - exists only as BULLETS under an
+    # "OPEN-ITEMS INDEX", so parse_entries() returns ZERO for that doc and the check
+    # reported "every open item appears in a living doc" while D11 was orphaned.
+    #
+    # A verifier that answers "all clear" because it could not read the file is worse than
+    # no verifier: it converts an unread document into a certificate. Same failure as the
+    # plate saying "Nothing open" when nothing parsed, and as a fetch failure reading as
+    # "current". So: also collect id-shaped tokens from the raw text of ACTIVE sections.
+    raw_ids = set()
+    prose_titles = {}
+    cur = ""
+    for ln in lines:
+        if ln.startswith("## "):
+            cur = ln
+        if not is_active_section(cur):
+            continue
+        # NOTE: NO \b. A word-boundary escape sent through a shell heredoc arrives
+        # as a literal 0x08 BACKSPACE, which matches nothing and ships the check
+        # DEAD while looking correct in a diff. The lookahead cannot be corrupted.
+        for m in re.finditer(r"\*\*([A-Z]{1,3}\d{1,3})(?![A-Za-z0-9])", ln):
+            raw_ids.add(m.group(1))
+            # keep the surrounding text: the TITLE is what actually identifies an item
+            # across documents, because the id alone is namespaced per doc.
+            tail = ln[m.end():].lstrip(" *—-:").strip()
+            if tail and len(tail) > len(prose_titles.get(m.group(1), "")):
+                prose_titles[m.group(1)] = tail
+    known = {e["id"] for e in entries}
+    extra = sorted(raw_ids - known)
+
+    # Every OTHER OrchDoc is a candidate receiver. Read them from the CANONICAL ref, not
+    # the working tree: a receiver that only has the item on someone's local branch has
+    # not received it in any sense that survives.
+    others = {}
+    for p in sorted(PROJECTS.glob("ORCHESTRATOR-DECISIONS-*.md")):
+        if p.name == src.name:
+            continue
+        rc, txt, _ = git(["show", "%s:%s" % (CANONICAL_REF, p.name)])
+        others[p.name] = txt if rc == 0 else p.read_text(encoding="utf-8", errors="replace")
+
+    print("orchdoc handoff - %s" % src.name)
+    print("  %d parsed open item(s), %d id(s) found only as prose" % (len(live), len(extra)))
+    if not live and not extra:
+        print("  [REFUSE] nothing to account for AND nothing parsed - this doc's items are")
+        print("           not in a form this check can read, so it cannot certify that")
+        print("           freezing it is safe. That is NOT the same as 'all clear'.")
+        print("           Entries need `### <ID> - title` headings; until then, verify by")
+        print("           hand and say so explicitly.")
+        return 1
+    orphans = []
+    for e in live:
+        title_key = strip_decoration(e["title"])[:40].lower()
+        found = []
+        for name, txt in others.items():
+            if re.search(r"\b%s\b" % re.escape(e["id"]), txt) or \
+                    (len(title_key) > 12 and title_key in txt.lower()):
+                found.append(name)
+        if found:
+            print("  [ok]      %-8s -> %s" % (e["id"], ", ".join(found)))
+        else:
+            orphans.append(e)
+            print("  [ORPHAN]  %-8s %s" % (e["id"], strip_decoration(e["title"])[:52]))
+
+    # prose-only ids get the same treatment as parsed entries
+    for eid in extra:
+        # ⛔ A BARE ID PROVES NOTHING ACROSS DOCS. Entry ids are a PER-DOC namespace -
+        # o1, o5, o7 and o9 all have a D2 - so "D2 appears in six other docs" is six
+        # different decisions, not six homes for this one. That is the same ambiguity
+        # E-BADTOUCH exists to catch, and the first version of this check walked straight
+        # into it and reported every item safe.
+        #
+        # A transfer is evidenced by a QUALIFIED reference: the receiving doc naming the
+        # SENDER (`o3:D11`, "adopted from o3"), or carrying the item's own title text.
+        title = strip_decoration(prose_titles.get(eid, "")).strip()
+        src_tag = src.name.replace("ORCHESTRATOR-DECISIONS-", "").replace(".md", "")
+        found = []
+        for n, txt in others.items():
+            qualified = re.search(
+                r"(?<![A-Za-z0-9])%s\s*[:\-]?\s*%s(?![A-Za-z0-9])"
+                % (re.escape(src_tag), re.escape(eid)), txt, re.I)
+            adopted = (re.search(r"(?:adopted|from|inherited)[^\n]{0,40}%s"
+                                 % re.escape(src_tag), txt, re.I)
+                       and re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])"
+                                     % re.escape(eid), txt))
+            by_title = len(title) > 18 and title[:34].lower() in txt.lower()
+            if qualified or adopted or by_title:
+                found.append(n)
+        if found:
+            print("  [ok]      %-8s -> %s  (prose-only id)" % (eid, ", ".join(found)))
+        else:
+            orphans.append({"id": eid, "title": eid + " (found only as prose)"})
+            print("  [ORPHAN]  %-8s found only as prose, and in no other doc" % eid)
+
+    if not orphans:
+        print("  every open item appears in a living doc.")
+        return 0
+
+    print()
+    print("  [REFUSE] %d open item(s) exist ONLY in this doc." % len(orphans))
+    print("           Freezing it strands them - nobody is watching the gap between")
+    print("           two owners, which is how D11 sat orphaned for ten days.")
+    print("           Move each into the receiving doc FIRST, then re-run.")
+    print("           A sender's handoff note is an assertion; the item appearing in the")
+    print("           receiving doc is the fact.")
+    return 1
+
+
+
+
+# A path or URL a reader might need to OPEN. Deliberately narrow: a bare word with a dot in
+# it is not an asset, and a link list padded with noise is one nobody reads.
+ASSET_URL_RE = re.compile(r"https?://[^\s)\]<>\"']+")
+ASSET_PATH_RE = re.compile(
+    r"(?<![\w/.])((?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|\.shared[\\/]|[\w.-]+[\\/])"
+    r"[\w.\\/-]*\.(?:md|py|ts|tsx|json|ps1|sh|txt|ya?ml))")
+
+
+def harvest_assets(lines, doc):
+    """Every URL and path the doc mentions, with whether it RESOLVES.
+
+    The point is not to list strings - it is to distinguish a pointer a reader can follow
+    from one that is already dead. An unverified link list is the same false comfort as an
+    unverified status field.
+    """
+    body = "\n".join(lines)
+    found = {}
+    for m in ASSET_URL_RE.finditer(body):
+        # Strip markdown punctuation that abuts a URL in prose. A trailing backtick
+        # produced a row labelled "`" pointing at a 404 - a dead pointer manufactured BY
+        # the section whose job is to prevent dead pointers.
+        u = m.group(0).rstrip(".,;:`*_”’'\"")
+        found.setdefault(u, {"kind": "url", "exists": None})
+    for m in ASSET_PATH_RE.finditer(body):
+        raw = m.group(1).strip()
+        if raw.startswith(("http", "#")):
+            continue
+        if "..." in raw or "<" in raw:
+            continue          # an ELISION in prose ("_legacy/.../Foo.ts"), not a path
+        probe = raw
+        # A leading "/.claude/..." is almost always "~/.claude/..." with the tilde eaten by
+        # the surrounding markdown. Resolving it against the workspace reports a LIVE file
+        # as dead - and a checker that confidently calls a real asset dead is the damaging
+        # direction, not the harmless one.
+        if probe.startswith(("/.claude", "\\.claude")):
+            probe = str(Path(os.path.expanduser("~")) / probe.lstrip("/\\"))
+        pp = Path(probe)
+        if not pp.is_absolute():
+            pp = PROJECTS / probe
+        exists = pp.exists()
+        if not exists:
+            # try the other plausible roots before calling it dead
+            for alt in (Path(os.path.expanduser("~")) / probe.lstrip("/\\"),
+                        PROJECTS.parent / probe.lstrip("/\\")):
+                if alt.exists():
+                    exists = True
+                    break
+        found.setdefault(raw, {"kind": "path", "exists": exists})
+    return found
+
+
+def section_span(lines, num):
+    """(start, end) of a §-numbered section, or None."""
+    start = None
+    for i, l in enumerate(lines):
+        m = SECTION_RE.match(l)
+        if m and m.group(1) == num:
+            start = i
+        elif start is not None and l.startswith("## "):
+            return start, i
+    return (start, len(lines)) if start is not None else None
+
+
+def cmd_links(args):
+    """Harvest the doc's own assets and propose a §1 table. PROPOSES; does not overwrite."""
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+    lines = doc.read_text(encoding="utf-8").split("\n")
+    assets = harvest_assets(lines, doc)
+
+    span = section_span(lines, "1")
+    listed = "\n".join(lines[span[0]:span[1]]) if span else ""
+    missing = {k: v for k, v in assets.items() if k not in listed}
+
+    print("orchdoc links - %s" % doc.name)
+    print("  %d asset(s) cited in the doc, %d NOT listed in §1"
+          % (len(assets), len(missing)))
+    if not missing:
+        print("  §1 already accounts for everything this doc points at.")
+        return 0
+
+    dead = [k for k, v in missing.items() if v["kind"] == "path" and v["exists"] is False]
+    for k, v in sorted(missing.items()):
+        mark = "  " if v["exists"] is not False else "  \u26a0 DOES NOT EXIST"
+        print("    %-62s %s%s" % (k[:62], v["kind"], mark))
+    if dead:
+        print()
+        print("  \u26d4 %d cited path(s) DO NOT EXIST. Those are dead pointers TODAY, and"
+              % len(dead))
+        print("     listing them in §1 would publish them as navigable. Fix or drop them.")
+
+    print()
+    print("  Paste-ready §1 rows (yours to edit - a harvested link is a CANDIDATE, not")
+    print("  necessarily an asset you own):")
+    print()
+    print("| what | where |")
+    print("|---|---|")
+    for k, v in sorted(missing.items()):
+        if v["exists"] is False:
+            continue
+        label = k.rstrip("/").split("/")[-1].split("\\")[-1] or k
+        cell = k if v["kind"] == "url" else "[%s](%s)" % (label, k)
+        print("| %s | %s |" % (label[:46], cell))
+    return 0
+
+
+
+def cmd_review(args):
+    """Walk every schema section and state what it holds, what it should, and the question.
+
+    Exit 1 when any section has an unanswered question, so it can gate a report.
+    """
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+    lines = doc.read_text(encoding="utf-8").split("\n")
+    entries, _sections = parse_entries(lines)
+    have_ids = {e["id"] for e in entries}
+
+    # ids the doc TALKS ABOUT but never defines. This is the signal that caught W2-W8:
+    # work described in a table or a bullet is work no check can see.
+    # ACTIVE sections only. A finding that discusses o3's D11 or o8's DA17 is a legitimate
+    # cross-doc citation, not a ghost - and listing those would bury the real ones under
+    # noise, which is the cry-wolf failure that already cost W-BADLINEREF its blocking
+    # status. The ghosts that matter are ids this doc uses for ITS OWN live work, which is
+    # exactly where W2-W8 were hiding.
+    _active, _cur = [], ""
+    for _l in lines:
+        if _l.startswith("## "):
+            _cur = _l
+        if is_active_section(_cur):
+            _active.append(_l)
+    cited = set(re.findall(r"(?<![A-Za-z0-9])([A-Z]{1,3}\d{1,2})(?![A-Za-z0-9])",
+                           "\n".join(_active)))
+    own_prefixes = tuple(KIND_SECTION_NUM.keys())
+    ghosts = sorted(i for i in cited - have_ids if i[0] in own_prefixes)
+
+    def body_of(num):
+        sp = section_span(lines, num)
+        if not sp:
+            return None
+        return [l for l in lines[sp[0] + 1:sp[1]]
+                if l.strip() and not re.fullmatch(r"_.*_", l.strip())]
+
+    print("orchdoc review - %s" % doc.name)
+    print("  One section at a time. The script gathers; YOU answer. Nothing is auto-filled.")
+    print()
+
+    open_h = [e for e in entries if status_of(e["body"]) in PLATE_STATUS
+              and not e.get("archived")]
+    unanswered = 0
+
+    for num, title, promise in schema_sections():
+        body = body_of(num)
+        if body is None:
+            continue
+        n = len(body)
+        ids_here = [e["id"] for e in entries
+                    if SECTION_RE.match(e["section"] if e["section"].startswith("#")
+                                        else "## " + e["section"])
+                    and SECTION_RE.match(e["section"] if e["section"].startswith("#")
+                                         else "## " + e["section"]).group(1) == num]
+        print("\u00a7%-5s %-26s %2d line(s), %d entr(ies)" % (num, title, n, len(ids_here)))
+        print("       promises: %s" % promise)
+
+        q = None
+        if num == "1" and n == 0:
+            q = "run `links --doc %s` - it harvests what this doc already cites" % args.doc
+        elif num in ("2.1", "2.2", "2.3") and not ids_here:
+            # "empty" and "full of text the parser cannot see" are OPPOSITE problems and
+            # calling the second one empty is a false statement to the reader's face.
+            if n:
+                q = ("%d line(s), 0 parseable entries - so NONE of this reaches the generated"
+                     " plate and no invariant runs on it. It is on the human's plate in prose"
+                     " and invisible to every check. Give each item an `### <ID> - title`"
+                     " heading." % n)
+            else:
+                q = ("EMPTY. Is that TRUE? An empty plate asserts nothing needs the human. "
+                     "If anything does, it belongs here as an entry - not in prose.")
+        elif num == "3" and not ids_here and n:
+            q = ("has %d line(s) but NO entries - work described in prose or a table is "
+                 "invisible to every check. Give each item an `### <ID> - title` heading."
+                 % n)
+        elif num == "4" and not ids_here:
+            q = ("%d line(s) but 0 parseable entries."
+                 % n) if n else "EMPTY. Did this workstream learn nothing worth keeping?"
+            if n:
+                q += (" Your findings are THERE and the tool cannot see any of them - so no"
+                      " invariant runs on them. Give each an `### <ID> - title` heading.")
+        elif num == "5" and n <= 1:
+            q = "no guards. What will this orchestrator refuse to do?"
+        elif num.startswith("99") and not ids_here and open_h:
+            q = ("nothing archived while %d item(s) are open above. If any are finished, "
+                 "`archive` moves them; if none are, say so." % len(open_h))
+        if q:
+            print("       \u26a0 %s" % q)
+            unanswered += 1
+        print()
+
+    if ghosts:
+        print("\u26d4 IDS THE DOC TALKS ABOUT BUT NEVER DEFINES: %s" % ", ".join(ghosts))
+        print("   Each is referenced in prose with no `### <ID>` entry anywhere, so every")
+        print("   check here is blind to it and it cannot reach the generated plate.")
+        print("   This is how work stays invisible while looking documented.")
+        unanswered += 1
+        print()
+
+    print("  open items the tool can SEE: %d" % len(open_h))
+    print("  sections needing an answer : %d" % unanswered)
+    if unanswered:
+        print()
+        print("  \u26a0 A section is not complete because it is quiet. Every invariant here")
+        print("     is triggered BY AN ENTRY, so an EMPTY section generates NO findings -")
+        print("     the emptier a doc gets, the quieter the tool gets.")
+    return 1 if unanswered else 0
+
+
 def cmd_scaffold(args):
     """Write, or repair, the canonical spine.
 
@@ -3981,7 +4640,7 @@ def cmd_scaffold(args):
             # The original wording is KEPT as a trailing note: it carries the author's
             # scoping ("ACTIVE only", a date, a lane name) that the schema title drops.
             # Drop the original wording when it merely repeats the schema title -
-            # "\u00a72 LIVE ON {NAME}'S PLATE - ON {NAME}'S PLATE" is noise. Keep it whenever it
+            # "\u00a72 LIVE ON THE HUMAN'S PLATE - ON THE HUMAN'S PLATE" is noise. Keep it whenever it
             # carries scoping the schema title loses: "(ACTIVE only)", a date, a lane name.
             keep = orig.strip().strip("*_").upper()
             same = keep in title.upper() or title.upper() in keep
@@ -4104,7 +4763,7 @@ def cmd_scaffold(args):
 
 def cmd_plate(args):
     """
-    REGENERATE the human-facing index from the entries.
+    REGENERATE the the human-facing index from the entries.
 
     This is the command that kills the largest failure class. Status lived in three to
     five hand-maintained places per doc (o8's DA3 status appeared in FIVE), and nothing
@@ -4122,7 +4781,7 @@ def cmd_plate(args):
         text = doc.read_text(encoding="utf-8")
         lines = text.splitlines()
         entries, _ = parse_entries(lines)
-        block = build_plate_block(entries)
+        block = build_plate_block(entries, lines)
         # Count from the SAME rows the block renders. The old predicate
         # matched the pre-grouping format and silently reported "0 open"
         # while the block itself said 1 - a wrong number from the tool
@@ -4136,6 +4795,38 @@ def cmd_plate(args):
             return 1
         if span:
             start, stop = span
+
+            # ⛔ REFUSE TO REPLACE A POPULATED INDEX WITH AN EMPTY ONE.
+            #
+            # o1 and o8 both predicted this independently when asked to approve a
+            # migration, and both were right: their entries are not in a form `plate` can
+            # parse - o1 writes decisions as BULLETS under a DECISIONS heading, o8's
+            # entries carry no Status field - so regeneration would have produced an EMPTY
+            # index and overwritten a hand-curated one that listed real open items.
+            #
+            # ⛔ That is "None open while items are open" - the single failure this whole
+            # workstream was commissioned to prevent - committed BY the tool built to
+            # prevent it. A generated index is only better than a curated one once the
+            # entries can actually support it, and the tool must verify that rather than
+            # assume it.
+            #
+            # ⭐ The general rule: A GENERATOR MAY NOT DESTROY MORE INFORMATION THAN IT
+            # PRODUCES. Silence is a claim, and an empty list asserts "nothing here".
+            old_rows = [l for l in lines[start:stop + 1] if l.startswith("| **[")]
+            if old_rows and not rows and not getattr(args, "force", False):
+                print("  [REFUSE] the generated index would be EMPTY, replacing a "
+                      "hand-maintained one that lists %d item(s)." % len(old_rows),
+                      file=sys.stderr)
+                print("           Nothing was written. This doc's entries are not yet in "
+                      "a form `plate` can read:", file=sys.stderr)
+                print("           entries need a `### <ID> - title` heading AND a "
+                      "`**Status:**` field.", file=sys.stderr)
+                print("           An index that is honestly stale beats one that is "
+                      "confidently wrong.", file=sys.stderr)
+                print("           Re-run with --force only if the empty index is correct.",
+                      file=sys.stderr)
+                return 1
+
             out = lines[:start] + block + lines[stop + 1:]
         else:
             anchor = 0
@@ -4212,6 +4903,26 @@ def main():
                     help="actually write (default is a dry run)")
     mg.set_defaults(func=cmd_migrate)
 
+    hf = sub.add_parser("handoff",
+                        help="before freezing a doc, verify every OPEN item exists in a "
+                             "LIVING doc. Use at consolidation, retirement or dormancy.")
+    hf.add_argument("--doc", required=True)
+    hf.add_argument("--dormant", action="store_true",
+                    help="intent flag: this doc is about to be marked dormant")
+    hf.set_defaults(func=cmd_handoff)
+
+    rv = sub.add_parser("review",
+                        help="walk EVERY section one at a time and force the completeness "
+                             "question - an empty section generates no findings")
+    rv.add_argument("--doc", required=True)
+    rv.set_defaults(func=cmd_review)
+
+    lk = sub.add_parser("links",
+                        help="harvest every asset the doc cites and propose a §1 table - "
+                             "§1 is a COLLECTION task, not an authoring one")
+    lk.add_argument("--doc", required=True)
+    lk.set_defaults(func=cmd_links)
+
     sc = sub.add_parser("scaffold", help="write/repair the canonical section spine")
     sc.add_argument("--doc", required=True)
     sc.add_argument("--dry-run", action="store_true")
@@ -4223,8 +4934,13 @@ def main():
                     help="required to WRITE an --adopt pass (owner must have agreed)")
     sc.set_defaults(func=cmd_scaffold)
 
-    p = sub.add_parser("plate", help="REGENERATE the human-facing index from the entries")
+    p = sub.add_parser("plate", help="REGENERATE the the human-facing index from the entries")
     p.add_argument("--doc", required=True)
+    p.add_argument("--force", action="store_true",
+                   help="allow replacing a populated index with an EMPTY one. Refused by "
+                        "default: an empty index asserts 'nothing here', and overwriting "
+                        "a curated one with it is the 'None open while items are open' "
+                        "failure this tool exists to prevent.")
     p.set_defaults(func=cmd_plate)
 
     cm = sub.add_parser("commit",

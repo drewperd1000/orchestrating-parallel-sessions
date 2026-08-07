@@ -277,6 +277,8 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   | command | what it does |
   |---|---|
   | `orchdoc.py check --doc o<N>` | what is wrong, exits non-zero. **Run before every report** |
+  | `orchdoc.py review --doc o<N>` | ⭐ walk EVERY section and force the completeness question — **the only check that can see ABSENCE** |
+  | `orchdoc.py links --doc o<N>` | harvest every asset the doc already cites and propose a §1 table |
   | `orchdoc.py add "<one line>" --doc o<N>` | capture a decision + **print its anchor** for step 3 below |
   | `orchdoc.py resolve D5 --doc o<N> --ruling "..."` | flip status IN PLACE, re-read and verified |
   | `orchdoc.py plate --doc o<N>` | REGENERATE the human-facing index |
@@ -298,6 +300,16 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   - **Stale status logs** → sink to the BOTTOM (historical, newest-first), superseded by the sections above.
   - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
   - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
+- ⭐ **`check` cannot see an EMPTY section - run `review` too.** Every invariant in the linter
+  is triggered BY AN ENTRY: parse the entries, judge each one. So **a section with no entries
+  produces no findings, and the emptier a doc gets, the quieter the tool gets.** A doc that has
+  drifted into prose or tables passes `check` cleanly - not because it is correct, but because
+  there is nothing left for the linter to look at, and those two outcomes print identically.
+  `review` walks each section in turn and asks the one question no entry-triggered check can:
+  *this is empty; is that TRUE?* It decides nothing - it guarantees the question gets asked
+  once per section with the evidence already gathered. **An empty "what needs the human"
+  section is an assertion that nothing does.** If that is false, it is the most damaging thing
+  the doc can say, because the human will reasonably believe it and stop checking.
 - **Keep it live:** update it the instant a decision resolves, a lane lands, or a new item appears — `orchdoc.py add` for a new item, `resolve` when it is answered, `archive` to sink it to §99, `plate` to regenerate the index. ⛔ **Do NOT stamp an update time by hand** — `scaffold` reads it from the commit log. (An earlier version of this bullet said to stamp it, which is the one orchestrator defect described above; it survived the first pass of this edit because the same instruction appeared in two places — the propagate-to-ALL-trackers rule, applied to a skill.) A stale decision doc is worse than none — it re-spawns closed questions (see the propagate-a-resolution-to-all-trackers discipline: when something resolves, clear it from EVERY tracker, this doc included).
 - **Why:** the human's attention is the scarce resource. "D3 is still open" is only cheap for them if one glance decodes it. The doc turns every cross-reference from a thread-scroll into a lookup.
 
