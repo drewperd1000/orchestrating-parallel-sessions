@@ -53,6 +53,7 @@ import os
 import re
 import datetime as _dt
 import subprocess
+import tempfile
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -97,7 +98,26 @@ def _find_workspace():
 
 
 PROJECTS = _find_workspace()
-CANONICAL_REF = "origin/main"
+# The ref that IS the truth. Overridable, because "origin/main" is an assumption, not a
+# fact: a repo whose default branch is `master` (some repos, as it
+# happens) gets wrong answers from every freshness and verify oracle, and it was the
+# condition that made touches_since crash. Auto-detect the remote HEAD, then fall back.
+def _canonical_ref():
+    env = os.environ.get("ORCHDOC_REF")
+    if env:
+        return env
+    try:
+        p = subprocess.run(["git", "symbolic-ref", "--quiet", "--short",
+                            "refs/remotes/origin/HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        if p.returncode == 0 and p.stdout.strip():
+            return p.stdout.strip()          # e.g. "origin/master"
+    except Exception:
+        pass
+    return "origin/main"
+
+
+CANONICAL_REF = _canonical_ref()
 
 # Every repo an OrchDoc legitimately cites. A SHA is only "dead" if NO repo has it.
 #
@@ -2569,7 +2589,10 @@ def cmd_commit(args):
 
     def build_on(parent):
         """Build a commit = parent + exactly `wanted`, without touching the tree."""
-        idx = Path(os.environ.get("TEMP", ".")) / ("orchdoc-%s.index" % os.getpid())
+        # tempfile.gettempdir(), not $TEMP. $TEMP is Windows-only; on macOS/Linux it is
+        # usually unset, so the "." fallback silently wrote a scratch git index into the
+        # CURRENT DIRECTORY - no crash, just litter dropped in the user's own repo.
+        idx = Path(tempfile.gettempdir()) / ("orchdoc-%s.index" % os.getpid())
         env = dict(os.environ, GIT_INDEX_FILE=str(idx))
 
         def g(a):
@@ -2587,7 +2610,11 @@ def cmd_commit(args):
             msg = args.message or ("%s: update" % doc.name)
             p = subprocess.run(
                 ["git", "-C", str(PROJECTS), "commit-tree", tree, "-p", parent],
-                input=msg + "\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n",
+                # Attribute the model ACTUALLY running, not a hardcoded one. A published
+                # tool stamping every commit "Claude Opus 5" is factually wrong for most
+                # runs of it, and the trailer is the permanent record.
+                input=msg + ("\n\nCo-Authored-By: %s <noreply@anthropic.com>\n"
+                             % os.environ.get("CLAUDE_MODEL_NAME", "Claude")),
                 capture_output=True, text=True, timeout=60)
             return p.stdout.strip()
         finally:
