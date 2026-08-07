@@ -28,7 +28,7 @@ into this skill. Ask once, record, and stop asking:
 | **Launch mode: manual or hybrid?** | manual = they paste every worker prompt (direct control, but it clutters the session list and bottlenecks on them); hybrid = the orchestrator launches workers itself and collates their reports. **Lanes reach the hundreds** — see *Launching workers* before answering | **their standing choice**, recorded once |
 | **Where do decision docs live?** | so every orchestrator writes to the same place and can read each other's | a path in their config |
 | **Which repos / areas are in scope?** | lanes are scoped by area; without a map there is nothing to make disjoint | the lane map |
-| **One project, or several?** | *optional* — capture it if you already know; if not, start with one and let the boundaries show themselves | — |
+| **One project, or several?** | *optional* — capture it if you already know; if not, start with one and let the boundaries show themselves. The initial session can also help you decide how best to split the scopes of any new orchestrators | — |
 
 ⛔ **A standing choice is answered ONCE.** Re-asking *"manual or hybrid?"* at the start of every
 task is the single most common way this skill wastes a human's attention - the answer never
