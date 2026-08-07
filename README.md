@@ -4,11 +4,33 @@ A Claude Code skill for running a **whole project** through an orchestrator agen
 
 The orchestrator fans work out to parallel sessions - headless or hand-launched - keeps them
 from colliding on shared ground, tells workers to fan out their **own** agents when the work
-needs it, and collates what comes back into one picture. It has been used to build
-applications, browser software, knowledge graphs, websites and the KPI measurement pipelines
-behind them, research tools, copywriters and the copy they produce, and Docs/Sheets
-integrations. **The common shape is not code - it is a large project with layered, overlapping
-parts.**
+needs it, and collates what comes back into one picture.
+
+It has been used across an entire business, of which only a small part is coding: in-depth
+research, planning, brainstorming, copywriting, database creation and analysis, applications,
+browser software, knowledge graphs, websites and the KPI measurement pipelines behind them,
+research tools, and Docs/Sheets integrations. **The common shape is not code - it is a large
+project with layered, overlapping parts.**
+
+## Several orchestrators, working as a team
+
+The larger win is running **more than one**. Each owns a domain - product, research, copy,
+data, process - and they **collaborate**: comparing work, pinging each other for data or a
+second read, critiquing each other's output, and **catching what the others missed**. It reads
+very much like a team of specialists who each know their own area and have to cooperate to move
+the whole thing forward.
+
+⭐ **The pattern that pays most: send a proposal to every other orchestrator and ask them to run
+it against their OWN history** - not *"does this look right?"*, which gets agreement, but
+*"what would have BROKEN in your workstream, and how would you tweak it so it wouldn't have?"*
+An author writes tests for the failures they can imagine, which are the ones they already
+understand. A peer runs it against the specific way their project actually broke.
+
+In one session of building this tooling, that loop caught - on changes that had already passed
+the author's own tests - a blocking check that was **15-for-15 false** on another
+orchestrator's document, a mandated status that turned out **not to parse in any spelling**, a
+remedy that **could not satisfy its own finding**, and two orchestrators who **refused to
+approve** a migration that would have overwritten their curated work.
 
 **The problem it solves.** Opening a separate session for each piece of a project works right
 up until the pieces overlap. Then sessions collide, clobber each other, and the work needs

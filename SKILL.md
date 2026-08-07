@@ -1,6 +1,6 @@
 ---
 name: orchestrating-parallel-sessions
-description: Use to run a whole project through an orchestrator agent that fans work out to parallel Claude Code sessions - headless or hand-launched - keeps them from colliding on shared ground, has workers fan out their own agents when the work needs it, and collates what comes back into one picture. For large layered projects of any kind: applications, websites, research tools, knowledge graphs, copy and content, data integrations, measurement pipelines. Its core instrument is a linted decision doc holding open questions, pending decisions and live links where the human can find them - so nobody scrolls back through thousands of lines of chat, and nobody re-asks a question that was already answered.
+description: Use to run a whole project - or a whole business - through orchestrator agents that fan work out to parallel Claude Code sessions, headless or hand-launched, keep them from colliding, tell workers to fan out their own agents when the work needs it, and collate what returns. Several orchestrators can each own a domain and COLLABORATE: comparing work, pinging each other for data and critique, and catching what the others missed. For research, planning, brainstorming, copywriting, data capture and analysis, applications, websites, integrations - any large project with layered, overlapping parts. Its core instrument is a linted decision doc holding open questions, pending decisions and live links where the human can find them, so nobody scrolls back through thousands of lines of chat or re-asks an answered question.
 ---
 
 # orchestrating-parallel-sessions
@@ -225,6 +225,68 @@ o2L1: hero                  <- lane 1, group 2 (never confused with o1L1)
 - **Command (any Bash/tool call run by a lane OR one of its children):** insert **`[cmd]`** after the id — `o<N>L<m> [cmd] <desc>` (e.g. `o1L2 [cmd] grep auth refs`), or `o<N>L<m>c<k> [cmd] <desc>` if a child ran it (e.g. `o1L2c3 [cmd] grep auth refs`).
 
 Rationale: agents END their id with `:`/`c<k>:`; commands carry `[cmd]`. That one tag stops the panel from showing a pile of identical `o1L2:` chips where the worker and its own commands are visually fused — every node now reads cleanly top-to-bottom and its owner *and kind* are obvious at a glance.
+
+## Multiple orchestrators, collaborating
+
+One orchestrator runs one workstream. **Several orchestrators, each owning a different part of
+the business, are a team** - and getting them to talk to each other is where the model stops
+being a scheduling trick and starts being an organisation.
+
+Each orchestrator holds a domain: one owns the product surface, one owns research, one owns
+copy, one owns data capture and analysis, one owns process. They run concurrently for weeks.
+They **ping each other for data, for feedback, for a second read on a decision** - and they
+critique each other's work, which is the part that pays. **They think of things the others
+missed.** It reads very much like a team of specialists who each know their own area and have
+to cooperate to move the whole thing forward.
+
+⭐ **The highest-value pattern: send a proposal to every other orchestrator and ask them to
+run it against their OWN history.**
+
+Not *"does this look right?"* - that gets agreement. Ask instead:
+
+> Here is a change I intend to make. **Run it against the mistakes, errors and dead ends YOUR
+> workstream actually hit.** What would have worked? **What would have broken?** And how would
+> you tweak it so YOUR breaking point would not have broken?
+
+**This finds what the author's own testing cannot, because an author writes fixtures for the
+failures they can imagine - which are the failures they already understand.** A peer runs it
+against the specific way *their* project actually broke, and that is a fixture nobody would
+have thought to invent.
+
+What that loop produced in one session of building this tooling, all of it on proposals that
+had already passed the author's own tests:
+
+- A blocking check that passed cleanly on the document it was written against. Another
+  orchestrator checked all **15** of its hits on THEIR doc: 15 false positives, three distinct
+  bugs - and one of them **punished the exact fix an earlier check had demanded**, pointing the
+  incentive at deleting traceability.
+- A status the human had personally specified turned out **not to parse, in any spelling.**
+  Found by the first orchestrator who tried to type it; the author had written the constant and
+  tested the sets, not the sentence.
+- A remedy that **could not satisfy its own finding** - the check said "strike the finished
+  sub-items", and striking them did not clear it, so the only route through was rewording the
+  historical record. Found by the orchestrator who tried to comply.
+- Two orchestrators independently **refused to approve a migration** until an unexplained
+  "0 findings" was accounted for. It would have written an empty index over their curated ones.
+- Four orchestrators, independently and **without seeing each other's replies**, asked for the
+  same missing state. Four people converging from four different documents is stronger evidence
+  than any single analysis.
+
+**Practically:**
+
+- Give each orchestrator a **distinct domain**, not a slice of one job. Overlap is what you are
+  trying to remove; specialisation is what makes a second opinion worth having.
+- **Ping across groups by session, not through the human.** The human relaying between
+  orchestrators is the same bottleneck the mailbox relay removed between lanes.
+- When you send a proposal out, **send it to everyone, and ask for what would BREAK.** A
+  request for approval gets approval. A request for a failure case gets a failure case.
+- **Take the refusals seriously.** An orchestrator declining to approve a change to their own
+  document is doing the job. The two that refused above were both right.
+- Each orchestrator keeps **its own decision doc** and its own ids. Cross-doc references are
+  qualified (`o3:D11`) so an id from another workstream is never mistaken for a local one.
+- **Never edit another orchestrator's doc unilaterally** - propose, get agreement, then change
+  it. The tooling enforces this (`$ORCHDOC_ME`, and `--not-mine` for an agreed edit), because
+  the author of that rule broke it inside an hour of writing it down.
 
 ## The Orchestrator Decision Doc — the OrchDoc (one per orchestrator)
 
