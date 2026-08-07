@@ -393,7 +393,16 @@ def touches_since(doc_slug, since_iso):
     args += [CANONICAL_REF]
     rc, blob, _ = git(args)
     if rc != 0 or not blob:
-        return out
+        # BOTH values, always. This path returned a bare `out`, so every caller doing
+        # `pushed, bad = touches_since(...)` crashed with "not enough values to unpack"
+        # the moment git could not answer - no repo, no `origin/main`, a fresh clone.
+        #
+        # ⭐ It never fired here because this workspace always has origin/main, so the
+        # ONLY reachable branch was the happy one. A fallback path that the author's
+        # environment can never enter is untested by construction, and it is exactly
+        # where a portability bug hides: the tool worked perfectly for one setup and
+        # crashed on `check` for every new user.
+        return out, bad
     for rec in blob.split("\x1e"):
         parts = rec.strip().split("\x1f")
         if len(parts) < 3:
@@ -675,6 +684,11 @@ META_END = "<!-- %s -->" % META_END_TOKEN
 # gate, because a gate that always fails is a gate everyone turns off - and the live
 # docs carry 600+ em-dashes that belong to a separate, owner-agreed sweep. Use --strict
 # to promote everything to blocking.
+# Checks that cannot run without a real git repo. Their fixtures are SKIPPED (loudly)
+# rather than failed when none is present, so `selftest` stays meaningful on a fresh
+# clone - the one command a new user is told to run first.
+_NEEDS_GIT = {"E-DEADREF"}
+
 BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
@@ -1819,6 +1833,21 @@ def cmd_selftest(args):
         tmp.write_text(body, encoding="utf-8")
         try:
             codes = {f.code for f in check_doc(tmp)}
+            # A fixture whose check CANNOT run here is SKIPPED, visibly - not failed, and
+            # never silently passed. E-DEADREF settles SHAs against real git repos and
+            # deliberately refuses to accuse when it cannot settle them ("do not accuse"),
+            # so with no repo present it can never fire. Reporting that as FAIL made
+            # `selftest` fail on any fresh clone - which is the one command a new user is
+            # told to run to confirm the tool works.
+            #
+            # ⭐ The skip is PRINTED. A check that quietly excuses itself is the dead
+            # check this suite's meta-guard exists to catch; the honest form says out
+            # loud what it could not verify and why.
+            if want in _NEEDS_GIT and not any((r / ".git").exists()
+                                              for r in citable_repos()):
+                print("  [SKIP] %-12s -> needs a git repo to settle SHAs; not verifiable "
+                      "in this environment" % want)
+                continue
             good = want in codes
             ok &= good
             print("  [%s] %-12s -> %s" % ("OK" if good else "FAIL", want,
