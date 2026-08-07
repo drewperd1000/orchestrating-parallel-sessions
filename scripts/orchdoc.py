@@ -82,7 +82,7 @@ def _find_workspace():
             try:
                 if any(cand.glob("ORCHESTRATOR-DECISIONS-*.md")):
                     return cand
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 pass
         return None
 
@@ -847,7 +847,7 @@ class _lock:
                     if time.time() - self.path.stat().st_mtime > 60:
                         self.path.unlink()
                         continue
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     pass
                 if time.time() > deadline:
                     raise SystemExit(
@@ -860,7 +860,7 @@ class _lock:
             if self.fd is not None:
                 os.close(self.fd)
             self.path.unlink()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             pass
         return False
 
@@ -941,7 +941,7 @@ def check_doc(path):
     """Run every invariant against one doc. Returns a list of Finding."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         return [Finding("E-IO", 0, "cannot read: %s" % e)]
 
     lines = text.splitlines()
@@ -1583,7 +1583,7 @@ def check_freshness(path, ref=CANONICAL_REF):
 
     try:
         local = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         return [Finding("E-IO", 0, "cannot read: %s" % e)], None
 
     # Normalise before comparing. The git() helper .strip()s stdout - correct when
@@ -1906,7 +1906,7 @@ def cmd_selftest(args):
         finally:
             try:
                 tmp.unlink()
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 pass
 
     # A clean doc must produce nothing. Guards against over-eager matching.
@@ -1925,7 +1925,7 @@ def cmd_selftest(args):
     finally:
         try:
             tmp.unlink()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             pass
 
     # META-GUARD: every BLOCKING code must have a fixture above.
@@ -2086,6 +2086,44 @@ def resolve_doc_arg(val):
     return PROJECTS / val
 
 
+
+def sanitize_field(text, limit=400):
+    """Narrow caller-supplied text so it cannot impersonate generated structure.
+
+    Not an escape - a NARROWING. The result must be safe to place inside a heading or a
+    field line, so anything that could be read as structure is removed rather than encoded:
+
+      * newlines      -> spaces. A title is one line; a multi-line title forged whole
+                         sections and entries.
+      * ORCHDOC:*     -> defanged. A caller who writes a generated marker can otherwise
+                         wedge the document permanently: two ENDs make the span
+                         unresolvable, so `scaffold` refuses forever.
+      * leading #     -> stripped, so text cannot become a heading.
+      * **Status:** and friends -> defanged. This is the important one. Injecting a Status
+                         field made an entry read RESOLVED that had never been ruled, which
+                         is precisely the false-done this tool exists to prevent.
+      * `<!--` / `-->` -> defanged, so a comment cannot be opened or closed.
+
+    Truncated at `limit`, because an unbounded title is its own denial of service on a
+    document meant to be read.
+    """
+    # ASCII replacements only. A non-raw "\u2024" inside a re.sub REPLACEMENT is not a
+    # unicode escape at all - re rejects it as a bad escape - and ASCII also keeps this
+    # safe on a cp1252 Windows console, where a stray glyph is its own crash.
+    t = (text or "")
+    t = re.sub(r"[\r\n\t]+", " ", t)                       # a title is ONE line
+    t = re.sub(r"ORCHDOC:([A-Z]+):(BEGIN|END)",             # cannot forge a marker
+               r"ORCHDOC_\1_\2", t)
+    t = t.replace("<!--", "<!- ").replace("-->", " -!>")    # cannot open/close a comment
+    t = re.sub(r"\*\*(Status|Owner|Opened|Depends|Touches|Attested-by|Reviewed|Resolved|"
+               r"Recorded|Enriched):\*\*", r"(\1:)", t)     # cannot forge a FIELD
+    t = re.sub(r"^[\s#>*\-]+", "", t)                       # cannot become a heading
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    if len(t) > limit:
+        t = t[:limit].rstrip() + "..."
+    return t
+
+
 def next_id(entries, prefix):
     """Allocate the next free numeric id for a prefix. Never grep by hand again."""
     hi = 0
@@ -2165,7 +2203,7 @@ def cmd_add(args):
 
         entry = [
             "",
-            "### %s - %s" % (eid, args.title),
+            "### %s - %s" % (eid, sanitize_field(args.title, 200)),
             "",
             "**Status:** OPEN - **Owner:** %s - **Opened:** %s - **Enriched:** NO"
             % (owner, today),
@@ -2278,7 +2316,7 @@ def cmd_resolve(args):
         # status (a drifted regex) but still inserted its line, and the re-run inserted
         # another. A mutation that is not idempotent turns every retry into corruption -
         # and retries are guaranteed, because the first attempt reported success falsely.
-        note = "**Resolved %s:** %s" % (today, args.ruling)
+        note = "**Resolved %s:** %s" % (today, sanitize_field(args.ruling))
         end_i = e["line"] + len(e["body"].splitlines())
         existing = [j for j in range(e["line"], min(end_i, len(lines)))
                     if lines[j].startswith("**Resolved ")]
@@ -2306,7 +2344,8 @@ def cmd_resolve(args):
         lines.insert(e["line"], "")
         lines.insert(e["line"] + 1, field)
         lines.insert(e["line"] + 2, "")
-        lines.insert(e["line"] + 3, "**Resolved %s:** %s" % (today, args.ruling))
+        lines.insert(e["line"] + 3,
+                     "**Resolved %s:** %s" % (today, sanitize_field(args.ruling)))
         changed = True
 
     doc.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -2509,7 +2548,7 @@ def cmd_commit(args):
             return 1
         who = os.environ.get("CLAUDE_ORCH_ID", "unknown")
         stamp = "<!-- ORCHDOC:OVERRIDE %s by=%s at=%s --> %s" % (
-            args.override, who, _now_iso(), args.because)
+            args.override, who, _now_iso(), sanitize_field(args.because, 600))
         txt = doc.read_text(encoding="utf-8")
         if stamp.split("-->")[0] not in txt:
             doc.write_text(txt.rstrip("\n") + "\n\n" + stamp + "\n", encoding="utf-8")
@@ -2604,7 +2643,7 @@ def cmd_commit(args):
         return 1
     try:
         mine_l = _authored(doc.read_text(encoding="utf-8"), "in the working tree")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         print("  [REFUSE] cannot read %s: %s" % (doc.name, e), file=sys.stderr)
         return 1
     if mine_l is None:
@@ -2676,7 +2715,7 @@ def cmd_commit(args):
         finally:
             try:
                 idx.unlink()
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 pass
 
     commit = build_on(ref)
@@ -3097,7 +3136,7 @@ def cmd_verify(args):
             return 1
         try:
             local = (repo / rel).read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             print("  cannot read local copy: %s" % e)
             return 1
         same = local.replace("\r\n", "\n").rstrip("\n") == \
