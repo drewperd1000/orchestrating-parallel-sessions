@@ -316,6 +316,12 @@ had already passed the author's own tests:
 
 ## The Orchestrator Decision Doc — the OrchDoc (one per orchestrator)
 
+> 🔗 **Companion skill: `orchdoc-audit`** (`/orchestration:orchdoc-audit`). Invoke it to run a
+> FULL diagnostic pass over one of these docs - every section forced one at a time with a
+> mechanical gate between them, then an independent audit by a worker that never sees what the
+> updater said. Use it when a doc has drifted, before handing a project back to the human, or
+> any time you are tempted to "refresh the OrchDoc" in a single pass, which never completes.
+
 ⛔ **CREATE IT FIRST, and keep it current as a HIGH-PRIORITY duty.** Every orchestrator creates its own OrchDoc as one of its **first acts** — right after naming the group, before or alongside launching the first lane. Do NOT wait until "there's enough to record": the OrchDoc IS the workstream's durable memory from moment one, and a fresh orchestrator session (or the human) reads it to recover the full state after any compaction, restart, or handoff. **Keeping it up to date is first-class and non-optional — not an afterthought you get to when convenient.** Update it the instant anything changes (a decision resolves, a lane launches/merges, an item finishes, a new ask surfaces), not in a batch later. A stale OrchDoc is the exact drift/loss failure mode this whole skill exists to prevent.
 
 The lane-map tracks *work in flight*; the human separately needs a standing view of *what's waiting on them*. Each orchestrator session keeps ONE live decision + coordination doc — the persistent form of the "live picture" the orchestrator holds — that decodes every short label you use in chat ("D3", "B2", lane `o1L4`, "consent") to what it means and its current status, so the human never scrolls the thread to remember a reference. Look things up there, not by scrolling chat.
@@ -365,7 +371,7 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   | command | what it does |
   |---|---|
   | `orchdoc.py check --doc o<N>` | what is wrong, exits non-zero. **Run before every report** |
-  | `orchdoc_sweep.py start --doc o<N>` | ⭐ **the forced sweep** - one section per step, mechanical gate before each advance |
+  | `orchdoc_sweep.py start --doc o<N>` | ⭐ **the forced sweep** - one section per step, mechanical gate before each advance. Wrapped as the **`orchdoc-audit`** skill: `/orchestration:orchdoc-audit` |
   | `orchdoc_sweep.py audit --doc o<N>` | ⭐ emit an **independent auditor** seed - evidence in, step reports withheld |
   | `orchdoc.py review --doc o<N>` | ⭐ walk EVERY section and force the completeness question — **the only check that can see ABSENCE** |
   | `orchdoc.py links --doc o<N>` | harvest every asset the doc already cites and propose a §1 table |
@@ -390,7 +396,7 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   - **Stale status logs** → sink to the BOTTOM (historical, newest-first), superseded by the sections above.
   - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
   - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
-- ⛔ **"Refresh the OrchDoc" is TOO LARGE A TASK TO FINISH — use `orchdoc_sweep.py`.** The
+- ⛔ **"Refresh the OrchDoc" is TOO LARGE A TASK TO FINISH — invoke the `orchdoc-audit` skill** (`/orchestration:orchdoc-audit`), which drives `orchdoc_sweep.py` through the whole procedure.** The
   observation behind it: *the shorter and more concise the exact deliverable, the more complete
   the answer.* A whole-document refresh produces a spotty update that is never complete, and
   **nothing can tell "finished" from "stopped early"**. ⭐ A checklist does not fix this — a
