@@ -707,7 +707,23 @@ META_END = "<!-- %s -->" % META_END_TOKEN
 # Checks that cannot run without a real git repo. Their fixtures are SKIPPED (loudly)
 # rather than failed when none is present, so `selftest` stays meaningful on a fresh
 # clone - the one command a new user is told to run first.
-_NEEDS_GIT = {"E-DEADREF"}
+_NEEDS_GIT = {"E-DEADREF", "W-SHACITE"}
+
+
+def _self_sha():
+    """A commit SHA that resolves in whatever repo we are standing in.
+
+    Used by the W-SHACITE fixture, which must supply a RESOLVABLE sha - that is the whole
+    distinction it tests. Returns a deliberately-unresolvable placeholder when there is no
+    repo, in which case the fixture is skipped via _NEEDS_GIT rather than run.
+    """
+    for repo in citable_repos():
+        if not (repo / ".git").exists():
+            continue
+        rc, out, _ = git(["rev-parse", "--short", "HEAD"], cwd=repo)
+        if rc == 0 and out.strip():
+            return out.strip()
+    return "0000000"
 
 BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
@@ -1670,7 +1686,7 @@ def cmd_check(args):
         print()
         print("  [BLOCK] %d commit trailer(s) name an entry without saying WHICH doc,"
               % len(_unq))
-        print("          so they update nothing. Entry ids are per-doc: o1, o7 and o9")
+        print("          so they update nothing. Entry ids are PER-DOC: several docs")
         print("          all have a D1.")
         for t, (when, subject, _why) in sorted(_unq.items()):
             print("            Touches: %-6s -> say o<N>:%-6s  (%s)"
@@ -1723,7 +1739,13 @@ def cmd_selftest(args):
          "<details><summary>Original D1 wording (superseded)</summary>\n\n"
          "### D1 - old wording\n**Status:** RESOLVED\n\nold body\n\n</details>\n"),
         ("W-LINECITE", "## NOTES\n\nSee D8, line 82 for detail.\n"),
-        ("W-SHACITE", "## NOTES\n\nFixed in commit `a2f70f9` yesterday.\n"),
+        # A SHA from a repo that is actually PRESENT, so it resolves wherever this runs.
+        # A literal SHA is environment-dependent by construction: it resolves in the repo
+        # it was copied from and nowhere else, so this fixture inverted to E-DEADREF on
+        # every fresh clone and `selftest` - the command new users are told to run first -
+        # failed for all of them. The distinction W-SHACITE tests is "resolves vs does
+        # not", which means the fixture has to supply one that does.
+        ("W-SHACITE", "## NOTES\n\nFixed in commit `%s` yesterday.\n" % _self_sha()),
         ("E-NOSTATUS", "## DECISIONS\n\n### D9 - a decision with no status field\n\nbody\n"),
         ("E-DEADREF", "## NOTES\n\nLanded in `deadbeef1234567` last week.\n"),
         # o7's real D16. A Status field carrying prose: it parses, the gate passes it,
@@ -2173,7 +2195,7 @@ def cmd_add(args):
     if args.kind == "decision":
         print()
         print("REMINDER: a decision on the human's plate also needs a Motion twin, or it is")
-        print("          invisible to him. o2 lost 6 weeks to exactly this.")
+        print("          invisible to them. One workstream lost six weeks to this.")
     return 0
 
 
@@ -2380,7 +2402,7 @@ def cmd_migrate(args):
         print()
         print("  ⛔ NOT touched - %d duplicate id(s). Which entry is live is a judgment"
               % len(dups))
-        print("     about content, so o9 does not make it in another orchestrator's doc:")
+        print("     about content, so this tool does not make it in another's doc:")
         for eid, group in sorted(dups.items()):
             print("       %-10s appears at lines %s"
                   % (eid, ", ".join(str(g["line"]) for g in group)))
