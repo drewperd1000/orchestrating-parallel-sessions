@@ -41,9 +41,12 @@ Putting the specific choice in the shared skill pushes one person's setup onto e
 
 ## How many orchestrators — and you do not need to know yet
 
-⭐ **Start with one.** You cannot draw good dividing lines before you have run the thing, and
-nothing here requires you to. The first orchestrator handles the work in front of you; the
-boundaries reveal themselves in use, usually by becoming annoying first.
+⭐ **We start with one by default, unless you say otherwise. More can be added any time, at
+any scale you need.**
+
+You cannot draw good dividing lines before you have run the thing, and nothing here requires
+you to. The first orchestrator handles the work in front of you; the boundaries reveal
+themselves in use, usually by becoming annoying first.
 
 **If you already have a picture of the split, say so and it gets captured.** If you do not,
 defer it — and once a Maestro exists (below) it has the context to help you delineate, because
@@ -260,9 +263,39 @@ A reusable watcher + protocol template ship with this skill: copy `scripts/watch
 - **Numbering collisions happen:** if both sides post "MSG 5" at once, don't edit - append the next free number noting the collision and continue. (Turn-based posting makes it rare.)
 - The human still clicks any permission prompt their settings don't auto-allow - the one remaining manual touch.
 
-## Launching workers — manual or hybrid (follow the human's standing preference)
+## Launching workers — the human's standing choice, asked once
 
-There are two ways a worker session gets started, and **the human has a standing preference for which one** — HYBRID (the orchestrator self-launches each worker headless via `claude -p` and the human just watches the lane mailbox) or MANUAL (the orchestrator hands the human a prompt to paste per session). **Follow that standing preference and do NOT re-ask "MANUAL or HYBRID?" every task** — re-asking a settled preference is a false-menu pause that spends the human's attention on a non-decision. Establish the preference once (ask only if you don't yet know it), then proceed in that mode; the human can still override per-lane on demand. Everything else (mailboxes, gating, merge serialization) is identical either way, so once the standing preference is known the launch mode is never a per-task question.
+Two modes, and **the human picks once**:
+
+- **MANUAL** — the orchestrator writes each worker prompt and the human pastes it into a fresh
+  session. Best when they want live eyes on each worker, the work needs interactive judgment,
+  or only they can supply something (a credential, an approval, their voice).
+- **HYBRID** — the orchestrator self-launches headless workers and the human watches the lane
+  mailbox. Best when the work is well-specified and they would rather review results than
+  births.
+
+⛔ **DO NOT ASK WHICH, EVERY TASK.** Read it:
+
+```bash
+python scripts/orchdoc_config.py get launch_mode
+```
+
+- **Set** → honour it silently. It does not change between tasks, and asking implies it might.
+  Re-asking a settled preference is the single most common way this skill wastes attention.
+- **Unset** → ask ONCE, then record it so nobody asks again:
+  ```bash
+  python scripts/orchdoc_config.py set launch_mode hybrid    # or: manual
+  ```
+
+⚠️ **Unset is not a default.** An orchestrator that silently adopts a mode the human never
+picked is worse than one that asks a first question — so `get` returns nothing rather than
+guessing.
+
+⭐ **They can change it at any time by saying so** — *"switch to manual for this"* — and the
+orchestrator records the new value rather than remembering it for one session. **The setting
+lives in `.orchdoc-config.json`, never in an edited copy of this file.** A shared document
+hand-modified per machine is a fork maintained by discipline, and it drifts silently the first
+time someone syncs.
 
 **Option 1 — Manual bootstrap (the human launches each session).** The orchestrator writes the lane prompt; the **human** opens a session and pastes it — in the desktop app, or via `claude -n "o1L2: api" "<prompt>"` in a terminal (the `-n` flag sets the session name, so no `/rename` afterward). The lane is a full interactive session the human can open, watch, and steer mid-task. Best when the human wants live eyes on each worker, the work needs interactive judgment, or only the human can supply something (their voice for a recording, an auth click).
 
@@ -337,6 +370,7 @@ Mechanics + limits for Option 2:
 ### ⛔ Heavy multi-agent work → headless CLI session, not the in-session Workflow tool
 
 A **multi-agent Workflow tool** (in-session deterministic fan-out) is a fourth mechanism. It returns immediately and runs "in the background," BUT its agents run **within the orchestrator's own run and share its inference budget** — so a heavy workflow's spin-up + concurrent agent activity can make the orchestrator noticeably **less responsive to the human mid-run** (it does NOT hard-block the orchestrator — it stays able to answer — but it feels sluggish while many agents churn). A **headless `claude -p` session (Option 2) is a fully separate OS process with its own inference** — it can never compete with or slow the orchestrator. **So when the priority is keeping the orchestrator free + snappy for the human, run heavy/fan-out multi-agent work as a headless CLI session, not the in-session Workflow tool** — set it up, launch it via the CLI (or hand the human the prompt), and come back free. If you genuinely want parallel fan-out, the *headless session* can run the Workflow tool **internally** (that consumes its inference, not the orchestrator's). (Learned from a real incident — a heavy fan-out workflow made the orchestrator feel locked-up mid-run; root cause was the shared run/budget + spin-up, not a hard lock.)
+
 
 ## Naming sessions + mailboxes (so concurrent groups don't mix)
 

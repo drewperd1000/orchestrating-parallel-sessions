@@ -4215,6 +4215,24 @@ def render_meta(doc, lines):
 
 
 
+
+def _config_get(key):
+    """One place a standing choice lives, so there is one place to change it.
+
+    Kept dependency-free and failure-tolerant on purpose: a missing or malformed config must
+    degrade to the previous behaviour, never crash a linter run. A config that can break the
+    tool is a config people delete.
+    """
+    try:
+        import json
+        p = PROJECTS / ".orchdoc-config.json"
+        if p.exists():
+            return (json.loads(p.read_text(encoding="utf-8")) or {}).get(key) or None
+    except Exception:
+        pass
+    return None
+
+
 def human_name(default="THE HUMAN"):
     """What to call the user, from Claude Code's own account record.
 
@@ -4226,6 +4244,10 @@ def human_name(default="THE HUMAN"):
     that cannot learn the name should say "THE HUMAN" (which is what the published skill
     says anyway); it should never fail to generate over a nicety.
     """
+    cfg = _config_get("human_name")
+    if cfg:
+        # What they SAID beats what we inferred. A derived name is a guess about a person.
+        return cfg.strip().upper()[:24]
     try:
         import json as _json
         cfg = Path(os.path.expanduser("~")) / ".claude.json"
@@ -4763,6 +4785,8 @@ def running_orchestrator():
     and a guard that gets switched off protects nothing.
     """
     v = (os.environ.get("ORCHDOC_ME") or "").strip()
+    if not v:
+        v = (_config_get("me") or "").strip()
     if not v:
         f = PROJECTS / ".orchdoc-me"
         try:
