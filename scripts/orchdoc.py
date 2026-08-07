@@ -206,8 +206,13 @@ STATUS_RE = re.compile(
     # all three drafted" harvested "ALL" - a value outside the vocabulary, so the entry
     # silently vanished from every generated view while reading perfectly to a human
     # (o8, DA17). A preceding WORD disqualifies the match; a bullet or line start does not.
+    # Two words, optionally, so "IN PROGRESS" parses. It captured ONE token, which harvested
+    # `IN` from the status the human personally mandated and failed it as E-BADSTATUS - the value
+    # was added to LIVE_STATUS and never to VALID_STATUS, and nobody tried writing one. A
+    # vocabulary the parser cannot read is not a vocabulary. The second word is bounded to the
+    # same charset and stays optional, so every single-word status parses exactly as before.
     r"(?:^|[·|*-]|(?<![A-Za-z])\s)\*{0,2}status\*{0,2}\s*:\s*\*{0,2}\s*"
-    r"([A-Za-z][A-Za-z_]*)",
+    r"([A-Za-z][A-Za-z_]*(?:[ -][A-Z][A-Za-z_]*)?)",
     re.IGNORECASE | re.MULTILINE)
 
 # What a refusal must TELL the author. A check that refuses without naming the shape it
@@ -271,6 +276,9 @@ ATTEST_CANONICAL = ("**Attested-by:** <agent> at <ISO timestamp> - "
 VALID_STATUS = {
     # needs someone
     "OPEN", "BLOCKED", "PAUSED", "DEFERRED",
+    # the human's D5 ruling, 2026-08-07: settled, but the authorised work is unfinished. All three
+    # spellings, because he wrote the spaced form and that is what everyone will type.
+    "IN PROGRESS", "IN-PROGRESS", "INPROGRESS",
     # closed out
     "RESOLVED", "ANSWERED", "DONE", "SUPERSEDED", "ARCHIVED",
     # informational entries: findings, specimens, records
@@ -314,7 +322,16 @@ def has_open_subitems(body, stopsign_means_open=False):
     contract lesson, applied inside one file.
     """
     for raw in body.splitlines():
-        txt = re.sub(r"`[^`]*`", "", raw)
+        # Strip code spans AND strikethrough. o7 found that striking a sub-item did not clear
+        # the very finding that prescribes striking it: `~~Copy is UNCHANGED pending your
+        # call~~` still matched on "pending". Every sub-item worth striking contains exactly
+        # this vocabulary, so the prescribed remedy could not satisfy the check and the only
+        # way out was rewording the historical record to dodge a regex - an escape hatch that
+        # bypasses the check instead of satisfying it.
+        # This is NOT a fourth definition of "done" (o7's argument, and it is right):
+        # strikethrough is not a MARKER of doneness, it is the RULING's representation of it,
+        # so removing it before matching is the same move as removing code spans.
+        txt = re.sub(r"~~.*?~~", "", re.sub(r"`[^`]*`", "", raw))
         if not re.match(r"\s*(?:[-*+]|\d+[.)])\s", txt):
             continue                      # only sub-items, not the entry's own fields
         if _OPEN_SUBITEM_RE.search(txt):
@@ -346,7 +363,13 @@ _OPEN_SUBITEM_RE = re.compile(
 def status_of(body):
     """The entry's status, normalised, or None."""
     m = STATUS_RE.search(body)
-    return m.group(1).strip().upper() if m else None
+    if not m:
+        return None
+    v = re.sub(r"\s+", " ", m.group(1).strip()).upper()
+    # One canonical value for the three spellings, so every downstream set-membership test
+    # sees the same string. Otherwise "IN-PROGRESS" is live and "IN PROGRESS" is not, which is
+    # the marker-format-is-a-contract failure inside a single function.
+    return "IN PROGRESS" if v in ("IN-PROGRESS", "INPROGRESS") else v
 
 
 # ---- PROSE DEPENDENCIES: the mechanism for the part that cannot be mechanised ----
@@ -3460,7 +3483,13 @@ def cmd_commit(args):
     # The prefix set is DERIVED from KIND_SECTION_NUM rather than restated here, so a new
     # entry kind cannot become invisible to this gate by someone forgetting a second list.
     _pfx = "|".join(sorted(KIND_SECTION_NUM, key=len, reverse=True))
-    for m in re.finditer(r"\b((?:%s)\d{1,3})\b" % _pfx, subject):
+    # A QUALIFIED id belongs to another document by construction and must not be demanded
+    # here. o8's commit said "apply the human's D5 ruling" and this gate refused, because D5 is
+    # an o9 entry - so the reference to the decision had to be removed from the commit that
+    # implements it. Same qualifier blindness as the deleted ghost scan, but in the WRITE
+    # path, where it blocks rather than merely adds noise.
+    _subject = re.sub(r"\bo\d+:[A-Za-z-]*\d+", " ", subject)
+    for m in re.finditer(r"\b((?:%s)\d{1,3})\b" % _pfx, _subject):
         intents.append(("entry " + m.group(1),
                         re.search(r"^#{1,6}\s.*\b%s\b" % m.group(1), doc_text,
                                   re.MULTILINE) is not None))
@@ -3474,6 +3503,17 @@ def cmd_commit(args):
         for name in unmet:
             print("           %s is named in the message but is NOT in %s"
                   % (name, doc.name))
+        if any(n.startswith("entry ") for n in unmet):
+            print()
+            print("           If you meant ANOTHER orchestrator's entry, QUALIFY it -"
+                  " `o9:D5`, not `D5`.")
+           # The gate is right to refuse an unresolvable reference and was useless for
+           # describing the problem without the remedy: the only obvious escape was to
+           # DELETE the reference, which loses the traceability the qualifier exists for.
+            print("           A qualified id is skipped here by construction, and it is"
+                  " what keeps the")
+            print("           cross-doc trail readable. Deleting the reference is the one"
+                  " fix that costs something.")
         print()
         print("           Gates 1-3 are SAFETY and all pass on a no-op. This one asks")
         print("           whether the write actually happened. It did not.")
@@ -4960,6 +5000,18 @@ def cmd_plate(args):
             print("[NOTE] no plate markers found; inserted a generated block before line %d"
                   % (anchor + 1))
 
+        if getattr(args, "dry_run", False):
+            # Nothing is written. o8 ran this verb as a QUERY - "does DA4 appear in the
+            # index?" - and it silently edited a live document they had said they were not
+            # adopting yet. `check` and `review` are read-only; this one is not, and the name
+            # reads like a noun. A read-only path makes that mistake IMPOSSIBLE rather than
+            # merely detectable, and impossible is what you want from a tired reader.
+            print("[PLATE] DRY RUN - nothing written. %s would hold %d open item(s):"
+                  % (doc.name, len(rows)))
+            for r in rows:
+                print("        %s" % r[:74])
+            return 0
+
         write_doc(doc, "\n".join(out) + "\n")
 
     print("[PLATE] %s regenerated from entries: %d open" % (doc.name, len(rows)))
@@ -5056,7 +5108,11 @@ def main():
                     help="required to WRITE an --adopt pass (owner must have agreed)")
     sc.set_defaults(func=cmd_scaffold)
 
-    p = sub.add_parser("plate", help="REGENERATE the the human-facing index from the entries")
+    p = sub.add_parser("plate",
+                       help="[WRITES] REGENERATE the human-facing index from the entries")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print what would change and write NOTHING. `check` and `review` are"
+                        " read-only; this one is not, and the name does not say so.")
     p.add_argument("--doc", required=True)
     p.add_argument("--force", action="store_true",
                    help="allow replacing a populated index with an EMPTY one. Refused by "
