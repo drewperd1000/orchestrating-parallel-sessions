@@ -323,6 +323,22 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   the updater's reasoning audits the reasoning — agreeing with a coherent account is what
   reading one does. An auditor shown only the evidence has to derive the answer independently,
   and only that can find what the updater never thought to look for.
+- ⭐ **Emoji vocabulary — the stop sign carries STATE, so do not spend it on emphasis.**
+  ⛔ = **NOT YET DONE**, outstanding work and nothing else. ⚠️ = warning / caution.
+  ‼️ = plain emphasis, carrying no state. This is not decoration policy: a marker that appears
+  a hundred times in a document and means "unfinished" in ten of them is not a marker, and a
+  reader learns to skim it exactly as fast as it appears. Measured on one real OrchDoc: 112
+  stop-signs, **90 of them inside FINISHED entries** where the glyph cannot mean unfinished.
+  ⛔ **It cost a working check** — `E-CLOSEDWITHOPENSUBS` had to be narrowed to ignore the stop
+  sign, because every hit turned out to be emphasis inside a resolved entry. Reserving the
+  glyph buys the check back. ⭐ **And the tool derives this rather than demanding it:** a doc
+  with zero stop-signs in closed entries has earned the convention, so a stop sign in a LIVE
+  entry counts as outstanding work; a doc that has not converted just gets the word-only marker
+  set. Adoption buys sensitivity; not adopting costs only sensitivity, never a false positive.
+- ⭐ **§2 is the human's plate; §3 is Claude's.** Two halves of one question — *whose is this?*
+  Naming one by owner and the other by state ("in flight") means the pairing has to be
+  remembered rather than read, and a to-do with no obvious home lands on the human's plate by
+  default — the exact direction the schema exists to prevent.
 - ⛔ **A closed item with an unfinished sub-item is a FALSE DONE.** Mark the container
   `IN PROGRESS`, ~~strike through~~ the sub-items that are finished, and move nothing to §99
   until ALL of them are done. ⭐ **The struck sub-items STAY VISIBLE** — seeing where the

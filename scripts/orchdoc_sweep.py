@@ -135,7 +135,7 @@ STEPS = [
     ("2.1", "Decisions", "99.1", "decisions that need the human's ruling"),
     ("2.2", "Questions", "99.2", "questions that need the human's answer"),
     ("2.3", "To-Dos", "99.3", "to-dos that need the human's action"),
-    ("3", "IN FLIGHT", "99.3", "the orchestrator's own open work"),
+    ("3", "ON CLAUDE'S PLATE", "99.3", "the orchestrator's own open work"),
     ("4", "FINDINGS", "4", "findings - what was learned and why it holds"),
     ("1", "LINKS AND DOCS", "1", "every doc and URL this orchestrator owns"),
     ("5", "GUARDS", "5", "what this orchestrator will not do"),
