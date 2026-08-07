@@ -71,7 +71,16 @@ def _find_workspace():
     Both are definitional - a workspace without either is not one this tool can serve.
     """
     env = os.environ.get("ORCHDOC_WORKSPACE")
-    if env and Path(env).is_dir():
+    if env:
+        # An EXPLICIT override that is wrong is an ERROR, never a suggestion. This used to
+        # fall through silently when the path did not exist, so the caller pointed the tool
+        # somewhere deliberately and it quietly used a different directory instead.
+        if not Path(env).is_dir():
+            sys.stderr.write(
+                "[orchdoc] ORCHDOC_WORKSPACE is set to a path that is not a directory:\n"
+                "          %s\n"
+                "          Refusing to guess a different workspace.\n" % env)
+            raise SystemExit(2)
         return Path(env)
 
     def _walk_up(start):
@@ -399,7 +408,7 @@ def paths_changed_since(paths, since_iso):
 
 
 
-def fetch_ok(cwd=None, remote="origin"):
+def fetch_ok(cwd=PROJECTS, remote="origin"):
     """Fetch, and REPORT whether it worked. Never silently proceed on failure.
 
     Seven call sites discarded this return code. On failure git leaves the previously
@@ -556,6 +565,11 @@ _ACTIVE_NAME_RE = re.compile(
     r"|QUESTIONS?|OPEN)\b", re.I)
 
 
+# The one place the archive section number is written down. `archive` moves INTO it and
+# is_active_section() refuses to call it live; both must agree, so both read this.
+ARCHIVE_SECTION = "99"
+
+
 def is_active_section(title):
     """
     True when a section's NAME promises live items.
@@ -566,6 +580,27 @@ def is_active_section(title):
     """
     if not title:
         return False
+
+    # ⛔ SECTION NUMBER FIRST. Introducing the §-numbered schema SILENTLY DISABLED THIS
+    # FUNCTION: every schema heading is "§2.1 Decisions", and the "§2.1 " prefix stopped
+    # the name match, so is_active_section() returned False for every live section. The
+    # consequence is not cosmetic - `archive` decides what to move by asking this, so on
+    # a schema doc NOTHING EVER ARCHIVED and closed items accumulated on the plate
+    # forever. That is precisely the clutter the schema was built to fix.
+    #
+    # ⭐ Same shape as `add` filing into §99: the numbered schema changed what headings
+    # LOOK like, and every lookup that matched on their WORDING quietly stopped working.
+    # A structural change has to be followed into every reader of that structure.
+    m = SECTION_RE.match(title if title.lstrip().startswith("#") else "## " + title)
+    if m:
+        num = m.group(1)
+        top = num.split(".")[0]
+        if top == ARCHIVE_SECTION:          # §99.x is the terminal home, never active
+            return False
+        if top in ("2", "3"):               # the plate and in-flight promise live items
+            return True
+        return False                        # links, findings, guards: not live lists
+
     name = HEADING_SPLIT_RE.split(strip_decoration(title), maxsplit=1)[0]
     return bool(_ACTIVE_NAME_RE.match(name.strip()))
 
@@ -756,7 +791,7 @@ BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
             "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE",
-            "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-IO"}
+            "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO"}
 ADVISORY = {"W-SHACITE", "W-LINECITE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
             "W-WALLOFTEXT"}
@@ -913,12 +948,27 @@ def build_plate_block(entries):
     doing a VISUAL search: like goes with like, and every row is clickable.
     """
     live = []
+    held = 0          # open, but owned by the orchestrator - counted, not hidden
     for e in entries:
         if e.get("archived") or status_of(e["body"]) not in PLATE_STATUS:
             continue
         own = re.search(r"\*\*Owner:\*\*\s*([^\-\n*·]+)", e["body"])
+
+        # ⛔ THE PLATE IS "ONLY WHAT NEEDS THEM. NOTHING ELSE." - so an item the
+        # ORCHESTRATOR owns does not belong on it, however open it is. Selecting on status
+        # alone put every open finding and every piece of in-flight work in front of the
+        # human, which is the precise noise the plate exists to remove: a queue that lists
+        # things you cannot act on trains you to skim it, and then it fails at the one job
+        # it has. Orchestrator-owned open work lives in §3 IN FLIGHT, where it belongs.
+        who = (own.group(1).strip().lower() if own else "")
+        if who in ("orchestrator", "lane", "-", "") or re.fullmatch(r"o\d+", who):
+            held += 1
+            continue
         title = strip_decoration(e["title"])
         title = re.sub(r"^%s\s*[-:]\s*" % re.escape(e["id"]), "", title)
+        # A "|" ends a markdown table CELL. An entry title containing one
+        # silently split the row and corrupted the very view the human reads.
+        title = title.replace("|", "\\|")
         live.append((e["id"], title[:88], own.group(1).strip() if own else "-",
                      gh_anchor(e["title"])))
 
@@ -950,6 +1000,14 @@ def build_plate_block(entries):
     if total == 0:
         block += ["Nothing open. **This line is generated from the entries, so it cannot",
                   "assert a false empty.**", ""]
+    # ⛔ SAY WHAT WAS EXCLUDED. The plate now omits orchestrator-owned items, which is
+    # right - they do not need the human - but an empty plate that does not explain its
+    # emptiness is the "None open while items are open" failure this whole tool was
+    # commissioned to kill. Silence about an exclusion is indistinguishable from there
+    # being nothing to exclude, and the reader cannot tell which they are looking at.
+    if held:
+        block += ["_%d open item(s) owned by the orchestrator are NOT shown here - they "
+                  "need no decision from you. They live under IN FLIGHT._" % held, ""]
     block += ["_%d open. Generated by `orchdoc.py plate`; edits here are overwritten._"
               % total, PLATE_END]
     return block
@@ -1345,6 +1403,20 @@ def check_doc(path):
             "to check and to the generated index" % tok,
             "ids are LETTERS then DIGITS (D1, F12, DA3) - not '%s'" % tok))
 
+    # --- E-CONFLICT: unresolved merge-conflict markers ---
+    #
+    # A doc containing "<<<<<<<" / "=======" / ">>>>>>>" has TWO versions of some entry in
+    # it and no one has chosen. Every status the tool then reports is drawn from whichever
+    # side happened to come first - a confident answer computed from an unresolved file.
+    for i, ln in enumerate(lines):
+        if re.match(r"^(<{7}|>{7})\s", ln) or re.match(r"^={7}$", ln):
+            findings.append(Finding(
+                "E-CONFLICT", i + 1,
+                "unresolved merge-conflict marker - this doc holds two versions and "
+                "every status read from it is arbitrary",
+                "resolve the conflict before trusting anything in this file"))
+            break
+
     # --- E-ONEH1: exactly one H1, because a second reads as a second document ---
     #
     # the human, 2026-08-07: "if that is a possibility for any unknown future grep, let's
@@ -1408,8 +1480,23 @@ def check_doc(path):
         if e.get("archived"):
             continue
         m = re.match(r"^([A-Z]+)", e["id"])
-        if m:
-            kinds[m.group(1)[0]].add(e["section"])
+        if not m:
+            continue
+        # ⛔ The LIVE/COMPLETED split is the schema's whole design, not scatter. A ruled
+        # decision belongs in §99.1 and an open one in §2.1 - that is deliberate, and it
+        # is what `archive` exists to do. Counting them as "spread across 2 sections"
+        # made this rule fire on a CORRECTLY archived document, so following the schema
+        # produced a blocking finding.
+        #
+        # ⭐ Fourth reader broken by the numbered schema, after `add`, is_active_section()
+        # and `archive`. The lesson is now unambiguous: a structural change must be
+        # followed into EVERY consumer of that structure, and "it still parses" is not
+        # evidence that it still means the same thing.
+        sec = e["section"]
+        sm = SECTION_RE.match(sec if sec.lstrip().startswith("#") else "## " + sec)
+        if sm and sm.group(1).split(".")[0] == ARCHIVE_SECTION:
+            continue                      # archived-by-schema: not part of the live group
+        kinds[m.group(1)[0]].add(sec)
     for prefix, label in KIND_ORDER:
         secs = kinds.get(prefix, set())
         if len(secs) > 1:
@@ -1585,6 +1672,13 @@ def check_doc(path):
 
 
 def git(args, cwd=PROJECTS):
+    # A None cwd must mean "the workspace", not the literal string "None". Passing None
+    # produced `git -C None`, which fails with "cannot change to 'None'" - and a caller
+    # reading only the return code sees that as the OPERATION failing. fetch_ok() did
+    # exactly that, so the freshness oracle reported "cannot reach the remote" on every
+    # single run: the cry-wolf failure, introduced by the fix for the opposite failure.
+    # Always-unknown is no more useful than always-current.
+    cwd = PROJECTS if cwd is None else cwd
     try:
         p = subprocess.run(["git", "-C", str(cwd)] + args,
                            capture_output=True, text=True, timeout=60)
@@ -1886,6 +1980,10 @@ def cmd_selftest(args):
          "**Status:** CONFIRMED - **Recorded:** 2026-08-01\n\nbody\n"),
         # o9L7: an id the parser cannot read is skipped, so the entry vanishes from every
         # guarantee the tool makes while still being readable on the page.
+        # o9L7: a doc mid-merge answers every question from whichever side sorts first.
+        ("E-CONFLICT",
+         "## DECISIONS\n\n### D1 - a decision\n<<<<<<< HEAD\n**Status:** OPEN\n"
+         "=======\n**Status:** RESOLVED\n>>>>>>> other\n\nbody\n"),
         ("E-BADID",
          "## DECISIONS\n\n### D-1 - an id that does not parse\n"
          "**Status:** OPEN - **Owner:** someone\n\nbody\n"),
@@ -2163,16 +2261,48 @@ def _today():
     return date.today().isoformat()
 
 
+class DocPathError(Exception):
+    """A doc argument that must be refused by name rather than acted on."""
+
+
+def _confine(p):
+    """Refuse any path that resolves outside the workspace.
+
+    `--doc "../ESCAPED"` wrote a file outside the workspace - verified, not theoretical.
+    A tool that can be deployed anywhere can be POINTED anywhere, and one that builds its
+    target by string concatenation has no boundary at all. The workspace is the boundary,
+    so the check is: resolve fully, then require containment.
+    """
+    try:
+        rp = Path(p).resolve()
+        root = Path(PROJECTS).resolve()
+    except OSError as e:
+        raise DocPathError("cannot resolve path: %s" % e)
+    try:
+        inside = rp == root or rp.is_relative_to(root)
+    except AttributeError:                      # Python < 3.9
+        inside = str(rp).startswith(str(root))
+    if not inside:
+        raise DocPathError(
+            "refusing a doc outside the workspace.\n"
+            "           target    : %s\n"
+            "           workspace : %s\n"
+            "           Set ORCHDOC_WORKSPACE if the workspace is elsewhere." % (rp, root))
+    if rp.is_dir():
+        raise DocPathError("that path is a DIRECTORY, not a document: %s" % rp)
+    return rp
+
+
 def resolve_doc_arg(val):
     """Accept 'o7', 'ORCHESTRATOR-DECISIONS-o7.md', or a full path."""
     if not val:
         return None
     p = Path(val)
     if p.exists():
-        return p
+        return _confine(p)
     if re.fullmatch(r"o\d+", val):
-        return PROJECTS / ("ORCHESTRATOR-DECISIONS-%s.md" % val)
-    return PROJECTS / val
+        return _confine(PROJECTS / ("ORCHESTRATOR-DECISIONS-%s.md" % val))
+    return _confine(PROJECTS / val)
 
 
 
@@ -2211,6 +2341,34 @@ def sanitize_field(text, limit=400):
     if len(t) > limit:
         t = t[:limit].rstrip() + "..."
     return t
+
+
+
+def write_doc(path, text):
+    """Write atomically. A partial OrchDoc is worse than a failed command.
+
+    Every write here was read-modify-write straight onto the real file, so an interrupt, a
+    full disk or a crash mid-write left a TRUNCATED document - and the document is the
+    durable record this entire tool exists to protect.
+
+    temp-beside-target + flush + fsync + os.replace(). os.replace is atomic on POSIX and on
+    Windows, so a reader sees either the old file or the new one, never a half-written one.
+    Beside the target, not in $TMP, because a cross-volume replace is not atomic.
+    """
+    path = Path(path)
+    tmp = path.with_name(path.name + ".orchdoc-tmp-%d" % os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(str(tmp), str(path))
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise DocPathError("cannot write %s: %s" % (path.name, e))
 
 
 def next_id(entries, prefix):
@@ -2292,7 +2450,16 @@ def cmd_add(args):
 
         entry = [
             "",
-            "### %s - %s" % (eid, sanitize_field(args.title, 200)),
+            # Emit the marker HERE. `add` writes Status: OPEN, so it already knows which
+            # marker the heading needs - and without it every `add` was immediately
+            # followed by E-MARKERDRIFT, so the documented flow (add -> plate -> check)
+            # failed its own check every single time.
+            #
+            # ⭐ A gate that fires on the tool's own correct output is the cry-wolf failure:
+            # it teaches the user that red means "normal", and then it cannot warn them
+            # about anything. Emit the correct state; do not report the wrong one.
+            "### %s %s - %s" % (STATUS_MARKER["OPEN"], eid,
+                                sanitize_field(args.title, 200)),
             "",
             "**Status:** OPEN - **Owner:** %s - **Opened:** %s - **Enriched:** NO"
             % (owner, today),
@@ -2343,7 +2510,7 @@ def cmd_add(args):
                     break
 
         out = lines[:insert_at] + entry + lines[insert_at:]
-        doc.write_text("\n".join(out) + "\n", encoding="utf-8")
+        write_doc(doc, "\n".join(out) + "\n")
 
     print("[ADDED] %s" % eid)
     print()
@@ -2400,6 +2567,21 @@ def cmd_resolve(args):
         # RESOLVED" while the document still read OPEN. One pattern, one source of truth.
         lines[i] = lines[i][:m.start(1)] + status + lines[i][m.end(1):]
         lines[i] = re.sub(r"\*\*Enriched:\*\*\s*\w+", "**Enriched:** YES", lines[i])
+
+        # CARRY THE HEADING MARKER WITH THE STATUS. The marker is DERIVED from the status,
+        # so changing one without the other is the drift E-MARKERDRIFT exists to catch -
+        # and `resolve` was creating it on every single call. The user then saw a failing
+        # check immediately after a successful resolve, which is the cry-wolf failure:
+        # the gate firing on the tool's own output teaches the reader that red is normal.
+        want_mark = STATUS_MARKER.get(status)
+        if want_mark:
+            h = e["line"] - 1
+            if 0 <= h < len(lines) and lines[h].lstrip().startswith("#"):
+                bare = re.sub(r"^(#+)\s*(?:%s)?\s*" % "|".join(
+                    re.escape(v) for v in set(STATUS_MARKER.values())),
+                    r"\1 ", lines[h]).rstrip()
+                hashes, _, rest = bare.partition(" ")
+                lines[h] = "%s %s %s" % (hashes, want_mark, rest.strip())
         # IDEMPOTENT. the human spotted the bug in a screenshot: Q1 carried the SAME
         # "Resolved" line twice, because the first run silently failed to flip the
         # status (a drifted regex) but still inserted its line, and the re-run inserted
@@ -2437,7 +2619,40 @@ def cmd_resolve(args):
                      "**Resolved %s:** %s" % (today, sanitize_field(args.ruling)))
         changed = True
 
-    doc.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Write the declared edge, so a ruling can be told it has gone stale. E-NODEPS exists
+    # because a decision resting on nothing can never be invalidated by anything - it just
+    # sits there looking settled while its inputs move underneath it. Inserted next to the
+    # Status field so it travels with the entry.
+    # RESOLVING IS REVIEWING. E-STALEPROSE asks when an entry was last checked against the
+    # facts it rests on, and a ruling made right now is exactly that check - but `resolve`
+    # recorded no attestation, so every freshly-ruled decision was immediately reported as
+    # "never reviewed". The user then saw a blocking finding on work they had just done
+    # correctly, which is the cry-wolf failure again: the gate firing on the tool's own
+    # correct output. The timestamp comes from the same generator as everywhere else, so
+    # it cannot be a hand-typed guess.
+    if changed:
+        att = ("**Attested-by:** %s at %s - ruled in this session; the ruling text above "
+               "states what was decided and the Depends edge states what it rests on"
+               % (sanitize_field(os.environ.get("CLAUDE_ORCH_ID", "orchestrator"), 40),
+                  _now_iso()))
+        if not any(l.startswith("**Attested-by:**")
+                   for l in lines[e["line"]:e["line"] + 8]):
+            for k in range(e["line"], min(len(lines), e["line"] + 8)):
+                if lines[k].startswith("**Status:**"):
+                    lines.insert(k + 1, att)
+                    break
+
+    if changed and args.depends:
+        dep_line = "**Depends:** %s" % sanitize_field(args.depends, 200)
+        already = any(l.startswith("**Depends:**")
+                      for l in lines[e["line"]:e["line"] + 6])
+        if not already:
+            for k in range(e["line"], min(len(lines), e["line"] + 6)):
+                if lines[k].startswith("**Status:**"):
+                    lines.insert(k + 1, dep_line)
+                    break
+
+    write_doc(doc, "\n".join(lines) + "\n")
 
     # VERIFY THE MUTATION. Never report success from the command's own say-so.
     #
@@ -2547,7 +2762,7 @@ def cmd_migrate(args):
                 lines.insert(e["line"] + 1, field)
 
         if not args.dry_run and planned:
-            doc.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            write_doc(doc, "\n".join(lines) + "\n")
 
     mode = "DRY RUN (nothing written)" if args.dry_run else "APPLIED"
     print("orchdoc migrate - %s - %s" % (doc.name, mode))
@@ -2640,7 +2855,7 @@ def cmd_commit(args):
             args.override, who, _now_iso(), sanitize_field(args.because, 600))
         txt = doc.read_text(encoding="utf-8")
         if stamp.split("-->")[0] not in txt:
-            doc.write_text(txt.rstrip("\n") + "\n\n" + stamp + "\n", encoding="utf-8")
+            write_doc(doc, txt.rstrip("\n") + "\n\n" + stamp + "\n")
         print("  [override] %s recorded by %s - it will surface in every later check."
               % (args.override, who))
         findings = [f for f in findings if f.code != args.override]
@@ -3021,7 +3236,7 @@ def cmd_normalize(args):
                 if not args.dry_run:
                     lines[i] = new
         if changes and not args.dry_run:
-            doc.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            write_doc(doc, "\n".join(lines) + "\n")
 
     print("orchdoc normalize - %s - %s"
           % (doc.name, "DRY RUN (nothing written)" if args.dry_run else "APPLIED"))
@@ -3079,10 +3294,31 @@ def cmd_archive(args):
                 del lines[start:end]
 
         if not args.dry_run:
+            # ROUTE BY KIND, into the schema's own completed subsection. Matching on the
+            # NAME found nothing on a schema doc (there is no heading containing "DONE"),
+            # so archive APPENDED A NEW "## DONE" SECTION OUTSIDE THE SCHEMA - the entry
+            # left the plate, which looked like success, and landed somewhere the index
+            # does not describe.
+            #
+            # ⭐ Third command broken the same way by the numbered schema, after `add` and
+            # is_active_section(): each one located a section by its WORDING. The schema
+            # gave sections stable NUMBERS precisely so lookups would stop guessing from
+            # prose - so every lookup has to actually use them.
             dest = None
-            for i, l in enumerate(lines):
-                if re.match(r"^##\s", l) and dest_name.upper() in l.upper():
-                    dest = i
+            kinds = {(re.match(r"[A-Z]+", b[0]) or [""])[0][:1] for b in blocks}
+            want_num = None
+            if len(kinds) == 1:
+                want_num = KIND_SECTION_NUM.get(kinds.pop(), (None, None))[1]
+            if want_num:
+                for i, l in enumerate(lines):
+                    m = SECTION_RE.match(l)
+                    if m and m.group(1) == want_num:
+                        dest = i
+                        break
+            if dest is None:                       # legacy doc, or a mixed-kind batch
+                for i, l in enumerate(lines):
+                    if re.match(r"^##\s", l) and dest_name.upper() in l.upper():
+                        dest = i
             if dest is None:
                 lines += ["", "## %s" % dest_name, ""]
                 dest = len(lines) - 1
@@ -3095,7 +3331,7 @@ def cmd_archive(args):
                     insert_at = i
                     break
             lines[insert_at:insert_at] = body
-            doc.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            write_doc(doc, "\n".join(lines) + "\n")
 
     print("orchdoc archive - %s - %s"
           % (doc.name, "DRY RUN (nothing written)" if args.dry_run else "APPLIED"))
@@ -3155,7 +3391,7 @@ def cmd_clones(args):
         if not args.no_fetch:
             git(["fetch", "--quiet", "origin"], cwd=r)
         rc, head, _ = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=r)
-        rc2, behind, _ = git(["rev-list", "--count", "HEAD..origin/main"], cwd=r)
+        rc2, behind, _ = git(["rev-list", "--count", "HEAD..%s" % CANONICAL_REF], cwd=r)
         if rc2 != 0 or not behind.isdigit():
             print("  [--]    %-34s no origin/main to compare" % r.name)
             continue
@@ -3852,7 +4088,7 @@ def cmd_scaffold(args):
         print("would regenerate the index (%d findings listed)" % nfind)
         return 0
 
-    doc.write_text("\n".join(lines), encoding="utf-8")
+    write_doc(doc, "\n".join(lines))
     print("scaffold: %s" % doc.name)
     if reordered:
         print("  sections REORDERED into numeric order (content verified identical)")
@@ -3911,7 +4147,7 @@ def cmd_plate(args):
             print("[NOTE] no plate markers found; inserted a generated block before line %d"
                   % (anchor + 1))
 
-        doc.write_text("\n".join(out) + "\n", encoding="utf-8")
+        write_doc(doc, "\n".join(out) + "\n")
 
     print("[PLATE] %s regenerated from entries: %d open" % (doc.name, len(rows)))
     for r in rows:
@@ -3957,6 +4193,10 @@ def main():
     r.add_argument("--ruling", required=True, help="what was decided, and by whom")
     r.add_argument("--status", default="RESOLVED",
                    help="RESOLVED (default), SUPERSEDED, DEFERRED, PARKED")
+    r.add_argument("--depends", default=None,
+                   help="what this ruling RESTS ON (e.g. 'F3, o7:D16'). Required by "
+                        "E-NODEPS: a ruling with no declared edge can never go stale, "
+                        "so nothing can ever tell you it needs revisiting.")
     r.add_argument("--adopt", action="store_true",
                    help="legacy entry with no Status field: insert one instead of refusing")
     r.add_argument("--commit", dest="dry_run", action="store_false", default=True,
@@ -4041,7 +4281,21 @@ def main():
     s.set_defaults(func=cmd_selftest)
 
     args = ap.parse_args()
-    return args.func(args)
+    try:
+        return args.func(args)
+    except DocPathError as e:
+        # A refusal is a RESULT, not a crash. These are the cases where the tool has been
+        # pointed somewhere it must not write - outside the workspace, at a directory, at
+        # something unwritable - and the right behaviour is to say so by name and stop.
+        # A traceback here would be indistinguishable from a bug, and mid-command crashes
+        # are how half-written state happens.
+        print("[REFUSE] %s" % e, file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        # Writes are atomic (write_doc), so an interrupt cannot leave a partial document.
+        print("\n[orchdoc] interrupted - no document was left partially written.",
+              file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
