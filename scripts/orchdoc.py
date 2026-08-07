@@ -398,6 +398,20 @@ def paths_changed_since(paths, since_iso):
     return out
 
 
+
+def fetch_ok(cwd=None, remote="origin"):
+    """Fetch, and REPORT whether it worked. Never silently proceed on failure.
+
+    Seven call sites discarded this return code. On failure git leaves the previously
+    cached remote-tracking refs in place, so every downstream comparison silently measured
+    against a stale snapshot and reported "current" - which is precisely the condition this
+    tool was built to detect. An oracle that cannot tell "I checked" from "I could not
+    check" is worse than no oracle: the reader stops looking.
+    """
+    rc, _out, err = git(["fetch", "--quiet", "--prune", remote], cwd=cwd)
+    return rc == 0, (err or "").strip().splitlines()[-1] if err else ""
+
+
 def touches_since(doc_slug, since_iso):
     """
     {entry_id: (iso, subject)} for `Touches:` trailers naming THIS doc, landed after
@@ -666,7 +680,11 @@ KIND_SECTION_NUM = {"D": ("2.1", "99.1"), "Q": ("2.2", "99.2"),
                     "T": ("2.3", "99.3"), "A": ("2.3", "99.3"),
                     "F": ("4", "4"), "S": ("4", "4"), "W": ("3", "99.3")}
 
-SECTION_RE = re.compile(r"^#{2,3}\s*(?:\W*\s*)?\u00a7?\s*(\d+(?:\.\d+)?)\b")
+# The leading decoration class must NOT swallow a SIGN. It was `\W*`, which happily ate the
+# "-" in "## \u00a7-1 NEGATIVE", so that heading read as \u00a71 and SATISFIED the schema's requirement
+# for section 1 - a malformed section silently standing in for a real one. Emoji and other
+# decoration are still allowed; + and - are not.
+SECTION_RE = re.compile(r"^#{2,3}\s*(?:[^\w\s+-]*\s*)?\u00a7?\s*(\d+(?:\.\d+)?)\b")
 
 # Generated regions. Same contract discipline as the plate: one token, matched
 # structurally, and a malformed marker REFUSES rather than guessing.
@@ -738,7 +756,7 @@ BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
             "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE",
-            "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-IO"}
+            "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-IO"}
 ADVISORY = {"W-SHACITE", "W-LINECITE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
             "W-WALLOFTEXT"}
@@ -1305,6 +1323,28 @@ def check_doc(path):
                     "a date that has not happened cannot attest to work that has"))
                 break
 
+    # --- E-BADID: a heading that LOOKS like an entry but does not parse as one ---
+    #
+    # `### D-1 - something` matched no id pattern, so it was SILENTLY SKIPPED: present on
+    # disk, absent from `check` and from the generated plate. An entry the human can read
+    # but the tool cannot see is the worst outcome this tool has, because every guarantee
+    # it makes is scoped to entries it parsed.
+    #
+    # The rule the rest of the file already follows: WHEN A PARSER CANNOT UNDERSTAND
+    # SOMETHING SHAPED LIKE ITS INPUT, IT MUST COMPLAIN, NOT SKIP.
+    for i, ln in enumerate(lines):
+        m = re.match(r"^###\s+(?:\W+\s*)?([A-Za-z][\w.-]{0,6})\s*[-–:]", ln)
+        if not m:
+            continue
+        tok = m.group(1)
+        if ID_RE.match(tok) or not re.match(r"^[A-Z]{1,3}[-\d]", tok):
+            continue
+        findings.append(Finding(
+            "E-BADID", i + 1,
+            "heading looks like an entry but '%s' is not a valid id, so it is INVISIBLE "
+            "to check and to the generated index" % tok,
+            "ids are LETTERS then DIGITS (D1, F12, DA3) - not '%s'" % tok))
+
     # --- E-ONEH1: exactly one H1, because a second reads as a second document ---
     #
     # the human, 2026-08-07: "if that is a possibility for any unknown future grep, let's
@@ -1574,7 +1614,16 @@ def check_freshness(path, ref=CANONICAL_REF):
     rel = os.path.relpath(str(path), str(PROJECTS)).replace("\\", "/")
     findings = []
 
-    git(["fetch", "--quiet", "--all", "--prune"])
+    # ⛔ REFUSE rather than answer from cached refs. This function's entire output is a
+    # claim about the remote; making that claim without having reached the remote is the
+    # failure the function was written to prevent.
+    ok, why = fetch_ok()
+    if not ok:
+        return [Finding(
+            "E-NOFETCH", 0,
+            "cannot reach the remote, so freshness is UNKNOWN - not 'current'",
+            why or "git fetch failed; refs/remotes may be a stale snapshot")], None
+
     rc, canon, _ = git(["show", "%s:%s" % (ref, rel)])
     if rc != 0:
         return [Finding("E-STALE", 0,
@@ -1792,6 +1841,7 @@ def cmd_selftest(args):
         # invisible non-update". This fixture cannot be exercised without git history,
         # so it asserts the parser directly instead.
         ("E-BADTOUCH", None),
+        ("E-NOFETCH", None),
         # o5: a bare date is only unanswerable when the contending work is same-day.
         ("E-AMBIGUOUSDATE",
          "## DECISIONS\n\n### D1 - verdict\n"
@@ -1834,6 +1884,11 @@ def cmd_selftest(args):
          "**Depends:** F2\n\nbody\n\n"
          "## FINDINGS\n\n### F2 - an input\n"
          "**Status:** CONFIRMED - **Recorded:** 2026-08-01\n\nbody\n"),
+        # o9L7: an id the parser cannot read is skipped, so the entry vanishes from every
+        # guarantee the tool makes while still being readable on the page.
+        ("E-BADID",
+         "## DECISIONS\n\n### D-1 - an id that does not parse\n"
+         "**Status:** OPEN - **Owner:** someone\n\nbody\n"),
         ("E-ONEH1",
          "# Orchestrator Decision Doc - o99\n# (a role)\n\n## \u00a71 LINKS AND DOCS\n\nx\n"),
         ("E-TITLE",
@@ -1860,6 +1915,22 @@ def cmd_selftest(args):
     ok = True
     print("orchdoc selftest")
     for want, body in cases:
+        if body is None and want == "E-NOFETCH":
+            # FUNCTIONAL assertion, not a document fixture: E-NOFETCH is emitted when the
+            # REMOTE is unreachable, which no .md file can simulate. A real repo with a
+            # bogus remote is the only honest test, and the meta-guard is right to demand
+            # one - an untestable blocking code is indistinguishable from a dead one.
+            d = Path(tempfile.mkdtemp())
+            git(["init", "-q", "."], cwd=d)
+            git(["remote", "add", "origin",
+                 "https://o9-nonexistent-host.invalid/x.git"], cwd=d)
+            reached, _why = fetch_ok(cwd=d)
+            good = (reached is False)      # an unreachable remote must report FAILURE
+            ok &= good
+            print("  [%s] %-12s -> unreachable remote reports FAILURE, not success"
+                  % ("OK" if good else "FAIL", want))
+            continue
+
         if body is None:
             # Parser-level assertion: a trailer that cannot resolve must be reported,
             # never silently dropped.
@@ -1995,8 +2066,26 @@ def marker_span(lines, begin_tok, end_tok, label="derived-region"):
         return re.search(r"<!--[^>]*\b%s\b[^>]*-->" % re.escape(tok),
                          re.sub(r"`[^`]*`", "", l)) is not None
 
-    begins = [i for i, l in enumerate(lines) if _real(begin_tok, l)]
-    ends = [i for i, l in enumerate(lines) if _real(end_tok, l)]
+    # FENCED blocks are quoted text, not structure. Stripping INLINE code spans was not
+    # enough: a doc that shows the marker format in a ```fenced example - which the
+    # standard's own documentation does - had those lines read as real markers, so the
+    # span resolved to the wrong region and `plate` OVERWROTE THE EXAMPLE. Actual content
+    # destruction, from a doc that only described the tool.
+    #
+    # ⭐ Third time tonight that a generated/quoted block had to be excluded from being
+    # parsed as structure (after E-ONEH1 and the orphan-subtitle scan), and this is the
+    # oldest and most load-bearing of the three. The rule deserves stating once: IF A
+    # READER WOULD NOT ACT ON IT, THE PARSER MUST NOT EITHER.
+    in_fence, live = False, []
+    for l in lines:
+        if l.lstrip().startswith("```"):
+            in_fence = not in_fence
+            live.append(False)
+            continue
+        live.append(not in_fence)
+
+    begins = [i for i, l in enumerate(lines) if live[i] and _real(begin_tok, l)]
+    ends = [i for i, l in enumerate(lines) if live[i] and _real(end_tok, l)]
     if not begins and not ends:
         return None, None  # no such region at all: legitimate, not an error
     if len(begins) != 1 or len(ends) != 1:
@@ -2546,7 +2635,7 @@ def cmd_commit(args):
             print("           An override held to a lower bar than an attestation "
                   "becomes 'needed to ship'.", file=sys.stderr)
             return 1
-        who = os.environ.get("CLAUDE_ORCH_ID", "unknown")
+        who = sanitize_field(os.environ.get("CLAUDE_ORCH_ID", "unknown"), 40)
         stamp = "<!-- ORCHDOC:OVERRIDE %s by=%s at=%s --> %s" % (
             args.override, who, _now_iso(), sanitize_field(args.because, 600))
         txt = doc.read_text(encoding="utf-8")
@@ -2654,7 +2743,7 @@ def cmd_commit(args):
         # o8's guard 2, applied to gate 1: a RECORDED reconciliation beats a bypass that
         # leaves no trace. The --because reason is already held to the attestation bar.
         print("  [override] gate 1 reconciliation recorded by %s - %d reworded line(s)"
-              % (os.environ.get("CLAUDE_ORCH_ID", "unknown"), len(lost)))
+              % (sanitize_field(os.environ.get("CLAUDE_ORCH_ID", "unknown"), 40), len(lost)))
         for l in lost[:6]:
             print("             was: %s" % l.strip()[:88])
         lost = []
@@ -2709,7 +2798,7 @@ def cmd_commit(args):
                 # tool stamping every commit "Claude Opus 5" is factually wrong for most
                 # runs of it, and the trailer is the permanent record.
                 input=msg + ("\n\nCo-Authored-By: %s <noreply@anthropic.com>\n"
-                             % os.environ.get("CLAUDE_MODEL_NAME", "Claude")),
+                             % sanitize_field(os.environ.get("CLAUDE_MODEL_NAME", "Claude"), 40)),
                 capture_output=True, text=True, timeout=60)
             return p.stdout.strip()
         finally:
