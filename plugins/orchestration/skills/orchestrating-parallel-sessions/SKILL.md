@@ -85,6 +85,26 @@ need a second.** That is where a human naturally lands — you start a session t
 front of you, and later use that same session to help stand up the next orchestrator, because
 it is the one that has been watching and knows what the new domain does and does not include.
 
+⭐ **So spend that first session on the things only you can supply.** Not the first task — the
+frame around all of them:
+
+- **The big objectives.** What this project is actually for.
+- **The vision and direction.** Where you want it to go, and what you are deliberately not
+  doing.
+- **What success looks like.** Concretely enough that a worker three levels down could tell
+  whether its output moved toward it.
+
+**That is what makes the promotion natural rather than arbitrary.** A session holding the
+objectives, the direction and the definition of success is already doing the executive's job —
+so when a second orchestrator is needed, the one that should scope it, brief it and judge its
+output is the one that knows what the whole thing is for. **It becomes the Maestro because it
+holds the vision, not because it happened to be first.**
+
+⚠️ **And it is the difference between an orchestrator that delegates well and one that just
+distributes work.** Scope, priority and "is this worth doing?" are all downstream of knowing
+what success looks like. An orchestrator without that can hand out tasks; it cannot tell you
+which ones matter.
+
 From then on it is the executive over a host of department-level orchestrators. **Nothing about
 this has to be decided on day one** — it is a role your first session grows into, not a
 structure you build before starting.
