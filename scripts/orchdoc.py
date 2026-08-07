@@ -278,6 +278,49 @@ VALID_STATUS = {
 }
 PLATE_STATUS = {"OPEN", "BLOCKED"}
 
+# the human's ruling on D5, 2026-08-07. Four orchestrators asked for a status meaning "settled, but
+# the authorised work is unfinished". He declined to add one and gave a rule instead: mark the
+# container IN PROGRESS, strike the finished sub-items, and move nothing to 99 until ALL of them
+# are done. No new vocabulary - IN PROGRESS and ~~strikethrough~~ already meant this - and the
+# struck sub-items STAY VISIBLE, because seeing where the finished work sits is what lets him
+# rule on the rest. We were all solving the writer's labelling problem; he answered the reader's.
+LIVE_STATUS = PLATE_STATUS | {"IN PROGRESS", "IN-PROGRESS", "INPROGRESS"}
+
+
+def has_open_subitems(body):
+    """Does this entry carry a sub-item that is NOT done?
+
+    Deliberately reuses the same two marker regexes as W-STRIKEDONE and E-MIXEDSTATE. A third
+    private definition of "done" would be a third thing to drift - the marker-format-is-a-
+    contract lesson, applied inside one file.
+    """
+    for raw in body.splitlines():
+        txt = re.sub(r"`[^`]*`", "", raw)
+        if not re.match(r"\s*(?:[-*+]|\d+[.)])\s", txt):
+            continue                      # only sub-items, not the entry's own fields
+        if _OPEN_SUBITEM_RE.search(txt):
+            return True
+    return False
+
+
+# NARROWER than NOTDONE_MARK_RE on purpose. That one includes the stop sign, which across these
+# eight documents is an EMPHASIS marker - "⛔ **The money bug**", "⛔ **Anchor corrected:**" -
+# appearing constantly inside fully-closed entries. Reading it as outstanding work made every
+# hit on o7 and o8 false. What survives here are only markers that cannot mean anything else:
+# an explicit not-done WORD, or the hourglass. Sharing NOTDONE_MARK_RE would have been the
+# tidier code and the wrong check - a marker's meaning depends on the CONTEXT that reads it,
+# which is the same lesson as the marker-format contract, one level up.
+#
+# The boundary is written out rather than borrowed from _WORD_BOUND, which is defined further
+# down the file. Reaching forward for it raised NameError at import - and the fleet sweep that
+# should have caught that reported "0 hits" for all seven docs, because the counting grep read
+# a crashed run as a clean one. Two silent surfaces agreeing on a false picture, again: this
+# time the check was dead and the measurement said it was quiet.
+_OPEN_SUBITEM_RE = re.compile(
+    r"⏳|(?<![A-Za-z])(?:NOT DONE|NOT YET|NOT STARTED|OUTSTANDING|STILL NEED"
+    r"|STILL TO|TODO|PENDING|UNBUILT|AWAITING)(?![A-Za-z])", re.I)
+
+
 
 def status_of(body):
     """The entry's status, normalised, or None."""
@@ -854,7 +897,7 @@ def _self_sha():
 BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
-            "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE",
+            "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE", "E-CLOSEDWITHOPENSUBS",
             "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO"}
 ADVISORY = {"W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
@@ -1136,6 +1179,27 @@ def check_doc(path):
     # --- E-DUPID: one ID, one entry. The single highest-value invariant. ---
     by_id = defaultdict(list)
     for e in entries:
+
+        # the human's D5 ruling, enforced. A terminal status over a still-open sub-item is a FALSE
+        # DONE - the human reads "resolved", stops checking, and the outstanding work goes
+        # invisible without anyone having lied. o8 predicted it before it was reachable.
+        # Safe as BLOCKING because it fires only on a contradiction INTERNAL TO ONE ENTRY:
+        # no cross-doc knowledge, no line numbers, no guess about intent. That is the property
+        # W-BADLINEREF lacked when it had to be demoted.
+        # WORK containers only. A FINDING's bullets are narrative - they describe the bug that
+        # was found, so "cannot reach", "blocked", and a stop sign all appear in a fully-closed
+        # finding as a matter of course. Reading them as outstanding work made 6 of 6 hits false
+        # on the first run. The distinction is not a heuristic: a decision/to-do/work item's
+        # sub-items ARE the work; a finding's sub-items are a description OF work.
+        if (e["id"][:1] in ("D", "T", "W", "A")
+                and status_of(e["body"]) in TERMINAL_STATUS
+                and has_open_subitems(e["body"])):
+            findings.append(Finding(
+                "E-CLOSEDWITHOPENSUBS", e["line"],
+                "%s claims a closed status while a sub-item under it is still not done"
+                % e["id"],
+                "mark the container IN PROGRESS and strike the finished sub-items; it moves "
+                "to \u00a799 only when ALL of them are done (the human's D5 ruling)"))
         by_id[e["id"]].append(e)
     for eid, group in sorted(by_id.items()):
         if len(group) > 1:
@@ -2114,6 +2178,11 @@ def cmd_selftest(args):
          "## DECISIONS\n\n### D1 - first\n**Status:** OPEN\n\ntext\n\n"
          "### D1 - same id again\n**Status:** RESOLVED\n\ntext\n"),
         ("E-SELFCLAIM", "## DECISIONS - none open\n\nnothing here\n"),
+        # the human's D5 shape: the container says done, one sub-item says otherwise. This is what
+        # o8 meant by "burying the majority of what is actually still owed" - it looks finished.
+        ("E-CLOSEDWITHOPENSUBS",
+         "## DECISIONS\n\n### D4 - ship the three lanes\n**Status:** RESOLVED\n\n"
+         "- ~~lane A merged~~\n- ~~lane B merged~~\n- lane C NOT DONE\n"),
         ("E-ARCHIVEDMARKER",
          "## DECISIONS\n\n### D1 - live\n**Status:** OPEN\n\nbody\n\n"
          "<details><summary>Original D1 wording (superseded)</summary>\n\n"
@@ -2479,8 +2548,15 @@ KIND_SECTION = {
     "finding": "FINDINGS",
     "todo": "TO-DOS",
     "specimen": "SPECIMENS",
+    "work": "IN FLIGHT",
 }
-KIND_PREFIX = {"decision": "D", "finding": "F", "todo": "T", "specimen": "S"}
+# "todo" files to the HUMAN's plate (2.3). There was no kind meaning "my own work", so an
+# orchestrator capturing its own next step had only the kind that puts it in front of the
+# human - and the default silently pushed orchestrator work onto the plate, which is the exact
+# direction this schema exists to prevent. Found by using the tool: two of o9's own build items
+# landed in 2.3 within a minute of the sweep telling it 2.3 was correctly empty.
+KIND_PREFIX = {"decision": "D", "finding": "F", "todo": "T", "specimen": "S",
+               "work": "W"}
 
 
 def _now_iso():
@@ -3569,16 +3645,34 @@ def cmd_archive(args):
         lines = doc.read_text(encoding="utf-8").splitlines()
         entries, sections = parse_entries(lines)
 
-        movers = []
+        movers, held = [], []
         for e in entries:
             if e.get("archived"):
                 continue
             st = status_of(e["body"])
             if st in TERMINAL_STATUS and is_active_section(e["section"]):
+                # the human's D5 ruling: only when ALL sub-items are complete does the FULL item
+                # move to 99. o8 predicted this exact failure - "if archive sinks on resolved
+                # alone, it would bury the majority of what is actually still owed" - and the
+                # status alone cannot be trusted to know, because the entry writes its own
+                # status and does not update it when a sub-item is added later.
+                if has_open_subitems(e["body"]):
+                    held.append(e["id"])
+                    continue
                 movers.append(e)
-        if not movers:
+        if held:
             print("orchdoc archive - %s" % doc.name)
-            print("  no terminal-status entries are sitting in an active section.")
+            print("  HELD BACK, terminal status but a sub-item is still open: %s"
+                  % ", ".join(held))
+            print("  the human's D5 ruling: an item moves to 99 only when ALL its sub-items are")
+            print("  done. Mark the container IN PROGRESS and strike the finished sub-items -")
+            print("  they stay visible, which is the point: seeing where the done work sits")
+            print("  is what makes the remaining decision readable.")
+            print()
+        if not movers:
+            if not held:
+                print("orchdoc archive - %s" % doc.name)
+                print("  no terminal-status entries are sitting in an active section.")
             return 0
 
         # Cut bottom-up so earlier line numbers stay valid.
@@ -4412,6 +4506,8 @@ def cmd_links(args):
 
 
 
+
+
 def cmd_review(args):
     """Walk every schema section and state what it holds, what it should, and the question.
 
@@ -4425,23 +4521,16 @@ def cmd_review(args):
     entries, _sections = parse_entries(lines)
     have_ids = {e["id"] for e in entries}
 
-    # ids the doc TALKS ABOUT but never defines. This is the signal that caught W2-W8:
-    # work described in a table or a bullet is work no check can see.
-    # ACTIVE sections only. A finding that discusses o3's D11 or o8's DA17 is a legitimate
-    # cross-doc citation, not a ghost - and listing those would bury the real ones under
-    # noise, which is the cry-wolf failure that already cost W-BADLINEREF its blocking
-    # status. The ghosts that matter are ids this doc uses for ITS OWN live work, which is
-    # exactly where W2-W8 were hiding.
-    _active, _cur = [], ""
-    for _l in lines:
-        if _l.startswith("## "):
-            _cur = _l
-        if is_active_section(_cur):
-            _active.append(_l)
-    cited = set(re.findall(r"(?<![A-Za-z0-9])([A-Z]{1,3}\d{1,2})(?![A-Za-z0-9])",
-                           "\n".join(_active)))
-    own_prefixes = tuple(KIND_SECTION_NUM.keys())
-    ghosts = sorted(i for i in cited - have_ids if i[0] in own_prefixes)
+    # A ghost-id scan lived here and was DELETED, not fixed. Two rounds, both all-false: 15/15
+    # in one doc, then 5/5 in this one after three separate bugs were repaired. The check
+    # cannot separate USING an id from WRITING PROSE ABOUT one, and no pattern can, because the
+    # difference is authorial intent and the two are textually identical. A doc whose subject
+    # matter includes ids trips it forever.
+    #
+    # Every TRUE positive it ever produced was already reported by the section measure below -
+    # "29 lines, 0 entries" is unambiguous and has no false positives on any of the eight docs.
+    # A check whose true findings are all covered by a cleaner one contributes only its false
+    # ones, and those bury the real finding shipped beside them.
 
     def body_of(num):
         sp = section_span(lines, num)
@@ -4503,14 +4592,6 @@ def cmd_review(args):
         if q:
             print("       \u26a0 %s" % q)
             unanswered += 1
-        print()
-
-    if ghosts:
-        print("\u26d4 IDS THE DOC TALKS ABOUT BUT NEVER DEFINES: %s" % ", ".join(ghosts))
-        print("   Each is referenced in prose with no `### <ID>` entry anywhere, so every")
-        print("   check here is blind to it and it cannot reach the generated plate.")
-        print("   This is how work stays invisible while looking documented.")
-        unanswered += 1
         print()
 
     print("  open items the tool can SEE: %d" % len(open_h))

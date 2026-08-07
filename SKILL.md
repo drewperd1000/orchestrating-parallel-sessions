@@ -277,6 +277,8 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   | command | what it does |
   |---|---|
   | `orchdoc.py check --doc o<N>` | what is wrong, exits non-zero. **Run before every report** |
+  | `orchdoc_sweep.py start --doc o<N>` | ⭐ **the forced sweep** - one section per step, mechanical gate before each advance |
+  | `orchdoc_sweep.py audit --doc o<N>` | ⭐ emit an **independent auditor** seed - evidence in, step reports withheld |
   | `orchdoc.py review --doc o<N>` | ⭐ walk EVERY section and force the completeness question — **the only check that can see ABSENCE** |
   | `orchdoc.py links --doc o<N>` | harvest every asset the doc already cites and propose a §1 table |
   | `orchdoc.py add "<one line>" --doc o<N>` | capture a decision + **print its anchor** for step 3 below |
@@ -300,6 +302,33 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   - **Stale status logs** → sink to the BOTTOM (historical, newest-first), superseded by the sections above.
   - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
   - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
+- ⛔ **"Refresh the OrchDoc" is TOO LARGE A TASK TO FINISH — use `orchdoc_sweep.py`.** The
+  observation behind it: *the shorter and more concise the exact deliverable, the more complete
+  the answer.* A whole-document refresh produces a spotty update that is never complete, and
+  **nothing can tell "finished" from "stopped early"**. ⭐ A checklist does not fix this — a
+  checklist is read ONCE, at the start, by a context that then fills with the work itself; by
+  item six the first item is a memory. Knowing the list was never the problem. So the script
+  holds the list, hands out ONE section, and **will not hand out the next until a mechanical
+  gate passes** — "I finished §2.1" is a claim; "no closed entry remains in §2.1 and the file
+  changed since this step opened" is a measurement. A `--no-change` step is legitimate but must
+  state its reason on the record, because *"nothing needed"* and *"I did not look"* are
+  indistinguishable from outside. ⭐ Each step asks BOTH halves — *is what is here still true?*
+  AND *is anything missing?* — and the second is the half that gets dropped, which is where the
+  serious misses live. ⭐ **Strongest form: `next --lane` gives one FRESH WORKER PER SECTION.**
+  A fresh context cannot drift, cannot tire at item six, and cannot carry a wrong assumption in
+  from item two — the deliverable is small because the WORKER is small.
+- ⭐ **Then have it audited by someone who did not do it: `orchdoc_sweep.py audit`.** It emits a
+  seed carrying the WORK EVIDENCE (commits, touched files, branches since a recorded baseline)
+  and the current document, and **deliberately WITHHOLDS every step report**. An auditor shown
+  the updater's reasoning audits the reasoning — agreeing with a coherent account is what
+  reading one does. An auditor shown only the evidence has to derive the answer independently,
+  and only that can find what the updater never thought to look for.
+- ⛔ **A closed item with an unfinished sub-item is a FALSE DONE.** Mark the container
+  `IN PROGRESS`, ~~strike through~~ the sub-items that are finished, and move nothing to §99
+  until ALL of them are done. ⭐ **The struck sub-items STAY VISIBLE** — seeing where the
+  finished work sits is what makes the remaining decision readable, so do not hide them. A
+  status label alone throws that context away. `archive` holds back any entry with an open
+  sub-item whatever its status claims, and `E-CLOSEDWITHOPENSUBS` blocks on it.
 - ⭐ **`check` cannot see an EMPTY section - run `review` too.** Every invariant in the linter
   is triggered BY AN ENTRY: parse the entries, judge each one. So **a section with no entries
   produces no findings, and the emptier a doc gets, the quieter the tool gets.** A doc that has
