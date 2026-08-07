@@ -357,6 +357,37 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   line says about itself (`restrike --stamps`). And the generator echoes the original text back
   verbatim, so keeping the words is the path of least effort and rewording them is a thing you
   go out of your way to do.
+- ⛔ **WHEN A CHECK KEEPS ALMOST-WORKING, THE THING YOU ARE MEASURING IS ADJACENT TO THE
+  THING YOU CARE ABOUT.** Not "tune the threshold" - **change the question.** A gate went
+  through three versions comparing git refs, each fix a fresh proxy that measured a true fact
+  implying a false conclusion, and it only became correct when it stopped asking *"which ref is
+  ahead?"* and started asking *"can a hand-authored line be lost?"* If you have fixed the same
+  check twice and it is still wrong at the edges, stop refining the measurement and go find the
+  thing you actually want to know. **The repeated near-miss is the signal.**
+- ⛔ **A SURPRISING RESULT SHOULD MAKE YOU SUSPECT YOUR COMMAND BEFORE YOUR CONCLUSION.**
+  Verification tooling returns confident, plausible, wrong answers - a shell mangling a path
+  argument reports a file "missing" that is present; a process check that silently does not
+  exist prints nothing and reads as "no processes running"; a grep counting matches in a
+  crashed run reports zero and reads as "clean". In each case the command was broken and the
+  output looked like an answer. **Before you act on a surprise, re-run the check a different
+  way.** If two methods disagree, the interesting bug is usually in the method, not the world.
+- ⛔ **A DIAGNOSIS THAT LICENSES YOU TO DO LESS WORK NEEDS MORE EVIDENCE, NOT LESS.** *"The
+  test is flaky"*, *"that lane is already dead"*, *"the credential expired"*, *"nothing changed
+  since the baseline"* - each is a conclusion that, if true, means you can stop. **That is
+  precisely when the bar goes UP.** Convenience is not evidence, and a conclusion you would
+  like to be true is the one you are least equipped to audit. Ask what observation would prove
+  it wrong, then go make that observation.
+- ⚠️ **DO NOT INLINE SOURCE CODE INSIDE A SHELL COMMAND - WRITE A FILE AND RUN IT.** A
+  heredoc passes text through verbatim; what breaks is that inlining puts **two escaping layers
+  in front of one string** (the shell's, then the language's) and only one gets reasoned about.
+  Real results from one session: `"\b"` became a literal 0x08 byte so a regex matched nothing
+  **silently**; a Windows path hit `\U` and died as a unicode escape error; two strings
+  differing only in escaping failed an equality assertion. Writing the file has **zero**
+  escaping layers, fails on a syntax error before executing anything, survives for debugging,
+  and stays reviewable. If you want this enforced rather than remembered, a `PreToolUse` hook
+  that refuses a language-heredoc **whose body contains a backslash** blocks exactly this class
+  while leaving commit messages, JSON and prose untouched.
+
 - ⭐ **A recorded fact must survive being marked done — three layers, and only the third
   resists gaming.** The problem: you can enforce a FORMAT for recording that a sub-item
   finished, but a format is satisfied by anything of the right shape, so the format alone
