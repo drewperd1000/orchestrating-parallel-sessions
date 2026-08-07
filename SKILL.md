@@ -1,6 +1,6 @@
 ---
 name: orchestrating-parallel-sessions
-description: Use when running multiple Claude Code sessions on one or more codebases in parallel and they collide, duplicate work, edit the same files, need after-the-fact untangling, or when you want them coordinating hands-off (mailboxes + polling) so the human isn't relaying messages between sessions.
+description: Use when work is split across multiple parallel Claude Code sessions - on code, research, writing, ops, migrations, audits, any body of work - and they collide, duplicate effort, drift apart, or stall because a human is relaying messages between them. Also for any long-running project that needs a decision record which cannot go stale, cannot silently drop what it owes the human, and cannot claim work is finished when it is not. Provides lane decomposition, hands-off mailbox coordination, and a linted decision doc with a forced section-by-section refresh and an independent audit.
 ---
 
 # orchestrating-parallel-sessions
@@ -13,7 +13,7 @@ Collisions between parallel sessions are prevented by **how work is handed out (
 
 So run **one responsive orchestrator** that decomposes work into disjoint packages, hands each to a worker, holds the live picture, and gates every merge.
 
-## Multiple codebases
+## Multiple repos, corpora, or work areas
 
 A lane can be a whole repo. Across repos the file-level collisions disappear (different files), but the rest of the model still holds: prevent duplicate work, hold ONE lane-map spanning every repo, and gate EACH repo's merges separately. Watch shared names that span repos - config keys, API contracts, tier/flag names - so a rename in one repo updates its consumers in the others.
 
