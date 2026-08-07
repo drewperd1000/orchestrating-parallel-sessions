@@ -90,6 +90,32 @@ The orchestrator's live picture of who-owns-what RIGHT NOW. It's a visibility ga
 
 **Shared deploy slots collide like shared files.** A single preview/staging slot whose source branch is repointed per lane means lanes silently overwrite each other's deploys — the same failure class as two lanes editing one file, but invisible until a preview vanishes. Fix it the same way: give each lane that needs a stable preview its OWN dedicated env, and record the surface in the lane map so no two lanes ever point at one slot. If a shared slot is truly unavoidable, the lane map is where you serialize turns on it. (Origin: a feature lane's deploy to a shared staging service kept getting reclaimed by another lane whose auto-deploy was wired to that same service — fixed with a dedicated per-lane preview env + recorded surface ownership.)
 
+## The human is a writer too
+
+Every mechanism above assumes the writers are **sessions the orchestrator knows about**.
+Disjoint hand-out, the lane map, serialized gating - all of it operates on lanes. **A human
+editing a file directly is a writer outside that map**, so there is nothing to make disjoint,
+nothing to gate, and no place the collision shows up before it happens.
+
+This is not hypothetical. While the orchestrator that wrote this section was pushing edits to a
+file, the human opened the same file, edited it, and lost the work to a conflict - **on the
+README of the repo about preventing that.** Neither party was careless. The model simply had no
+lane for one of the writers.
+
+**So treat the human as a lane:**
+
+- **They announce, like any other lane.** *"I'm editing README.md"* is the whole protocol. The
+  orchestrator holds that path until they say otherwise, exactly as it would for a worker.
+- ⭐ **The orchestrator announces too, and this is the half that gets skipped.** Before pushing
+  to something the human might have open - a README, a spec, a doc they were just reading -
+  say so, or route through a branch and a PR so their version is the base rather than the
+  casualty.
+- **When in doubt, the human's copy wins.** Theirs is unrecoverable once a conflict eats it;
+  yours is in git.
+- ⚠️ **A shared file the human reads is a shared file the human might edit.** The risk is not
+  proportional to how "yours" the file feels - it is proportional to how interesting the file
+  is to them, and the interesting ones are exactly the ones you are both working on.
+
 ## Hands-off relay (mailboxes + polling)
 
 The human relaying each worker's reply to the orchestrator and the next order back is the bottleneck - the pipeline stalls at their attention. Remove it: give every lane an **append-only mailbox file** and have both sides **wait on the file with an inference-free watcher**. The human pastes ONE bootstrap per session; after that all coordination (PR links, questions, merge signals, rebase requests, "done") flows through the files.
