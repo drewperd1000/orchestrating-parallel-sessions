@@ -644,10 +644,10 @@ HUMAN_RULING_RE = re.compile(
 SCHEMA_SECTIONS = [
     ("1",    "LINKS AND DOCS",       "every doc and URL this orchestrator owns"),
     ("2",    "LIVE ON {NAME}'S PLATE", "only what needs THEM. Nothing else."),
-    ("2.1",  "Decisions",            "need his call"),
+    ("2.1",  "Decisions",            "need their call"),
     ("2.2",  "Questions",            "need an answer"),
-    ("2.3",  "To-Dos",               "need his action"),
-    ("3",    "IN FLIGHT",            "the orchestrator's own work, NOT his plate"),
+    ("2.3",  "To-Dos",               "need their action"),
+    ("3",    "IN FLIGHT",            "the orchestrator's own work, NOT their plate"),
     ("4",    "FINDINGS",             "what was learned, and why it holds"),
     ("5",    "GUARDS",               "what this orchestrator will not do"),
     # 6 through 98 are YOURS. the human, 2026-08-07: "For some orchestrators, they may need to
