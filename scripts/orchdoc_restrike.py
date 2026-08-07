@@ -45,6 +45,7 @@ nothing mechanical can see that. So this reports the edit and asks; it never blo
 independent auditor is where the judgement belongs.
 """
 import argparse
+import datetime
 import difflib
 import pathlib
 import re
@@ -107,10 +108,67 @@ def diff_lines(sha, doc):
     return added, removed
 
 
+
+STAMP_RE = re.compile(
+    r"DONE\s+(\d{2})-([A-Z][a-z]{2})-(\d{4})\s*@?\s*(\d{2}):(\d{2})")
+_MON = {m: i + 1 for i, m in enumerate(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+
+
+def commit_time(sha):
+    """When git says this commit was authored. The oracle - independent of what the line claims."""
+    r = subprocess.run(["git", "show", "-s", "--format=%at", sha],
+                       capture_output=True, text=True, cwd=str(od.PROJECTS))
+    try:
+        return datetime.datetime.fromtimestamp(int(r.stdout.strip()))
+    except Exception:
+        return None
+
+
+def check_stamps(doc, since):
+    """Every DONE stamp added in history, against the commit that added it.
+
+    Reports (sha, stamp_text, hours_apart) for anything outside the window. A stamp is only
+    worth requiring if something checks it; otherwise it is a field, and a field is satisfiable
+    with any string of the right shape.
+    """
+    out, seen = [], 0
+    for sha in commits_for(doc, since):
+        ct = commit_time(sha)
+        if not ct:
+            continue
+        added, _ = diff_lines(sha, doc)
+        for line in added:
+            m = STAMP_RE.search(line)
+            if not m:
+                continue
+            seen += 1
+            d, mon, y, hh, mm = m.groups()
+            if mon not in _MON:
+                continue
+            try:
+                st = datetime.datetime(int(y), _MON[mon], int(d), int(hh), int(mm))
+            except ValueError:
+                out.append((sha, m.group(0), None))
+                continue
+            hours = abs((st - ct).total_seconds()) / 3600.0
+            # 36h. A legitimate stamp CAN be hours from its commit - work finishes, the entry
+            # gets written, other sections get swept, the commit lands later. Narrowing this
+            # would flag honest work, and a check that is mostly wrong teaches the override
+            # reflex. What is left has no innocent reading: a stamp DAYS from its commit was
+            # typed, not generated.
+            if hours > 36:
+                out.append((sha, m.group(0), hours))
+    return out, seen
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--doc", required=True)
     ap.add_argument("--since", help="baseline ref; default is the last 40 commits")
+    ap.add_argument("--stamps", action="store_true",
+                    help="also check every DONE stamp against the commit that recorded it - the stamp is only worth requiring if something verifies it")
     a = ap.parse_args()
 
     doc = od.resolve_doc_arg(a.doc)
@@ -162,6 +220,33 @@ def main():
             print("  %s  similarity %.0f%%" % (sha[:10], ratio * 100))
             print("    was    : %s" % best.strip()[:96])
             print("    struck : %s" % m.group(1).strip()[:96])
+            print()
+
+    if a.stamps:
+        bad, seen = check_stamps(doc, a.since)
+        if bad:
+            print("  DONE stamps that disagree with the commit that recorded them:")
+            for sha, txt, hrs in bad:
+                when = "unparseable date" if hrs is None else "%.0f hours apart" % hrs
+                print("    %s  %-42s %s" % (sha[:10], txt[:42], when))
+            print()
+            print("    git recorded when the line actually landed, independently of what the")
+            print("    line says about itself. A stamp days from its commit was TYPED, not")
+            print("    generated - use `orchdoc_stamp.py --done \"<text>\"`, which cannot be")
+            print("    wrong about the time because it does not ask anyone.")
+            print()
+            hits += len(bad)
+        elif seen:
+            print("  %d DONE stamp(s) examined; every one is consistent with its commit." % seen)
+            print()
+        else:
+            # NOT "all clean". Zero stamps examined means the convention has not been adopted
+            # here, which is a different fact and needs to print differently - the exact
+            # "nothing to look at vs looked and found nothing" collapse this session named
+            # three times, reproduced inside the check built to close it, within the minute.
+            print("  NO DONE stamps found in this range - 0 examined, so this proves NOTHING")
+            print("  about the document. The `- ~~text~~ - DONE dd-Mon-yyyy @ HH:MM` form is")
+            print("  new; until sub-items carry it there is nothing here to verify.")
             print()
 
     if not hits:

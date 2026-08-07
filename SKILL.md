@@ -323,6 +323,23 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   the updater's reasoning audits the reasoning — agreeing with a coherent account is what
   reading one does. An auditor shown only the evidence has to derive the answer independently,
   and only that can find what the updater never thought to look for.
+- ⛔ **A CHECK MUST REPORT HOW MANY THINGS IT EXAMINED, NOT ONLY WHAT IT FOUND.** "0 examined"
+  and "N examined, all clean" are different facts and must print differently — they are the
+  same words otherwise, and the flattering reading is the one everybody takes. This exact
+  collapse happened FOUR times in a single day of building this tool: empty sections generating
+  no findings; a fleet sweep counting a crashed run as clean; an audit baseline measuring 149
+  commits as none; a stamp checker verifying zero stamps and announcing all consistent. **None
+  would have survived a count.** Applies to your own reports too — a clean verdict that does not
+  say what it looked at is indistinguishable from not having looked.
+- ⭐ **Enforce a timestamp by GENERATING it, never by asking for it.** `orchdoc_stamp.py
+  --done "<text>"` emits `- ~~text~~ - DONE dd-Mon-yyyy @ HH:MM (UTC±n)`. Granularity is only
+  expensive when it demands judgement: *"write today's date"* is a judgement an agent gets
+  wrong from a stale context, and hand-written dates are the most-repeated defect this tool
+  exists to remove. ⭐ **A generated stamp is also the first thing in the record that is
+  checkable from OUTSIDE the document** — git knows when the line actually landed, whatever the
+  line says about itself (`restrike --stamps`). And the generator echoes the original text back
+  verbatim, so keeping the words is the path of least effort and rewording them is a thing you
+  go out of your way to do.
 - ⭐ **A recorded fact must survive being marked done — three layers, and only the third
   resists gaming.** The problem: you can enforce a FORMAT for recording that a sub-item
   finished, but a format is satisfied by anything of the right shape, so the format alone

@@ -272,7 +272,12 @@ def cmd_start(args):
         return 1
     steps = build_steps(doc)
     st = {"doc": args.doc, "path": str(doc), "i": 0, "steps": steps, "reports": [],
-          "baseline_commit": git(["rev-parse", "HEAD"]),
+          # The CANONICAL ref, not HEAD. OrchDoc work lands on canonical via `orchdoc
+          # commit`; the local branch never moves, so a HEAD baseline made every range empty
+          # and the audit seed reported "(no commits in range)" while 149 commits sat in the
+          # real range. An evidence gatherer that silently gathers nothing is worse than none.
+          "baseline_commit": git(["rev-parse", od.CANONICAL_REF]) or git(
+              ["rev-parse", "HEAD"]),
           "baseline_stamp": subprocess.run(
               [sys.executable, str(HERE / "orchdoc_stamp.py")],
               capture_output=True, text=True).stdout.strip(),
@@ -426,17 +431,30 @@ def cmd_audit(args):
         return 2
     doc = pathlib.Path(st["path"])
     base = st.get("baseline_commit") or ""
-    rng = ("%s..HEAD" % base) if base else "-40"
-    commits = git(["log", "--oneline", "--no-merges", rng]) or "(no commits in range)"
-    touched = git(["diff", "--name-only", "%s..HEAD" % base]) if base else ""
+    tip = od.CANONICAL_REF
+    rng = ("%s..%s" % (base, tip)) if base else "-40"
+    commits = git(["log", "--oneline", "--no-merges", rng])
+    touched = git(["diff", "--name-only", "%s..%s" % (base, tip)]) if base else ""
+    if not commits.strip():
+        # LOUD, not "(none)". A silent empty evidence set turns the auditor into a rubber
+        # stamp: it audits the document against nothing, finds nothing, and reports clean -
+        # which is indistinguishable from a real clean audit and costs a subagent to produce.
+        commits = ("*** NO COMMITS IN RANGE %s ***\n"
+                   "*** This is either (a) genuinely no work since the baseline, or (b) a\n"
+                   "*** BROKEN BASELINE. Establish which BEFORE auditing anything: run\n"
+                   "***   git log --oneline %s..%s\n"
+                   "*** yourself. If it is (b), the evidence below is empty for a reason that\n"
+                   "*** has nothing to do with the document, and any clean verdict you reach\n"
+                   "*** is manufactured. Say so instead of reporting the doc complete."
+                   % (rng, base or "<none>", tip))
     branches = git(["for-each-ref", "--sort=-committerdate", "--count=25",
                     "--format=%(refname:short)  %(committerdate:short)", "refs/remotes/origin"])
 
     seed = """You are an INDEPENDENT AUDITOR for {name}. You did not do this work and you are
 not being shown what the updater said about it. That is deliberate: an auditor shown the
 updater's reasoning audits the reasoning and tends to agree with it, because agreeing with a
-coherent account is what reading one does. You get the EVIDENCE and the DOCUMENT, and you
-derive the answer yourself.
+coherent account is what reading one does. You get the BASELINE and the COMMANDS; you gather
+the evidence yourself.
 
 YOUR ONE QUESTION:
   Is every piece of work done since the baseline properly and completely captured in this
@@ -444,49 +462,50 @@ YOUR ONE QUESTION:
 
 THE DOCUMENT
   {path}
-  Read it in full. Run `python .shared/scripts/orchdoc.py review --doc {doc}` and
-  `check --doc {doc}` yourself; do not take anyone's word for their output.
+  Read it in full. Run these yourself and do not take anyone's word for their output:
+    python .shared/scripts/orchdoc.py review --doc {doc}
+    python .shared/scripts/orchdoc.py check  --doc {doc}
 
-THE BASELINE
-  commit {base}
-  {stamp}
+GATHER YOUR OWN EVIDENCE - run these, do not assume:
+    git log --oneline --no-merges {base}..{tip}
+    git diff --name-only {base}..{tip}
+    git for-each-ref --sort=-committerdate --count=25 \\
+        --format='%(refname:short) %(committerdate:short)' refs/remotes/origin
 
-COMMITS SINCE THEN
-{commits}
+  Baseline: {base}   Tip: {tip}   ({stamp})
 
-FILES TOUCHED SINCE THEN
-{touched}
-
-RECENT REMOTE BRANCHES (lane work often lands here first)
-{branches}
+  *** IF THE COMMIT RANGE COMES BACK EMPTY, THAT IS A FINDING ABOUT THE BASELINE, NOT A
+  *** VERDICT ABOUT THE DOCUMENT. This exact bug shipped and was caught by hand: the baseline
+  *** was recorded from local HEAD while the work lands on the canonical ref, so the range was
+  *** empty while 149 commits sat in the real one. An audit with no input is a rubber stamp.
+  *** Establish which case you are in before concluding anything.
 
 WHAT TO LOOK FOR, IN ORDER OF HOW OFTEN IT IS THE ANSWER:
 
-  1. ⭐ WORK THAT HAPPENED AND IS NOT IN THE DOCUMENT AT ALL. This is the most common and the
-     hardest to see, because nothing in the document points at it. Work backwards from the
-     commits and branches above: for each one, find where it is recorded. If you cannot, that
-     is a finding. Do not accept "it is implied by" - name the entry or report the absence.
+  1. WORK THAT HAPPENED AND IS NOT IN THE DOCUMENT AT ALL. The most common and the hardest to
+     see, because nothing in the document points at it. Work BACKWARDS from the commits: for
+     each one, find where it is recorded. If you cannot, that is a finding. Do not accept "it
+     is implied by" - name the entry, or report the absence.
 
-  2. ⭐ AN EMPTY OR SHORT SECTION THAT SHOULD NOT BE. An empty "what needs the human" section
-     asserts that nothing does. Test that assertion against the evidence rather than against
-     the section. If four things landed and none needed a ruling, say so explicitly - but check.
+  2. AN EMPTY OR SHORT SECTION THAT SHOULD NOT BE. An empty "what needs the human" section
+     asserts that nothing does. Test that assertion against the EVIDENCE, not against the
+     section. If four things landed and none needed a ruling, say so - but check.
 
   3. A STATUS THAT IS NOT TRUE. Entries claiming OPEN whose work shipped, or DONE whose work
      did not. Check against the commits, not against the entry's own prose.
 
-  4. WORK IN THE WRONG SECTION - the orchestrator's own in-flight work sitting on the human's
-     plate, or a live item filed under §99 COMPLETED where nobody will look again.
+  4. WORK IN THE WRONG SECTION - the orchestrator's own work sitting on the human's plate, or
+     a live item filed under section 99 COMPLETED where nobody will look again.
 
   5. Anything recorded as prose or a table rather than an `### <ID>` entry, which makes it
      invisible to every automated check.
 
-REPORT AS: a numbered list. For each item - what the evidence shows, where the document says it
-(or that it does not), and the specific fix. If the document is genuinely complete, say so
-plainly and name what you checked to establish it. ⛔ A clean audit that did not name its
-evidence is worth nothing - it is indistinguishable from not having looked.
-""".format(name=doc.name, path=doc, doc=args.doc, base=(base[:12] or "(none)"),
-           stamp=st.get("baseline_stamp", ""), commits=commits or "(none)",
-           touched=(touched or "(none)"), branches=branches or "(none)")
+REPORT AS: a numbered list. For each item - what the evidence shows, where the document says
+it (or that it does not), and the specific fix. If the document is genuinely complete, say so
+plainly and NAME WHAT YOU CHECKED to establish it. A clean audit that did not name its evidence
+is worth nothing - it is indistinguishable from not having looked.
+""".format(name=doc.name, path=doc, doc=args.doc, base=(base or "<none>"), tip=tip,
+           stamp=st.get("baseline_stamp", ""))
 
     if args.lane:
         print("# INDEPENDENT AUDIT - a separate worker, with the step reports withheld.")

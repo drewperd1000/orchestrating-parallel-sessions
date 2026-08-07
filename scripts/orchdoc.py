@@ -4519,9 +4519,16 @@ def harvest_assets(lines, doc):
             pp = PROJECTS / probe
         exists = pp.exists()
         if not exists:
-            # try the other plausible roots before calling it dead
+            # Try every plausible root before calling it dead. The memory dir is the one that
+            # bit: `memory/foo.md` resolves nowhere near the workspace, so six LIVE notes were
+            # reported as "DOES NOT EXIST" - and this section's whole job is to hand a reader
+            # pointers they can follow. Confidently calling a real asset dead is the damaging
+            # direction: it invites deleting a working reference, which is worse than the
+            # missing row it was trying to prevent.
             for alt in (Path(os.path.expanduser("~")) / probe.lstrip("/\\"),
-                        PROJECTS.parent / probe.lstrip("/\\")):
+                        PROJECTS.parent / probe.lstrip("/\\")) + tuple(
+                            base / probe.lstrip("/\\")
+                            for r in _EXTERNAL_REPOS for base in (r, r.parent)):
                 if alt.exists():
                     exists = True
                     break

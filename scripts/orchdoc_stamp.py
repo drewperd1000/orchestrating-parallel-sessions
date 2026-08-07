@@ -113,11 +113,28 @@ def fmt_off(td):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--done", metavar="TEXT",
+                    help="emit a finished sub-item line: the ORIGINAL text struck through, plus a generated timestamp. The text is echoed back verbatim so keeping it is easier than rewording it.")
     ap.add_argument("--human", action="store_true", help="dd-Mon-yyyy HH:MM ZONE")
     ap.add_argument("--utc", action="store_true", help="also show the UTC instant")
     ap.add_argument("--check", metavar="STAMP",
                     help="report whether a stamp is self-consistent and has happened")
     a = ap.parse_args()
+
+    if a.done:
+        # One line, ready to paste. The original text is echoed VERBATIM - the whole point of
+        # the strikethrough is that the words survive being marked done, so the generator
+        # makes keeping them the path of least effort.
+        now = dt.datetime.now().astimezone()
+        # A NUMERIC offset, not %Z. Windows expands %Z to "Pacific Daylight Time", which is
+        # long, locale-dependent and ambiguous across machines; "UTC-7" is none of those and
+        # is what makes the stamp checkable against a commit's own time later.
+        off = now.utcoffset()
+        hrs = int(off.total_seconds() // 3600) if off else 0
+        print("- ~~%s~~ - DONE %s @ %s (UTC%+d)"
+              % (a.done.strip(), now.strftime("%d-%b-%Y"), now.strftime("%H:%M"), hrs))
+        return 0
+
 
     if a.check:
         ok, problems = check(a.check)
