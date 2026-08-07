@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "orchestrating-parallel-sessions",
+  "description": "Run a project - or a whole business - through orchestrator agents that fan work out to parallel sessions, keep them from colliding, and collate what returns.",
+  "owner": {
+    "name": "orchestrating-parallel-sessions"
+  },
+  "plugins": [
+    {
+      "name": "orchestration",
+      "source": "./plugins/orchestration",
+      "description": "orchestrating-parallel-sessions + orchdoc-audit. Surface as /orchestration:<name>."
+    }
+  ]
+}

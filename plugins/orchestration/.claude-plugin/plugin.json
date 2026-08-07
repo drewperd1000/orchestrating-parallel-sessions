@@ -1,0 +1,5 @@
+{
+  "name": "orchestration",
+  "description": "Orchestrate parallel Claude Code sessions on any work, and audit the decision doc that tracks it. Surfaces as /orchestration:<name>.",
+  "version": "1.1.0+2026.08.07"
+}
