@@ -232,40 +232,75 @@ Rationale: agents END their id with `:`/`c<k>:`; commands carry `[cmd]`. That on
 
 The lane-map tracks *work in flight*; the human separately needs a standing view of *what's waiting on them*. Each orchestrator session keeps ONE live decision + coordination doc — the persistent form of the "live picture" the orchestrator holds — that decodes every short label you use in chat ("D3", "B2", lane `o1L4`, "consent") to what it means and its current status, so the human never scrolls the thread to remember a reference. Look things up there, not by scrolling chat.
 
-- **Naming — one doc PER orchestrator:** `ORCHESTRATOR-DECISIONS-o<N>.md`, matching the orchestrator's `o<N>` id (the `o1` orchestrator → `ORCHESTRATOR-DECISIONS-o1.md`; `o2` → `-o2`; etc.). With multiple concurrent orchestrators, never a shared or unnamed one — each gets its own suffixed doc so the human can tell them apart (same `o<N>` discipline as session titles + mailboxes).
+- **Naming — one doc PER orchestrator:** `ORCHESTRATOR-DECISIONS-o<N>.md`, matching the orchestrator's `o<N>` id (the `one orchestrator` orchestrator → `ORCHESTRATOR-DECISIONS-one orchestrator.md`; `o2` → `-o2`; etc.). With multiple concurrent orchestrators, never a shared or unnamed one — each gets its own suffixed doc so the human can tell them apart (same `o<N>` discipline as session titles + mailboxes). (the human, 2026-06-24.)
 - **Location:** inside the session working dir, at a path the human's file-preview pane can open (NOT a hidden/dotted dir, NOT a memory dir the pane can't render). Keep it findable, not buried.
-- **⭐ Format — instantiate this skeleton on creation (top = live, bottom = archive):**
-  ```markdown
-  # ORCHESTRATOR DECISIONS — o<N>: <workstream>   (updated <YYYY-MM-DD HH:MM>)
+- **⭐ Format — DO NOT hand-write the skeleton. Generate it:**
 
-  ## ⏳ ON THE HUMAN'S PLATE — what needs YOU (top priority; keep current)
-  - <plain-language ask> → <where to click / the exact link> → <your recommendation>
-
-  ## 🔴 DECISIONS — need your call (active only)
-  - **<label>** — <what it is, plainly> — **my rec:** <recommendation>
-
-  ## 🔭 IN FLIGHT — lanes + what's moving
-  - **o<N>L<m>: <subject>** — <status: branch / staging URL / PR / blocked-on> — owner
-
-  ## 📋 TO-DOs — on me (active only)
-  - <item> — <status>
-
-  ## 🔑 Key links & logins
-  - <asset> — <clickable URL / exact path>
-
-  ## ✅ DONE (so you don't re-ask)  ← finished items move here
-  ## ✅ Resolved decisions (archive)  ← decided items move here
-  ## 🗄️ Stale status log (bottom, historical, newest-first)
+  ```bash
+  python .shared/scripts/orchdoc.py scaffold --doc o<N>
   ```
+
+  ⚠️ **Path + availability.** Run it from the workspace root; the path above is relative to it.
+  `orchdoc.py` lives in the WORKSPACE (`.shared/scripts/`), not in this plugin, because it
+  resolves workspace repos and OrchDoc locations. **A cloud session without that workspace
+  will not have it** — there, keep the section schema below by hand and say so in the doc
+  rather than pretending a gate ran. Never paste an absolute machine path into a skill: this
+  plugin ships to desktop AND cloud, and a `C:/Users/<someone>/...` line is dead on arrival
+  everywhere but one laptop.
+
+  That writes the canonical §-numbered spine, the identity heading, the Purpose stub, and
+  the generated header block. The schema:
+
+  | § | section | holds |
+  |---|---|---|
+  | §1 | LINKS AND DOCS | every doc + URL this orchestrator owns |
+  | §2 | LIVE ON THE HUMAN'S PLATE | **only what needs THEM.** Nothing else |
+  | §2.1 / 2.2 / 2.3 | Decisions / Questions / To-Dos | their call / an answer / their action |
+  | §3 | IN FLIGHT | **your** work — NOT their plate |
+  | §4 | FINDINGS | what was learned, and why it holds |
+  | §5 | GUARDS | what this orchestrator will not do |
+  | §6–§98 | **yours** | your subject matter, structured however it divides |
+  | §99 | COMPLETED | closed items. **Pinned at 99 so done always sinks to the bottom** |
+
+  §6–§98 are deliberately unenumerated — add what your workstream needs; the generated
+  index lists them by their § number so nothing you add becomes invisible.
+
+- **⛔ NEVER hand-write a "last updated" stamp.** The previous version of this skeleton
+  carried `(updated <YYYY-MM-DD HH:MM>)`, and that single line is what produced one orchestrator's
+  32-defect doc: it read "2026-07-30" above content that was that old, so the whole
+  document read as current. **A field a human maintains is a claim; the commit log is a
+  measurement.** `scaffold` writes the date from git. Same for the plate index and the
+  findings index — all generated, never typed.
+
 - **Contents:** decisions awaiting the human (label → what it is → your recommendation); items ready for their go-ahead (each with the review URL + login); the real blockers and who owns each; what's already done (so they don't re-ask); and the key logins/links.
-- **⛔ Write it FOR the human — plain language, real bullets, no insider shorthand.** No bare branch/PR names, pixel counts, lane codes, or arrow-shorthand in the sections the human reads (`YOU → o1`, `o1L##`, `feat/x-branch`). A `A · B · C` middle-dot line renders as ONE wall-of-text paragraph — use real `-`/`*` bullets, one idea per line. Compact tracking labels may live only in the deep archive sections.
+- **⛔ Write it FOR the human — plain language, real bullets, no insider shorthand.** No bare branch/PR names, pixel counts, lane codes, or arrow-shorthand in the sections the human reads (`YOU → one orchestrator`, `o1L##`, `feat/x-branch`). A `A · B · C` middle-dot line renders as ONE wall-of-text paragraph — use real `-`/`*` bullets, one idea per line. Compact tracking labels may live only in the deep archive sections. Full rule: `memory/feedback_orchdoc_plain_language.md`.
+- **⭐ THE COMMANDS — the script owns every gate, so you never hand-edit a tracked field:**
+
+  | command | what it does |
+  |---|---|
+  | `orchdoc.py check --doc o<N>` | what is wrong, exits non-zero. **Run before every report** |
+  | `orchdoc.py add "<one line>" --doc o<N>` | capture a decision + **print its anchor** for step 3 below |
+  | `orchdoc.py resolve D5 --doc o<N> --ruling "..."` | flip status IN PLACE, re-read and verified |
+  | `orchdoc.py plate --doc o<N>` | REGENERATE the human-facing index |
+  | `orchdoc.py scaffold --doc o<N>` | write/repair the spine + header |
+  | `orchdoc.py archive --doc o<N>` | sink closed items to §99 |
+  | `orchdoc.py commit --doc o<N> -m "..."` | land on `main`, five gates, dry-run first |
+  | `orchdoc.py verify landed --path <file>` | is what I have what is canonical? |
+
+  ⛔ **`commit` is the ONLY way to land an OrchDoc.** Never `git push origin HEAD:main` —
+  an OrchDoc committed on a feature branch is a decision record that exists in different
+  states on different branches, which is not a decision record. A pre-commit hook refuses
+  it. `commit` builds the commit against `origin/main` by plumbing, so a stale checkout
+  cannot produce a stale commit.
+
 - **Organization — top = live, bottom = archive.** Keep the glanceable, active picture at the TOP and sink finished/historical material to the BOTTOM, so one glance at the top shows only what's live:
   - **Active / unfinished near the TOP** — an "In Flight / Unfinished" block, plus the live "📋 YOUR TO-DOs (active only)" and "🔴 DECISIONS — need your call (active only)".
   - **DONE To-Dos** → their own section (completed to-dos move here, out of the active list).
   - **Resolved Decisions** → their own archive section (decided items move here, out of the "need your call" list).
   - **Stale status logs** → sink to the BOTTOM (historical, newest-first), superseded by the sections above.
-  - Keep ONLY active items in the live to-do / decision sections — moving closed items down is what keeps the top a true at-a-glance view.
-- **Keep it live:** update it the instant a decision resolves, a lane lands, or a new item appears — fold new decisions/to-dos into the active sections and retire finished ones to the DONE / Resolved sections as they close; stamp the update time at the top. A stale decision doc is worse than none — it re-spawns closed questions (see the propagate-a-resolution-to-all-trackers discipline: when something resolves, clear it from EVERY tracker, this doc included).
+  - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
+  - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
+- **Keep it live:** update it the instant a decision resolves, a lane lands, or a new item appears — `orchdoc.py add` for a new item, `resolve` when it is answered, `archive` to sink it to §99, `plate` to regenerate the index. ⛔ **Do NOT stamp an update time by hand** — `scaffold` reads it from the commit log. (An earlier version of this bullet said to stamp it, which is the one orchestrator defect described above; it survived the first pass of this edit because the same instruction appeared in two places — the propagate-to-ALL-trackers rule, applied to a skill.) A stale decision doc is worse than none — it re-spawns closed questions (see the propagate-a-resolution-to-all-trackers discipline: when something resolves, clear it from EVERY tracker, this doc included).
 - **Why:** the human's attention is the scarce resource. "D3 is still open" is only cheap for them if one glance decodes it. The doc turns every cross-reference from a thread-scroll into a lookup.
 
 ### ⛔ SURFACE it in chat, RECORD it in the OrchDoc, POINT to the exact anchor
@@ -278,22 +313,33 @@ the most common way an OrchDoc rots into a lie.
 2. **Record it in the OrchDoc immediately** as a numbered, **self-contained** entry: file paths,
    line numbers, the exact wording in question, why it matters, your recommendation, and what is
    blocked until they answer. **They must never need to scroll chat to understand it.**
-3. **Tell them the exact anchor.** Not *"it's in the OrchDoc"* - say **"D8, ORCHESTRATOR-DECISIONS-o1.md
+3. **Tell them the exact anchor.** Not *"it's in the OrchDoc"* - say **"D8, ORCHESTRATOR-DECISIONS-an orchestrator.md
    line 82"**. A doc that holds the answer but that they cannot navigate to has not done its job.
 
-**Also keep a one-line index** at the top of ON THE HUMAN'S PLATE mapping the open items
-(`D7 guide sign-off · D8 the 25-years figure · D9 value figures · ...`), so the whole surface is
-visible at a glance without reading every entry.
+⭐ **All three steps are now commands, and that is the point** — the rule failed for years
+because step 2 was expensive (a read-modify-write on a schema-less thousand-line doc, at peak
+load) and step 3 needed an anchor the docs did not have:
+
+- **step 2** → `orchdoc.py add "<the question>" --doc o<N>` — allocates the id, writes a
+  conforming entry, puts it in the right § section.
+- **step 3** → `add` **prints the anchor** when it writes. Paste that.
+- **the index** → `orchdoc.py plate --doc o<N>` REGENERATES it. Never hand-maintain it: a
+  hand-written index is a second copy of the truth, and another orchestrator's had 5 of 16 rows pointing at
+  items that were already resolved, so they spent their review re-reading settled questions.
+
+⛔ **And when it resolves, `orchdoc.py resolve`** — the rule has no maintenance clause, which
+is how a doc can be fully compliant at every moment of writing and still end up with 13 items
+marked done that were open.
 
 ⛔ **A DECISIONS section reading "None open" while items are open is WORSE than an incomplete doc** -
 it asserts a false state the human will reasonably trust, and they stop checking.
 
-**Origin (learned from a real incident):** an orchestrator surfaced seven decisions in chat across a
-long session and recorded **none**, leaving DECISIONS reading _"None open"_. When the human went
-looking for one, they could find it in neither place. The skill's own rule already said decisions go
-in the moment they are surfaced - the orchestrator wrote that line and then broke it. The lesson:
-surfacing the brief question in chat is good - it lets the human know it exists - but you must also
-record it durably AND tell them where to find it.
+**Origin:** the orchestrator surfaced seven decisions in chat across a long session
+and recorded **none**, leaving DECISIONS reading _"None open"_. When the human went looking for one he
+could find it in neither place. The skill's own rule already said decisions go in the moment they
+are surfaced - the orchestrator wrote that line and then broke it. The human, verbatim: *"it's great to
+surface the brief question in the chat - it lets me know they are there. I just need you to be sure
+to record them and then tell me where to find them."*
 
 
 ## Keep the workspace git-clean (an orchestrator chore)
