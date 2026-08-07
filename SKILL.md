@@ -237,16 +237,14 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
 - **⭐ Format — DO NOT hand-write the skeleton. Generate it:**
 
   ```bash
-  python .shared/scripts/orchdoc.py scaffold --doc o<N>
+  python scripts/orchdoc.py scaffold --doc o<N>
   ```
 
-  ⚠️ **Path + availability.** Run it from the workspace root; the path above is relative to it.
-  `orchdoc.py` lives in the WORKSPACE (`.shared/scripts/`), not in this plugin, because it
-  resolves workspace repos and OrchDoc locations. **A cloud session without that workspace
-  will not have it** — there, keep the section schema below by hand and say so in the doc
-  rather than pretending a gate ran. Never paste an absolute machine path into a skill: this
-  plugin ships to desktop AND cloud, and a `C:/Users/<someone>/...` line is dead on arrival
-  everywhere but one laptop.
+  ⚠️ **Path.** `scripts/orchdoc.py` ships WITH this skill — copy it next to your OrchDocs,
+  or set `ORCHDOC_WORKSPACE` to the directory that holds them. It discovers the workspace
+  root by walking up from the current directory looking for `.shared/scripts` or any
+  `ORCHESTRATOR-DECISIONS-*.md`, so it does not care where you put it. Python 3, stdlib
+  only, no dependencies. Run `python scripts/orchdoc.py selftest` to confirm it works.
 
   That writes the canonical §-numbered spine, the identity heading, the Purpose stub, and
   the generated header block. The schema:
