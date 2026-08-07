@@ -323,6 +323,19 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   the updater's reasoning audits the reasoning — agreeing with a coherent account is what
   reading one does. An auditor shown only the evidence has to derive the answer independently,
   and only that can find what the updater never thought to look for.
+- ⭐ **A recorded fact must survive being marked done — three layers, and only the third
+  resists gaming.** The problem: you can enforce a FORMAT for recording that a sub-item
+  finished, but a format is satisfied by anything of the right shape, so the format alone
+  cannot stop someone writing whatever passes. The layers: **(1) FORMAT** — a slot must exist;
+  cheap, structural, gameable on its own. **(2) ORACLE** — what goes in the slot must be
+  checkable by someone else (a sha, a path, a command), never prose. **(3) IMMUTABILITY** — the
+  text inside `~~ ~~` must be the SAME text that was there before it was struck, which git can
+  verify and no format can fake. Layer 3 is what makes following-the-format insufficient.
+  `orchdoc_restrike.py` reads the diff and reports any strike that also changed the wording.
+  ⚠️ **It asks rather than blocks, and must stay that way:** a line reading "pending your call"
+  IS false once the call is made, so rewriting it can make the record *more* accurate. A reword
+  made to be TRUE and one made to PASS are identical in a diff. The independent auditor is
+  where that judgement belongs — which is the answer to "where do the oracles come in".
 - ⭐ **A WORKAROUND IS A DEFECT THAT HAS LEARNED TO PASS — escalate the adaptation, not just
   the failure.** The tell is not that something broke; it is that **you succeeded by not using
   the thing as designed.** A workaround feels like *solving* rather than *routing around*, which
