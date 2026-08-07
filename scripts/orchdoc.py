@@ -720,9 +720,18 @@ def _self_sha():
     for repo in citable_repos():
         if not (repo / ".git").exists():
             continue
-        rc, out, _ = git(["rev-parse", "--short", "HEAD"], cwd=repo)
-        if rc == 0 and out.strip():
-            return out.strip()
+        # Must contain a LETTER, or the SHA detector rejects it by design ("require a
+        # letter so plain numbers and dates are not read as SHAs"). A short HEAD sha can
+        # be all digits - the first attempt returned 6754330 and the fixture was silently
+        # ignored, so neither W-SHACITE nor E-DEADREF fired and the test failed with no
+        # explanation. Walk recent commits until one qualifies.
+        rc, out, _ = git(["rev-list", "-n", "20", "HEAD"], cwd=repo)
+        if rc != 0:
+            continue
+        for full in out.split():
+            for cand in (full[:7], full[:12], full):
+                if SHA_HAS_LETTER.search(cand):
+                    return cand
     return "0000000"
 
 BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
