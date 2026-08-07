@@ -2159,7 +2159,9 @@ def cmd_add(args):
             return 1
 
         today = args.date or _today()
-        owner = args.owner or ("the human" if args.kind == "decision" else "orchestrator")
+        # Whoever this install belongs to, not a hardcoded name.
+        owner = args.owner or (human_name().title() if args.kind == "decision"
+                               else "orchestrator")
 
         entry = [
             "",
@@ -2175,11 +2177,34 @@ def cmd_add(args):
 
         want = KIND_SECTION[args.kind]
         target = None
-        for s in sections:
-            # level 2 only. Matching any heading let the h1 "Orchestrator DECISION Doc"
-            # capture every decision and file it at the top of the document.
-            if s["level"] == 2 and want.rstrip("S") in s["title"].upper():
-                target = s
+
+        # ⛔ RESOLVE BY SECTION NUMBER FIRST. The schema deliberately gives the live and
+        # completed sections the SAME titles - "§2.1 Decisions" and "§99.1 Decisions" -
+        # because that symmetry is what makes `archive` a mechanical MOVE rather than a
+        # judgement call. But it also made the title ambiguous, and this loop took the
+        # LAST match with no break, so every newly captured OPEN decision was filed under
+        # §99 COMPLETED: invisible on the plate, and not flagged by `check`, because a
+        # decision sitting in a completed section is exactly what that section is for.
+        #
+        # ⭐ The symmetry that made archiving mechanical made filing ambiguous. A design
+        # that removes one judgement call can silently create another somewhere else.
+        live_num = KIND_SECTION_NUM.get(prefix[0], (None, None))[0]
+        if live_num:
+            for s in sections:
+                if s["level"] == 2 and re.match(r"^\W*\s*§?\s*%s\b" % re.escape(live_num),
+                                                s["title"]):
+                    target = s
+                    break
+
+        if target is None:
+            for s in sections:
+                # level 2 only. Matching any heading let the h1 "Orchestrator DECISION
+                # Doc" capture every decision and file it at the top of the document.
+                # FIRST match, not last: on a schema doc the live section always precedes
+                # its §99 counterpart.
+                if s["level"] == 2 and want.rstrip("S") in s["title"].upper():
+                    target = s
+                    break
         if target is None:
             lines += ["", "## %s" % want, ""]
             insert_at = len(lines)
