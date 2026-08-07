@@ -323,6 +323,17 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   the updater's reasoning audits the reasoning — agreeing with a coherent account is what
   reading one does. An auditor shown only the evidence has to derive the answer independently,
   and only that can find what the updater never thought to look for.
+- ⭐ **A WORKAROUND IS A DEFECT THAT HAS LEARNED TO PASS — escalate the adaptation, not just
+  the failure.** The tell is not that something broke; it is that **you succeeded by not using
+  the thing as designed.** A workaround feels like *solving* rather than *routing around*, which
+  is exactly why it never gets reported: it produces a working document, and a working document
+  generates no complaint. Concretely — if you find yourself writing a note explaining why the
+  obvious form was not used, or picking a second-choice value because the first one would not
+  parse, or hand-removing something a tool inserted: **that is a defect report you have not
+  filed.** File it. ⚠️ This is deliberately a human rule and not a check — it was measured, and
+  the structural proxy scored 0 for 3 on a real corpus. The signal is a fact about the author's
+  intent at the moment of writing, not about the artifact; the artifact looks correct, because
+  that is what a workaround is. **You are the only observer positioned to catch it.**
 - ⭐ **Emoji vocabulary — the stop sign carries STATE, so do not spend it on emphasis.**
   ⛔ = **NOT YET DONE**, outstanding work and nothing else. ⚠️ = warning / caution.
   ‼️ = plain emphasis, carrying no state. This is not decoration policy: a marker that appears
