@@ -51,4 +51,29 @@ hands each to a **worker** session, holds the live lane-map, and gates every mer
 inference-free file **watcher** (`scripts/watch_mailbox.py`, Python stdlib only) and per-lane
 **mailboxes** carry the back-and-forth hands-off.
 
-**Install as a Claude Code skill:** drop this directory into your skills path (`~/.claude/skills/orchestrating-parallel-sessions/`, or a plugin's `skills/` dir), keeping `SKILL.md` and the `scripts/` subdir together. Claude Code auto-discovers it; invoke it whenever you're coordinating parallel sessions. `scripts/PROTOCOL-template.md` and `scripts/watch_mailbox.py` are copied next to a `mailboxes/` directory at runtime to wire up the hands-off relay.
+## Install
+
+This repo is a **plugin marketplace** holding two skills:
+
+| skill | what it does |
+|---|---|
+| `orchestrating-parallel-sessions` | the orchestration model — lanes, workers, mailboxes, the decision doc |
+| `orchdoc-audit` | a full forced section-by-section refresh of a decision doc, then an independent audit |
+
+```
+/plugin marketplace add drewperd1000/orchestrating-parallel-sessions
+/plugin install orchestration
+```
+
+They surface as `/orchestration:orchestrating-parallel-sessions` and `/orchestration:orchdoc-audit`.
+
+The tools — `orchdoc.py`, `orchdoc_sweep.py`, `creds.py`, `watch_mailbox.py`,
+`PROTOCOL-template.md` — ship inside the orchestration skill's `scripts/` directory. They are
+Python **stdlib only**, so there is nothing to install. `orchdoc-audit` drives those same tools
+rather than shipping its own copies. At runtime, `PROTOCOL-template.md` and `watch_mailbox.py`
+are copied next to a `mailboxes/` directory to wire up the hands-off relay.
+
+> ⚠️ **This layout changed on 2026-08-07.** The repo previously held a single skill with
+> `SKILL.md` at the root, installed by dropping the directory into `~/.claude/skills/`. If you
+> installed it that way, that copy is stale — remove it and use the steps above. The change was
+> needed to hold more than one skill in one repo.
