@@ -1,6 +1,6 @@
 ---
 name: orchestrating-parallel-sessions
-description: Use when work is split across multiple parallel Claude Code sessions - on code, research, writing, ops, migrations, audits, any body of work - and they collide, duplicate effort, drift apart, or stall because a human is relaying messages between them. Also for any long-running project that needs a decision record which cannot go stale, cannot silently drop what it owes the human, and cannot claim work is finished when it is not. Provides lane decomposition, hands-off mailbox coordination, and a linted decision doc with a forced section-by-section refresh and an independent audit.
+description: Use to run a whole project through an orchestrator agent that fans work out to parallel Claude Code sessions - headless or hand-launched - keeps them from colliding on shared ground, has workers fan out their own agents when the work needs it, and collates what comes back into one picture. For large layered projects of any kind: applications, websites, research tools, knowledge graphs, copy and content, data integrations, measurement pipelines. Its core instrument is a linted decision doc holding open questions, pending decisions and live links where the human can find them - so nobody scrolls back through thousands of lines of chat, and nobody re-asks a question that was already answered.
 ---
 
 # orchestrating-parallel-sessions
