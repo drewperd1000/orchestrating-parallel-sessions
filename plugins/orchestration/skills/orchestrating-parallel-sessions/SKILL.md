@@ -17,6 +17,91 @@ So run **one responsive orchestrator** that decomposes work into disjoint packag
 
 A lane can be a whole repo. Across repos the file-level collisions disappear (different files), but the rest of the model still holds: prevent duplicate work, hold ONE lane-map spanning every repo, and gate EACH repo's merges separately. Watch shared names that span repos - config keys, API contracts, tier/flag names - so a rename in one repo updates its consumers in the others.
 
+## First run — settle these once, then never ask again
+
+On the very first use, establish the baseline and **write it into the human's own config**, not
+into this skill. Ask once, record, and stop asking:
+
+| what | why it matters | where it lives |
+|---|---|---|
+| **What do I call you?** | the plate heading and every "needs your ruling" line are addressed to a name | their config / a `.orchdoc-me`-style file |
+| **Launch mode: manual or hybrid?** | manual = you paste each worker prompt; hybrid = the orchestrator self-launches headless workers and you watch the mailbox | **their standing choice**, recorded once |
+| **Where do decision docs live?** | so every orchestrator writes to the same place and can read each other's | a path in their config |
+| **Which repos / areas are in scope?** | lanes are scoped by area; without a map there is nothing to make disjoint | the lane map |
+| **One project, or several?** | decides whether you need one orchestrator or a Maestro and a host (below) | — |
+
+⛔ **A standing choice is answered ONCE.** Re-asking *"manual or hybrid?"* at the start of every
+task is the single most common way this skill wastes a human's attention - the answer never
+changes, and asking implies it might. Record it and honour it silently.
+
+⭐ **And the deeper rule the table encodes: the SKILL states the generic principle; the HUMAN'S
+CONFIG states their specific choice.** This file says *"follow the human's standing preference"*
+because it is read by people who have different ones. Their config says *"mine is hybrid."*
+Putting the specific choice in the shared skill pushes one person's setup onto everyone else.
+
+## How many orchestrators, and what each is for
+
+The first real question is not how to run one. It is **where the dividing lines go.**
+
+**One orchestrator per project** is the working rule. If you want a sharper test, think of them
+as **departments in a business** — Operations, Finance, IT, DevOps, HR. Each owns a domain, has
+its own standing concerns, and runs for weeks. You would not ask Finance to reorganise the
+build pipeline; you would ask IT, and the two would talk.
+
+That analogy does real work, because it answers the question people actually get stuck on —
+*is this a new orchestrator or another lane?*
+
+- **Another LANE** if it is a piece of the same project, sharing its context, deadlines and
+  merge queue. Lanes are disjoint slices of ONE workstream.
+- **A new ORCHESTRATOR** if it has its own goals, its own decisions to bring the human, and
+  would keep running after the current project ships. Departments outlive projects.
+
+⚠️ **Too few orchestrators is the more common error, and it hides.** A single orchestrator
+carrying three unrelated workstreams produces a decision doc where the human cannot tell which
+project a question belongs to, and a lane map whose entries have nothing to do with each other.
+The symptom is a doc that is hard to read rather than an obvious failure — so it persists.
+
+## The Maestro — the executive orchestrator
+
+⭐ **The first session you open is usually not a project orchestrator. It is the one that
+CREATES them.** Call it the Maestro: the executive over a host of department-level
+orchestrators, and the place a human naturally lands when they start.
+
+**You do not hand-start each new orchestrator.** You tell the Maestro what the new domain is,
+and it does the work — which is far more effective than a human pasting bootstrap prompts,
+because the Maestro was present when every other orchestrator was born and can answer questions
+a document cannot anticipate.
+
+**What the Maestro does when a new orchestrator is commissioned:**
+
+1. **Allocates the id and the mailbox.** `o<N>` from the registry, never reused, and the mailbox
+   path the rest of the host already knows how to reach.
+2. **Writes the full charter and bootstrap doc** — scope, guards, what this orchestrator will
+   NOT do, and the decision doc it owns. (The bootstrap-prompt template below is the form.)
+3. ⭐ **Introduces it to the host.** Who the other orchestrators are, what each owns, which ones
+   it will most likely need, and how to reach them. **A new orchestrator that does not know its
+   peers exist will duplicate their work and never find out.**
+4. **Shows it how to message** — the Maestro, and any sibling — so its first cross-orchestrator
+   question does not route through the human.
+5. ⭐ **Stays available for its questions.** This is the part no static prompt replaces. A
+   newly-opened orchestrator has questions in its first ten minutes — about scope, about
+   overlap, about what the human already decided six weeks ago — and **the Maestro is awake and
+   knows.** Hand-starting from a document leaves those unanswered, and an orchestrator that
+   guesses at scope is the one that collides.
+
+**The Maestro also does what no department orchestrator can:**
+
+- Routes a question to the orchestrator that owns the answer, instead of the human doing it.
+- Notices when two orchestrators are converging on the same ground **before** they collide.
+- Runs the proposal-to-the-host loop (see *Multiple orchestrators, collaborating*) — sending one
+  orchestrator's proposed change to all the others and collecting what would have broken.
+- Holds the only view of the whole business rather than one department of it.
+
+⚠️ **A Maestro is not required for one project.** If there is a single workstream, one
+orchestrator is the whole structure and adding an executive above it is ceremony. The Maestro
+earns its place at the point where you have two orchestrators and start relaying between them
+yourself — **that relaying is the job it takes over.**
+
 ## Roles
 
 | Role | Does | Does NOT |
@@ -696,7 +781,9 @@ Sometimes a *distinct* workstream deserves its own orchestrator + lanes rather t
 tracked + watched on its own. That's a SECOND orchestrator (`o2`, `o3`, …) running concurrently with the first (see
 *Naming sessions + mailboxes*).
 
-You don't start it by hand-running an orchestrator. You **write a self-contained orchestrator-bootstrap prompt and
+You don't start it by hand-running an orchestrator. **If a Maestro exists, this is its job** (see *The Maestro*) —
+it allocates the id, writes the charter, introduces the new orchestrator to the host, and stays available for its
+questions. Either way the mechanism is the same: **write a self-contained orchestrator-bootstrap prompt and
 hand it to the human to paste into ONE fresh session** (then `/rename o<N>: <subject>`). **An orchestrator is an
 *interactive* session** — it must stay responsive to watch mailboxes + gate merges — **so only its WORKERS are
 headless, never the orchestrator itself.** One human paste births the orchestrator; that orchestrator then launches

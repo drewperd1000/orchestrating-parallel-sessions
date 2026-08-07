@@ -14,8 +14,22 @@ project with layered, overlapping parts.**
 
 ## Several orchestrators, working as a team
 
-The larger win is running **more than one**. Each owns a domain - product, research, copy,
-data, process - and they **collaborate**: comparing work, pinging each other for data or a
+The larger win is running **more than one**. The working rule is **one orchestrator per
+project** - or, for a sharper dividing line, think of them as **departments in a business**:
+Operations, Finance, IT, DevOps, HR. Each owns a domain, has its own standing concerns, and
+runs for weeks. That analogy answers the question people actually get stuck on - *is this a new
+orchestrator, or another lane?* A lane is a slice of one project. A department outlives it.
+
+⭐ **And you do not hand-start them.** The first session you open is usually not a project
+orchestrator at all - it is the one that **creates** them. Call it the **Maestro**: the
+executive over the host. You tell it what the new domain is, and it allocates the id and
+mailbox, writes the charter, **introduces the new orchestrator to its peers** so it does not
+duplicate their work without ever finding out, shows it how to message them directly, and
+**stays available for the questions it has in its first ten minutes** - about scope, about
+overlap, about what was decided six weeks ago. A bootstrap document cannot answer those. A
+colleague who was there when the other eight were started can.
+
+Each department orchestrator owns a domain and they **collaborate**: comparing work, pinging each other for data or a
 second read, critiquing each other's output, and **catching what the others missed**. It reads
 very much like a team of specialists who each know their own area and have to cooperate to move
 the whole thing forward.
