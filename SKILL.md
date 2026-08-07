@@ -323,6 +323,23 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   the updater's reasoning audits the reasoning — agreeing with a coherent account is what
   reading one does. An auditor shown only the evidence has to derive the answer independently,
   and only that can find what the updater never thought to look for.
+- ⛔ **A verb that WRITES must refuse to write a document you do not own.** Set `$ORCHDOC_ME`
+  (or a `.orchdoc-me` file) to your orchestrator id; every mutating verb then compares it to
+  the id in the target filename and refuses on a mismatch, naming `--not-mine` for an edit the
+  owner has agreed to. ⭐ **Why this is a mechanism and not a rule:** the author of this
+  standard wrote "no unilateral edit of another orchestrator's OrchDoc" into their own guards
+  section, and then ran a writing verb across six live documents belonging to other people —
+  **within the hour, while actively thinking about that guard.** A rule you have written down,
+  agreed to, and are currently holding in mind is still not a mechanism. Identity is configured
+  and never guessed; an unconfigured machine is never blocked, because a guard that fires where
+  nobody opted in gets switched off, and a guard that gets switched off protects nothing.
+- ⭐ **The header and the index must be DERIVED from the same function that renders the thing
+  they describe** — not by a second rule that agrees with it today. A doc's header counted open
+  items with its own rule while the generated index used another; both were individually
+  correct, and they disagreed the moment a new section started producing open entries. An
+  independent auditor caught it, no invariant could, and **the first fix was a third rule that
+  under-counted by hiding items** — the one direction that must never happen. One rule, one
+  reader.
 - ⛔ **A CHECK MUST REPORT HOW MANY THINGS IT EXAMINED, NOT ONLY WHAT IT FOUND.** "0 examined"
   and "N examined, all clean" are different facts and must print differently — they are the
   same words otherwise, and the flattering reading is the one everybody takes. This exact
