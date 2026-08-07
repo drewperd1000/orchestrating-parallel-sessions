@@ -357,6 +357,25 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   line says about itself (`restrike --stamps`). And the generator echoes the original text back
   verbatim, so keeping the words is the path of least effort and rewording them is a thing you
   go out of your way to do.
+- ⛔ **AN MCP BEING DOWN SAYS NOTHING ABOUT YOUR STATIC CREDENTIALS, AND A REJECTED CALL
+  SAYS NOTHING UNTIL YOU KNOW THE CALL WAS RIGHT.** Two recurring tail-chasers, opposite
+  mistakes about one fact. **(a)** *"The MCP failed, so I have no access."* A static token for
+  the same service may be on disk - needing no interactive auth, and working in headless runs,
+  cron and subagents where the MCP does not exist at all. **(b)** *"The token is dead."*
+  Usually the PROBE was wrong: a **scope mismatch** (an account-scoped call rejects a
+  workspace-scoped token by design), a **wrong HTTP client** (a Python client hit an edge
+  fingerprint block and returned 403 on a token curl accepted for the identical request), or a
+  **health check that reports the transport rather than the auth** (one MCP reported
+  `Connected` while every call returned Unauthorized). ⭐ **The cost is never the failed call -
+  it is the conclusion drawn from it.** Both shapes end with the human being sent to
+  re-authenticate something that was never broken; one such report asked for a login the human
+  had completed three days earlier. **So distinguish five outcomes and never collapse them:**
+  `WORKS` · `LIKELY-BAD` (the CORRECT probe ran and was rejected) · `WRONG-PROBE` (this call
+  fails on a GOOD credential) · `CANNOT-TELL` (the probe could not run - **not evidence**) ·
+  `NOT-CONFIGURED` (nothing set up here - a clean slate, not a failure). **Only `LIKELY-BAD`
+  justifies asking the human for anything.** `scripts/creds.py` implements this; its probes are
+  worked examples, and your own vendors go in a `creds_local.py` you own - a shipped list of
+  someone else's stack would present a local accident as the shape of the world.
 - ⛔ **WHEN A CHECK KEEPS ALMOST-WORKING, THE THING YOU ARE MEASURING IS ADJACENT TO THE
   THING YOU CARE ABOUT.** Not "tune the threshold" - **change the question.** A gate went
   through three versions comparing git refs, each fix a fresh proxy that measured a true fact
