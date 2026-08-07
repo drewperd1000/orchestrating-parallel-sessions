@@ -53,7 +53,8 @@ in-flight sessions in their head. An agent can, and that turns out to be exactly
 orchestrator is for: hold the live map, keep the fan-out disjoint, gate what merges, and make
 sense of what returns.
 
-**The instrument that makes it work with a human in the loop** is a decision doc the tooling
+**The instrument that makes it work with a human in the loop** is the **OrchDoc** - an
+Orchestrator Decision Doc - which the tooling
 lints, regenerates and refuses to let go stale (`scripts/orchdoc.py`). Open questions, pending
 decisions and live links sit in one place with a stable spine - so the human never scrolls back
 through thousands of lines of chat to find what they were asked, and never re-asks a question
@@ -71,8 +72,8 @@ This repo is a **plugin marketplace** holding two skills:
 
 | skill | what it does |
 |---|---|
-| `orchestrating-parallel-sessions` | the orchestration model — lanes, workers, mailboxes, the decision doc |
-| `orchdoc-audit` | a full forced section-by-section refresh of a decision doc, then an independent audit |
+| `orchestrating-parallel-sessions` | the orchestration model — lanes, workers, mailboxes, the OrchDoc |
+| `orchdoc-audit` | a full forced section-by-section refresh of an OrchDoc, then an independent audit |
 
 ```
 /plugin marketplace add drewperd1000/orchestrating-parallel-sessions

@@ -67,17 +67,29 @@ The symptom is a doc that is hard to read rather than an obvious failure — so 
 CREATES them.** Call it the Maestro: the executive over a host of department-level
 orchestrators, and the place a human naturally lands when they start.
 
-**You do not hand-start each new orchestrator.** You tell the Maestro what the new domain is,
-and it does the work — which is far more effective than a human pasting bootstrap prompts,
-because the Maestro was present when every other orchestrator was born and can answer questions
-a document cannot anticipate.
+⛔ **The human still pastes one prompt into one fresh session, and that is structural — not a
+gap.** An orchestrator must be an **interactive** session so it stays responsive to mailboxes
+and merge gates (see below); a headless `claude -p` runs detached and never appears in the
+session list where the human can open, watch and steer it. So the paste is how an orchestrator
+comes into existence, and nothing replaces it.
+
+⭐ **What changes is who AUTHORS it, and how much is in it.** The human does not write the
+prompt or decide the scope — the Maestro does. And the pasted prompt is deliberately **short**:
+it points at the **full path of a bootstrap `.md` the Maestro wrote**, and that file carries the
+charter, the guards, the introductions to the existing host, and the instructions for messaging
+the Maestro and its peers. **One line of paste; a document's worth of context.**
+
+That split matters because a prompt is typed once and a file can be re-read. A new orchestrator
+that loses its opening context can open the bootstrap file again; it cannot recover a prompt
+that scrolled away.
 
 **What the Maestro does when a new orchestrator is commissioned:**
 
 1. **Allocates the id and the mailbox.** `o<N>` from the registry, never reused, and the mailbox
    path the rest of the host already knows how to reach.
-2. **Writes the full charter and bootstrap doc** — scope, guards, what this orchestrator will
-   NOT do, and the decision doc it owns. (The bootstrap-prompt template below is the form.)
+2. **Writes the bootstrap `.md`** — scope, guards, what this orchestrator will NOT do, and the
+   OrchDoc it owns. This is the file the pasted prompt points at, and it is re-readable, which
+   a prompt is not. (The bootstrap-prompt template below is the form its contents take.)
 3. ⭐ **Introduces it to the host.** Who the other orchestrators are, what each owns, which ones
    it will most likely need, and how to reach them. **A new orchestrator that does not know its
    peers exist will duplicate their work and never find out.**
