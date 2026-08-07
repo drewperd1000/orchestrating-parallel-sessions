@@ -28,7 +28,7 @@ into this skill. Ask once, record, and stop asking:
 | **Launch mode: manual or hybrid?** | manual = you paste each worker prompt; hybrid = the orchestrator self-launches headless workers and you watch the mailbox | **their standing choice**, recorded once |
 | **Where do decision docs live?** | so every orchestrator writes to the same place and can read each other's | a path in their config |
 | **Which repos / areas are in scope?** | lanes are scoped by area; without a map there is nothing to make disjoint | the lane map |
-| **One project, or several?** | decides whether you need one orchestrator or a Maestro and a host (below) | — |
+| **One project, or several?** | *optional* — capture it if you already know; if not, start with one and let the boundaries show themselves | — |
 
 ⛔ **A standing choice is answered ONCE.** Re-asking *"manual or hybrid?"* at the start of every
 task is the single most common way this skill wastes a human's attention - the answer never
@@ -39,33 +39,52 @@ CONFIG states their specific choice.** This file says *"follow the human's stand
 because it is read by people who have different ones. Their config says *"mine is hybrid."*
 Putting the specific choice in the shared skill pushes one person's setup onto everyone else.
 
-## How many orchestrators, and what each is for
+## How many orchestrators — and you do not need to know yet
 
-The first real question is not how to run one. It is **where the dividing lines go.**
+⭐ **Start with one.** You cannot draw good dividing lines before you have run the thing, and
+nothing here requires you to. The first orchestrator handles the work in front of you; the
+boundaries reveal themselves in use, usually by becoming annoying first.
 
-**One orchestrator per project** is the working rule. If you want a sharper test, think of them
-as **departments in a business** — Operations, Finance, IT, DevOps, HR. Each owns a domain, has
-its own standing concerns, and runs for weeks. You would not ask Finance to reorganise the
-build pipeline; you would ask IT, and the two would talk.
+**If you already have a picture of the split, say so and it gets captured.** If you do not,
+defer it — and once a Maestro exists (below) it has the context to help you delineate, because
+it has watched the work actually happen rather than guessing from a blank page.
 
-That analogy does real work, because it answers the question people actually get stuck on —
-*is this a new orchestrator or another lane?*
+**The signals that you have found a boundary**, when you meet them:
 
-- **Another LANE** if it is a piece of the same project, sharing its context, deadlines and
-  merge queue. Lanes are disjoint slices of ONE workstream.
-- **A new ORCHESTRATOR** if it has its own goals, its own decisions to bring the human, and
-  would keep running after the current project ships. Departments outlive projects.
+- Your decision doc holds questions from two efforts that have nothing to say to each other,
+  and you cannot tell at a glance which is which.
+- The lane map lists entries that could never collide, because they are not the same work.
+- You catch yourself explaining context to one session that the other already had.
 
-⚠️ **Too few orchestrators is the more common error, and it hides.** A single orchestrator
-carrying three unrelated workstreams produces a decision doc where the human cannot tell which
-project a question belongs to, and a lane map whose entries have nothing to do with each other.
-The symptom is a doc that is hard to read rather than an obvious failure — so it persists.
+**When that happens, the useful frame is departments in a business** — Operations, Finance, IT,
+DevOps, HR. Each owns a domain, has standing concerns, and runs for weeks. It answers the
+question you will actually be asking by then:
+
+- **Another LANE** if it is a slice of the same effort, sharing its context and merge queue.
+- **A new ORCHESTRATOR** if it has its own goals, brings the human its own decisions, and would
+  keep running after the current project ships. Departments outlive projects.
+
+⚠️ **Too few is the more common error, and it hides.** One orchestrator carrying three unrelated
+workstreams produces a doc where the human cannot tell which effort a question belongs to. The
+symptom is a document that is *hard to read* rather than an obvious failure — so it persists,
+and the fix arrives late. If reading your own doc has started to feel like work, that is the
+signal.
+
+⛔ **Do not split pre-emptively either.** Two orchestrators where one would do means two docs to
+keep current, two mailboxes to watch, and cross-messages about work that was never separate.
+**The cost of merging later is low; the cost of coordinating what should have been one thing is
+paid every day.**
 
 ## The Maestro — the executive orchestrator
 
-⭐ **The first session you open is usually not a project orchestrator. It is the one that
-CREATES them.** Call it the Maestro: the executive over a host of department-level
-orchestrators, and the place a human naturally lands when they start.
+⭐ **You do not set out to create a Maestro. Your first orchestrator BECOMES one the moment you
+need a second.** That is where a human naturally lands — you start a session to do the work in
+front of you, and later use that same session to help stand up the next orchestrator, because
+it is the one that has been watching and knows what the new domain does and does not include.
+
+From then on it is the executive over a host of department-level orchestrators. **Nothing about
+this has to be decided on day one** — it is a role your first session grows into, not a
+structure you build before starting.
 
 ⛔ **The human still pastes one prompt into one fresh session, and that is structural — not a
 gap.** An orchestrator must be an **interactive** session so it stays responsive to mailboxes
