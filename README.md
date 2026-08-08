@@ -88,6 +88,24 @@ Python **stdlib only**, so there is nothing to install. `orchdoc-audit` drives t
 rather than shipping its own copies. At runtime, `PROTOCOL-template.md` and `watch_mailbox.py`
 are copied next to a `mailboxes/` directory to wire up the hands-off relay.
 
+## Found something wrong? Please say so
+
+The most valuable report is **a check that told you something untrue**, or **a finding whose
+remedy you could not actually perform**. Nearly every fix here came from someone running this
+against a real project and hitting a case no synthetic fixture would produce.
+
+```
+python <skill>/scripts/orchdoc_feedback.py wrong "<what it said>" --actually "<what was true>" --workaround "<what you had to do>"
+```
+
+That prints a pre-filled issue URL. It sends nothing and contacts no one - you paste it if you
+want to. Or open an issue directly; there are templates for *a check was wrong* and *it assumed
+something untrue of my setup*.
+
+⭐ **The `--workaround` field matters most.** If the only way past was to change something that
+was correct - reword a record, revert a status, delete a reference - that is the detail that
+changes the design instead of patching a regex.
+
 > ⚠️ **This layout changed on 2026-08-07.** The repo previously held a single skill with
 > `SKILL.md` at the root, installed by dropping the directory into `~/.claude/skills/`. If you
 > installed it that way, that copy is stale — remove it and use the steps above. The change was

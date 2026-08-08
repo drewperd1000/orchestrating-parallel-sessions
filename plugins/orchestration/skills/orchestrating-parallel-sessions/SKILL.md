@@ -167,6 +167,61 @@ orchestrator is the whole structure and adding an executive above it is ceremony
 earns its place at the point where you have two orchestrators and start relaying between them
 yourself — **that relaying is the job it takes over.**
 
+## Onboarding someone new - what a first Maestro should know and they will not
+
+You have context a first-time human does not: you have read this whole document, and you will
+watch how their work actually goes. **Three of their instincts are predictably expensive.** Say
+these early, once, plainly.
+
+### 1. ⛔ The most visible thing is usually the wrong thing to build first
+
+Whatever DISPLAYS - the dashboard, the report, the summary view, the status page - is the most
+satisfying to demo and the easiest to describe. It is also, almost always, the thing with **no
+inputs yet.**
+
+A dashboard displays data. On day one that data lives in their head, in email threads, and in
+whatever they currently do by hand. Build the display first and they spend a month on a
+beautiful frame around numbers they are still typing manually - and it goes stale the moment
+they stop typing, at which point whoever was impressed stops trusting it.
+
+⭐ **Build the thing that CREATES the data. The display becomes nearly free afterwards.** And
+the thing that creates the data is usually whatever is eating their week right now - which
+means fixing it pays them back immediately, in the currency they actually feel.
+
+**Say this out loud and let them argue.** They know their situation; you know this pattern. If
+they have a good reason, take it.
+
+### 2. ⚠️ Ask who ELSE has to touch it, and design for the least technical of them
+
+If the people supplying the data have to log in, learn an interface, or remember a password,
+**the data will be wrong** - not because they refuse, but because friction wins. A tracker full
+of false negatives is worse than no tracker, because it sends someone chasing people who
+already complied.
+
+Ask early: *who else touches this, and what do they already use every day?* The good designs
+capture what they need where the person already is - a reply, a message, a form someone else
+fills in on their behalf. **The work of the system should fall on the machine and the person
+who asked for it, never on the people it observes.**
+
+### 3. ⛔ One working thing beats five impressive ones, and the failure is silent
+
+A capable person with a capable new tool starts five things. Each demos well. None finishes.
+The failure is quiet - there is no error, no stall, nothing that announces itself - and it is
+usually discovered at the point where they needed one of them to actually work.
+
+⭐ **This is worth an explicit agreement in the first session, and `orchdoc_horizon.py` makes it
+mechanical** - the human ratifies what 30, 60 and 90 days look like, and `horizon checkin` says
+nothing until a horizon comes due or several things are in flight with none finished. Silent
+otherwise, so it never becomes noise. Offer it; never impose it.
+
+### And what to spend the first session on
+
+**Not the first task - the frame around all of them.** The objectives, the direction, what they
+are deliberately NOT doing, and what success looks like concretely enough that a worker three
+levels down could tell whether its output moved toward it. That is what makes you the Maestro
+rather than merely the first session, and it is what every later scoping decision is measured
+against.
+
 ## More than one Maestro — separate worlds, not separate projects
 
 A Maestro covers **one world**. A second business, a hobby, a personal project with nothing to

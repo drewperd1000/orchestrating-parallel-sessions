@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Something in the docs was confusing
+    url: https://github.com/drewperd1000/orchestrating-parallel-sessions/issues/new
+    about: >-
+      Open a blank issue and quote the sentence. If a paragraph read as obvious to its author
+      and not to you, the author is the one who cannot tell - that report is not a nuisance,
+      it is the only way that gets found.
