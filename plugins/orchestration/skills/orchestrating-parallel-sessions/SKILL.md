@@ -732,9 +732,11 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   **silently**; a Windows path hit `\U` and died as a unicode escape error; two strings
   differing only in escaping failed an equality assertion. Writing the file has **zero**
   escaping layers, fails on a syntax error before executing anything, survives for debugging,
-  and stays reviewable. If you want this enforced rather than remembered, a `PreToolUse` hook
-  that refuses a language-heredoc **whose body contains a backslash** blocks exactly this class
-  while leaving commit messages, JSON and prose untouched.
+  and stays reviewable. If you want this enforced rather than remembered,
+  **`scripts/block_python_heredoc.py` is that hook** - a `PreToolUse` guard that refuses a
+  language-heredoc **whose body contains a backslash**, and leaves commit messages, JSON and
+  prose untouched. Point a `PreToolUse` matcher for `Bash` at it. It has caught its own author
+  three times in one session, which is the only endorsement worth quoting.
 
 - ⭐ **A recorded fact must survive being marked done — three layers, and only the third
   resists gaming.** The problem: you can enforce a FORMAT for recording that a sub-item
