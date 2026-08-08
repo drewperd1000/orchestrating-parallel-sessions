@@ -35,7 +35,6 @@ one sentence keeps its meaning, and the sentence lands in the commit message whe
 reader finds it.
 """
 import argparse
-import difflib
 import pathlib
 import re
 import subprocess
@@ -66,36 +65,6 @@ def meaningful(line):
     return bool(re.search(r"[A-Za-z0-9]", t)) and t not in ("```", "---", "***")
 
 
-def survives_as_an_edit(line, local_lines):
-    """Does this remote line survive locally in edited form?
-
-    ⭐ The distinction the first version missed: a line REWRITTEN in place is not a line LOST.
-    Its old text is absent, which is what a line-level diff reports, but its content is still
-    there wearing different words. Only a line with no local descendant is a real deletion.
-
-    Asymmetric containment, same measure the strikethrough detector needed: what fraction of
-    the ORIGINAL is accounted for somewhere local. A symmetric similarity score punishes the
-    common case where a line is edited by being made longer.
-    """
-    t = line.strip()
-    if not t:
-        return True
-    best = 0.0
-    for cand in local_lines:
-        c = cand.strip()
-        if not c or abs(len(c) - len(t)) > max(len(t) * 3, 120):
-            continue
-        sm = difflib.SequenceMatcher(None, t, c)
-        # runs of >= 6 chars only: scattered single-character matches inflate short lines to
-        # a passing score against text they have nothing to do with.
-        frac = sum(b.size for b in sm.get_matching_blocks() if b.size >= 6) / float(len(t))
-        if frac > best:
-            best = frac
-            if best >= 0.60:
-                return True
-    return False
-
-
 def check(cwd, remote, branch):
     """Lines present on the remote and absent locally, per path. {} means safe."""
     rc, _, err = git(["fetch", "-q", remote, branch], cwd)
@@ -118,11 +87,9 @@ def check(cwd, remote, branch):
             local_text = local.read_text(encoding="utf-8", errors="replace")
         except OSError:
             local_text = ""
-        local_lines = local_text.split("\n")
-        have = set(l.strip() for l in local_lines)
+        have = set(l.strip() for l in local_text.split("\n"))
         gone = [l for l in remote_text.split("\n")
-                if meaningful(l) and l.strip() not in have
-                and not survives_as_an_edit(l, local_lines)]
+                if meaningful(l) and l.strip() not in have]
         if gone:
             losses[p] = gone
     return losses, None
@@ -132,10 +99,25 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cwd", default=".")
     ap.add_argument("--remote", default="origin")
-    ap.add_argument("--branch", default="master")
+    # ⛔ DEFAULT TO THE BRANCH YOU ARE ACTUALLY ON, not a guessed name. A hardcoded "master"
+    # makes this guard refuse EVERY push in a repo that uses "main" - and a gate that always
+    # refuses gets worked around, which is worse than no gate. Observed the first time it was
+    # run in a main-branch repo: "could not fetch origin/master", nothing pushed, and the
+    # obvious next move is to bypass it.
+    ap.add_argument("--branch", default=None,
+                    help="default: the branch currently checked out")
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--because", help="override: why this deletion is intended")
     a = ap.parse_args()
+
+    branch = a.branch or subprocess.run(
+        ["git", "-C", a.cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True).stdout.strip()
+    if not branch or branch == "HEAD":
+        print("  [CANNOT CHECK] no branch checked out (detached HEAD?). Pass --branch.")
+        print("  This is NOT a statement that the push is safe. Nothing was pushed.")
+        return 2
+    a.branch = branch
 
     losses, err = check(a.cwd, a.remote, a.branch)
     if err:
