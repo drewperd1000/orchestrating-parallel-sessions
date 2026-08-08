@@ -231,8 +231,22 @@ def gate(doc, step, before_text, require_change=True):
     if span:
         here = [e for e in entries if _entry_section_num(e) == sec]
         # A closed item left in a live section is the one thing this step is FOR.
+        #
+        # TERMINAL_STATUS, never "not in PLATE_STATUS". PLATE_STATUS is {OPEN, BLOCKED} - what
+        # belongs on the human's plate - and its complement is not "closed", it is "everything
+        # else": DEFERRED, PAUSED, ADOPTED, CONFIRMED, RECORDED, SHIPPED, and IN PROGRESS.
+        #
+        # ⛔ IN PROGRESS was created the SAME DAY, specifically to mean an item is NOT closed,
+        # and this gate classified it as closed and demanded it be archived - which would have
+        # buried the exact entries that status exists to keep visible. The only way to satisfy
+        # the gate was to revert them to RESOLVED: undoing the correct fix in order to pass the
+        # check that enforces it.
+        #
+        # `archive` had this right and the gate rolled its own answer. ONE predicate, shared -
+        # a second definition of "closed" that happens to agree today is a contract waiting to
+        # break the next time anyone adds a status.
         stuck = [e["id"] for e in here
-                 if od.status_of(e["body"]) not in od.PLATE_STATUS and not e.get("archived")
+                 if od.status_of(e["body"]) in od.TERMINAL_STATUS and not e.get("archived")
                  and not sec.startswith("99") and sec in ("2.1", "2.2", "2.3", "3")]
         if stuck:
             reasons.append(
