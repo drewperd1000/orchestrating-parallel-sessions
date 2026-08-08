@@ -151,10 +151,57 @@ that scrolled away.
   orchestrator's proposed change to all the others and collecting what would have broken.
 - Holds the only view of the whole business rather than one department of it.
 
+⛔ **THE TRAP: do not start a new orchestrator by invoking this skill yourself in a fresh
+session.** It works, which is what makes it dangerous — you get a running orchestrator, and it
+behaves correctly. What you do not get is everything that makes it a member of a host: **no
+allocated id, no mailbox the others watch, no charter, no guards, no introductions, and no
+knowledge that its peers exist.** It will duplicate a sibling's work and neither of them will
+find out.
+
+**Ask the Maestro instead.** *"I need an orchestrator for X"* — and it allocates the id from the
+registry, writes the bootstrap `.md`, introduces the new session to the host, and hands you the
+short prompt to paste. **You still do the paste; you just do not do the thinking.**
+
 ⚠️ **A Maestro is not required for one project.** If there is a single workstream, one
 orchestrator is the whole structure and adding an executive above it is ceremony. The Maestro
 earns its place at the point where you have two orchestrators and start relaying between them
 yourself — **that relaying is the job it takes over.**
+
+## More than one Maestro — separate worlds, not separate projects
+
+A Maestro covers **one world**. A second business, a hobby, a personal project with nothing to
+do with the first — those get **their own Maestro and their own host**, not another department
+under the existing one.
+
+⭐ **The test is shared success, not size.** Two efforts belong under one Maestro when they
+contribute to **the same definition of what winning looks like** — because that definition is
+exactly what a Maestro uses to scope work, set priority, and judge whether an output mattered.
+A business and a weekend hobby do not share one. An executive holding both holds two visions and
+can serve neither well.
+
+**Signs you are asking one Maestro to run two worlds:**
+
+- Its decision doc puts questions side by side that have nothing to say to each other, and you
+  have to read each one to know which world it belongs to.
+- A priority call between them is not a real comparison — *"is the hobby thing more urgent than
+  the revenue thing?"* is a question with no shared axis.
+- Cross-orchestrator introductions produce peers that will never message each other.
+
+⚠️ **And the error runs both ways.** Too many Maestros and **you are relaying between hosts
+personally**, which is the exact job a Maestro exists to take over. If two worlds trade
+information weekly, they were one world.
+
+**Keeping them apart, mechanically:**
+
+- **Give each world its own id namespace.** Numeric ids (`o1`, `o2`, …) inside one host; a short
+  mnemonic prefix when hosts coexist on one machine (`wl1`, `hb1`) so a lane label is never
+  ambiguous about which world it belongs to. See *Naming sessions + mailboxes*.
+- **Separate registries and separate mailbox directories.** An id is only unique inside its
+  registry, so two hosts sharing one file will collide the first time both allocate.
+- **Separate decision docs, always.** A doc is the human's view of one world; merging two is how
+  it stops being readable.
+- **No cross-host mailboxes.** If a message genuinely needs to cross, it goes through the human
+  — and that should be rare enough to notice, because if it is not, see the warning above.
 
 ## Roles
 
