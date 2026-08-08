@@ -54,13 +54,18 @@ KEYS = {
     "launch_mode": ("manual = the human pastes each worker prompt. hybrid = the orchestrator "
                     "self-launches headless workers and the human watches the mailbox.",
                     "ORCHDOC_LAUNCH_MODE"),
-    "me": ("This orchestrator's id (o1, o2, ...). Mutating verbs refuse to write another "
-           "orchestrator's doc.", "ORCHDOC_ME"),
+    # SESSION-scoped, so it lives in the environment and NEVER in this file. Every
+    # orchestrator shares one workspace; a file here saying `me: o9` tells all eight of them
+    # they are o9, and the ownership guard then refuses each of them on its own document.
+    "me": ("This orchestrator's id (o1, o2, ...). ⛔ SESSION-scoped: set $ORCHDOC_ME in the "
+           "session, never here - every orchestrator shares this workspace.", "ORCHDOC_ME"),
     "docs_dir": ("Where OrchDocs live, so every orchestrator writes to one place and can read "
                  "the others.", "ORCHDOC_DIR"),
     "artifact_re": ("Extra regex for artifact names in citations, so a line-reference check "
                     "does not fire on this workspace's own naming.", "ORCHDOC_ARTIFACT_RE"),
 }
+
+SESSION_SCOPED = {"me"}
 
 VALID = {"launch_mode": ("manual", "hybrid")}
 
@@ -94,6 +99,8 @@ def resolve(key):
     env = KEYS.get(key, (None, None))[1]
     if env and os.environ.get(env, "").strip():
         return os.environ[env].strip(), "env:%s" % env
+    if key in SESSION_SCOPED:
+        return None, None          # env only; a file value here would be wrong for someone
     v = load().get(key)
     return (v, str(CONFIG.name)) if v else (None, None)
 
@@ -131,6 +138,22 @@ def cmd_get(args):
 
 
 def cmd_set(args):
+    if args.key in SESSION_SCOPED:
+        # Refuse rather than store. A value written here would be read by every concurrent
+        # session, which is the opposite of what "my id" means - and a setting that is stored
+        # but cannot be honoured is worse than one that is refused, because the human believes
+        # they set it.
+        env = KEYS[args.key][1]
+        print("refusing: %r is SESSION-scoped and cannot live in a shared file."
+              % args.key, file=sys.stderr)
+        print("  Every orchestrator shares this workspace, so a value here would claim that",
+              file=sys.stderr)
+        print("  ALL of them are %r - and each would then be refused on its own doc."
+              % args.value, file=sys.stderr)
+        print("", file=sys.stderr)
+        print("  Set it per session instead:   export %s=%s" % (env, args.value),
+              file=sys.stderr)
+        return 2
     if args.key not in KEYS:
         print("unknown setting %r. Known: %s" % (args.key, ", ".join(sorted(KEYS))),
               file=sys.stderr)

@@ -4785,8 +4785,8 @@ def running_orchestrator():
     and a guard that gets switched off protects nothing.
     """
     v = (os.environ.get("ORCHDOC_ME") or "").strip()
-    if not v:
-        v = (_config_get("me") or "").strip()
+    # NOT from the shared config: `me` is session-scoped, and every orchestrator reads the
+    # same workspace file. A value there would tell all of them they are the same one.
     if not v:
         f = PROJECTS / ".orchdoc-me"
         try:
