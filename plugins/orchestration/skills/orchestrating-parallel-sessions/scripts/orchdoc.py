@@ -1039,7 +1039,7 @@ BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
             "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE", "E-CLOSEDWITHOPENSUBS", "E-SETTLEDNOTSTRUCK",
-            "E-IDSHAPE", "E-IDORDER", "E-ALLSUBSDONE",
+            "E-IDSHAPE", "E-IDORDER", "E-ALLSUBSDONE", "E-STUBLEFT", "E-EMPTYLINKS", "E-LEGACYDOC",
             "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO"}
 ADVISORY = {"W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
@@ -1820,6 +1820,51 @@ def check_doc(path):
             "to check and to the generated index" % tok,
             "ids are LETTERS then DIGITS (D1, F12, DA3) - not '%s'" % tok))
 
+    # --- E-STUBLEFT / E-EMPTYLINKS: the scaffold's own placeholders, still sitting there ---
+    #
+    # the human, 2026-08-10, on seeing them in live docs: *"Purpose and Links sections were not
+    # actually filled out."* Five of eight docs still carried the literal TODO; three had an
+    # empty §1 while citing 7, 32 and 40 assets elsewhere in their own prose.
+    #
+    # ⭐ THIS IS THE SAME SHAPE AS EVERY OTHER DEFECT THIS WEEK. `scaffold` writes a stub, the
+    # stub is VALID markdown, every invariant parses it happily - so an UNFILLED section and a
+    # FILLED one are indistinguishable to the tooling. The scaffold that exists to make a doc
+    # complete is the thing leaving it incomplete, and nothing said so for weeks.
+    #
+    # ⛔ An empty §1 is not cosmetic. Its own generated subtitle promises "every doc and URL
+    # this orchestrator owns", so an empty one is a FALSE CLAIM that the orchestrator owns
+    # nothing - and §1 is the first place a reader looks for an asset.
+    if "TODO: one paragraph" in text:
+        _ln = next((i + 1 for i, l in enumerate(lines) if "TODO: one paragraph" in l), 1)
+        findings.append(Finding(
+            "E-STUBLEFT", _ln,
+            "the scaffold's Purpose placeholder is still here, so the doc opens by telling "
+            "its reader it was never finished",
+            "one paragraph, authored - what this orchestrator is FOR. It is the only part of "
+            "the spine that cannot be generated, which is why it is the part that gets left"))
+
+    _span1 = section_span(lines, "1")
+    if _span1:
+        _body1 = [l for l in lines[_span1[0] + 1:_span1[1]]
+                  if l.strip() and not re.fullmatch(r"_.*_", l.strip())]
+        try:
+            _assets = harvest_assets(lines, path)
+        except Exception:
+            _assets = {}
+        # ⛔ COUNT ONLY ASSETS THAT RESOLVE. The harvester picks up every path-shaped string,
+        # including ILLUSTRATIVE ones from prose - o9's own doc contributed `x/y.md` and
+        # `dir/file.py` from a worked example about shell path mangling. Counting those inflates
+        # the finding, and a check that overstates its evidence is one people learn to discount.
+        _real = {k: v for k, v in _assets.items() if v.get("exists") is not False}
+        if not _body1 and _real:
+            findings.append(Finding(
+                "E-EMPTYLINKS", _span1[0] + 1,
+                "§1 is empty while this doc cites %d resolvable asset(s) in its own prose, so "
+                "it claims to list every doc and URL this orchestrator owns and lists none"
+                % len(_real),
+                "orchdoc.py links --doc <doc> harvests them and proposes the table - §1 is a "
+                "COLLECTION task, not an authoring one"))
+
     # --- E-IDSHAPE / E-IDORDER: one id form, and numbers you can scan by ---
     #
     # the human, 2026-08-10, on seeing D1, DA1, D-PAUSE and T-WHOPDISC in one workspace:
@@ -2003,6 +2048,25 @@ def check_doc(path):
         m = SECTION_RE.match(ln)
         if m:
             nums.append(m.group(1))
+    # ⛔ A DOC WITH NO SPINE AT ALL IS NOT EXEMPT - IT IS THE WORST CASE.
+    #
+    # `if nums:` below reads "only judge docs that have opted into the schema", and the effect
+    # is an exact inversion: the further a doc is from the standard, the less of the standard
+    # applies to it. o2 and o3 have NO numbered sections, so E-SCHEMA never fired, §1 could not
+    # be checked for being empty because there is no §1, and both sat silently non-conforming
+    # while every schema doc was being held to eight invariants.
+    #
+    # ⭐ Same failure as `is_active_section` returning False for an unrecognised name, and as an
+    # advisory printing a bare count: UNKNOWN rendered as FINE. A checker must say when it
+    # cannot check - one clear finding naming the state, not silence and not eight symptoms.
+    if not nums and re.search(r"ORCHESTRATOR-DECISIONS-", path.name):
+        findings.append(Finding(
+            "E-LEGACYDOC", 1,
+            "this doc has NO §-numbered sections, so the schema invariants cannot run on it - "
+            "it is not passing them, it is exempt from them",
+            "orchdoc.py migrate --doc <doc> brings it onto the spine without losing content; "
+            "until then most of what `check` reports about other docs is silent about this one"))
+
     if nums:                      # only judge docs that have opted into the schema
         want = [n for n, _t, _d in SCHEMA_SECTIONS]
         missing = [n for n in want if n not in nums]
@@ -2491,6 +2555,23 @@ def cmd_selftest(args):
         # left in a live section. E-DONEINACTIVE only sees an entry whose STATUS is already
         # terminal, so an entry that finished its last sub-item and never had its status changed
         # was invisible - the work over, the plate still showing it.
+        # the human spotted both of these in live docs, 2026-08-10. The scaffold writes them and
+        # nothing ever asked whether they had been filled in - a stub is valid markdown, so it
+        # parses exactly as well as real content.
+        # ⛔ The fixture name MATTERS here - the check is scoped to real OrchDocs, so a fixture
+        # written under any other name would test nothing and pass. Same shape as the publish
+        # probe that renamed its subject and verified itself by circularity.
+        ("E-LEGACYDOC",
+         "# Decisions\n\n## Open items\n\n### D1 - a decision\n**Status:** OPEN\n\nbody\n"),
+        ("E-STUBLEFT",
+         "## PURPOSE\n\n_TODO: one paragraph - what this orchestrator is for. "
+         "Authored, never generated._\n"),
+        # An empty §1 in a doc that cites assets elsewhere. The subtitle promises "every doc and
+        # URL this orchestrator owns", so empty is a false claim rather than a blank.
+        ("E-EMPTYLINKS",
+         "## §1 LINKS AND DOCS\n\n_every doc and URL this orchestrator owns_\n\n"
+         "## §4 FINDINGS\n\n### F1 - a finding\n**Status:** CONFIRMED\n\n"
+         "See `docs/plan.md` and https://example.com/dashboard for detail.\n"),
         ("E-ALLSUBSDONE",
          "## DECISIONS\n\n### D3 - ship the lanes\n**Status:** OPEN\n\n"
          "- [x] lane A - ✅ DONE\n"
