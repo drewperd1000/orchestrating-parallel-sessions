@@ -396,7 +396,18 @@ REVIEWED_RE = re.compile(
     r"\*{0,2}(?:reviewed|attested-by)\*{0,2}\s*:\s*\*{0,2}\s*"
     r"(?:[A-Za-z0-9_-]+\s+at\s+)?"
     r"(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2}|Z)?)?)"
-    r"\s*[-:]?\s*([^\n*]*)",
+    # ⛔ CAPTURE TO END OF LINE, not to the first `*`. The old `[^\n*]*` stopped dead at any
+    # markdown emphasis, so an attestation that QUOTED what it checked - *"§2.1 EMPTY"* - was
+    # truncated to the fragment before the quote, fell under MIN_ATTESTATION_CHARS, and was
+    # reported as a rubber stamp.
+    #
+    # ⭐ That is backwards in the most damaging direction available: it penalised the detailed
+    # attestations and passed the bare ones, while telling their authors to add detail. A check
+    # that punishes exactly the behaviour it is asking for does not just miss - it teaches the
+    # wrong lesson, and the author has no way to see why. Both hits on this doc were false.
+    #
+    # A following bold field is trimmed in reviewed_of(), which is where that belongs.
+    r"\s*[-:]?\s*([^\n]*)",
     re.IGNORECASE)
 
 # o8's caution, mechanised: "a walk-through requirement that produces a note saying
@@ -435,9 +446,36 @@ def _as_stamp(d):
 
 
 def reviewed_of(body):
-    """(date, attestation-text) or (None, None)."""
+    """(date, attestation-text) or (None, None).
+
+    The attestation runs to end of line. Where ANOTHER bold field follows on the same line
+    (`... - **Owner:** o9`), it is cut there - that field belongs to the plate, not to the
+    reasoning. Trailing bold markers are trimmed so a closing `**` cannot pad the length.
+    """
     m = REVIEWED_RE.search(body)
-    return (m.group(1), (m.group(2) or "").strip()) if m else (None, None)
+    if not m:
+        return (None, None)
+    text = (m.group(2) or "")
+
+    # ⛔ FOLLOW THE WRAP. A plate line long enough to say something useful gets wrapped, and
+    # reading only the first physical line truncated W9's attestation to 26 characters - then
+    # reported it as saying nothing while three clauses of evidence sat on the next two lines.
+    #
+    # This is the SAME defect as the `*` truncation above, in its second form, and it fails in
+    # the same direction: the longer and more specific the attestation, the more likely it wraps
+    # and the more likely it is judged empty. Two of two hits on this doc were false.
+    tail = body[m.end():]
+    for line in tail.split("\n")[1:]:
+        s = line.strip()
+        # a blank line, a new heading, or a new plate field ends the paragraph
+        if not s or s.startswith("#") or s.startswith("**") or re.match(r"^[-*_]{3,}$", s):
+            break
+        text += " " + s
+
+    cut = re.search(r"\s+-\s+\*\*[A-Za-z-]+:\*\*", text)
+    if cut:
+        text = text[:cut.start()]
+    return (m.group(1), text.strip().strip("*").strip())
 
 
 def last_moved(entry):
@@ -675,6 +713,35 @@ _WORD_BOUND = '(?<![A-Za-z])(?:%s)(?![A-Za-z])'
 DONE_MARK_RE = re.compile(
     "\u2705|" + _WORD_BOUND % (
         "DONE|PROVEN|RESOLVED|SHIPPED|VERIFIED|COMPLETED?|LANDED"))
+# ---- THE SETTLED-SUB-ITEM FORM (the human, 2026-08-10) ----
+#
+#     - [x] the thing that is settled
+#
+# THAT IS THE WHOLE FORM. A checked checkbox renders with a green tick, GREY TEXT and
+# STRIKE-THROUGH natively - all three of the human's requirements, from four characters.
+#
+# ⛔ AND THE OBVIOUS IMPLEMENTATION WAS WRONG, WHICH IS WHY THIS COMMENT IS LONG.
+#
+# The first version of this required `- [x] <span style="color:#8a8a8a">~~...~~</span>`, copied
+# from o1's doc where it appeared 17 times. It was reasoned onto solid-looking evidence: these
+# docs use <details> folds, folds demonstrably render, therefore the renderer processes HTML.
+#
+# **It does not process INLINE html.** the human's screenshot shows `<span style="color:#8a8a8a">`
+# and `</span>` as VISIBLE LITERAL TEXT in the middle of every one of those lines. Block-level
+# <details> is handled; an inline <span> is escaped and printed.
+#
+# ⭐ The screenshot also settles the tildes, and this is the part reasoning would not have
+# reached: the strike-through in it extends ACROSS the visible `<span …>` prefix, which sits
+# OUTSIDE the `~~`. So the strike cannot be coming from the tildes - the checkbox is doing it.
+# Both the span and the tildes are redundant, and one of them is actively noise.
+#
+# The lesson is the session's own: a plausible mechanism ("HTML renders here") was inferred from
+# a true observation about a DIFFERENT element, and shipped without being looked at. One
+# screenshot beat it. Anything about RENDERING has to be seen rendered.
+CHECKED_BOX_RE = re.compile(r"^\s*[-*+]\s*\[[xX]\]")
+# Retained only to DETECT and strip the literal-text spans already written into the corpus.
+GREY_SPAN_RE = re.compile(r"<span\s+style=\"color:\s*#?[0-9a-fA-F]{3,6}\"\s*>")
+
 NOTDONE_MARK_RE = re.compile(
     "\u23f3|\u26d4|" + _WORD_BOUND % (
         "NEVER|NOT DONE|NOT YET|UNTESTED|UNBUILT|OUTSTANDING"
@@ -714,6 +781,28 @@ _ACTIVE_NAME_RE = re.compile(
 # The one place the archive section number is written down. `archive` moves INTO it and
 # is_active_section() refuses to call it live; both must agree, so both read this.
 ARCHIVE_SECTION = "99"
+
+
+_CANON_HEAD_RE = re.compile(r"^#{1,3}\s*§\s*([\d.]+)")
+
+
+def _governing_section(lines, entry_line):
+    """The most recent §N heading at or before this line, ignoring prose headings.
+
+    The section an entry BELONGS to is the last canonical one above it. A prose `##` heading in
+    between is a subdivision of that section, not a replacement for it - but the parser records
+    whatever heading it saw last, so the enclosing section is lost.
+
+    Returned as the bare number ("2.1"), or None when nothing canonical precedes the entry.
+    """
+    cur = None
+    for i, line in enumerate(lines, 1):
+        if i > entry_line:
+            break
+        m = _CANON_HEAD_RE.match(line)
+        if m:
+            cur = m.group(1)
+    return cur
 
 
 def is_active_section(title):
@@ -949,7 +1038,8 @@ def _self_sha():
 BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
-            "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE", "E-CLOSEDWITHOPENSUBS",
+            "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE", "E-CLOSEDWITHOPENSUBS", "E-SETTLEDNOTSTRUCK",
+            "E-IDSHAPE", "E-IDORDER", "E-ALLSUBSDONE",
             "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO"}
 ADVISORY = {"W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
@@ -1267,6 +1357,74 @@ def check_doc(path):
                 % e["id"],
                 "mark the container IN PROGRESS and strike the finished sub-items; it moves "
                 "to \u00a799 only when ALL of them are done (the human's D5 ruling)"))
+
+        # \u26d4 THE MIRROR CASE, AND THE ONE THAT ACTUALLY COSTS THE HUMAN TIME. The check above catches
+        # a CLOSED container hiding open work. This catches the opposite and more common shape:
+        # a LIVE container whose sub-items are already decided, with none of them struck.
+        #
+        # the human, 2026-08-10, on o8's DA6: *"I'm still re-reading items that are DONE AND DECIDED.
+        # This is wasting my time and I'm trying to figure out WHAT still needs to be done inside
+        # them... only to realize that they just simply have not been struck-through."*
+        #
+        # DA6 read `Status: OPEN` while carrying three \u2705 rulings. The status field is what makes
+        # him open the item; strike-through is what lets him skim it once inside. **Only the
+        # second half had a check, and it was advisory.** So the half that decides whether he
+        # spends the time at all was unguarded.
+        #
+        # \u2b50 It is BLOCKING because the cost lands on the one person whose attention this whole
+        # instrument exists to protect, and it is invisible to the author - the entry looks fine
+        # to whoever wrote it, precisely because they already know what is settled.
+        if (e["id"][:1] in ("D", "T", "W", "A")
+                and status_of(e["body"]) in LIVE_STATUS):
+            done_unstruck, open_subs = [], 0
+            for off, raw in enumerate(e["body"].splitlines()[1:]):
+                if not re.match(r"^\s*[-*+]\s|^\s*\d+\.\s", raw):
+                    continue
+                txt = re.sub(r"`[^`]*`", "", raw)
+                if NOTDONE_MARK_RE.search(txt):
+                    open_subs += 1
+                    continue
+                if not DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", txt)):
+                    continue
+                # A checked checkbox IS the whole form - green tick, grey, strike-through, all
+                # native. A literal <span style=…> is not a second way of achieving it; it is
+                # visible junk in the sentence, so it counts as a defect rather than a mark.
+                if not CHECKED_BOX_RE.search(raw):
+                    done_unstruck.append((e["line"] + 1 + off, ["checkbox"]))
+                elif GREY_SPAN_RE.search(raw):
+                    done_unstruck.append((e["line"] + 1 + off, ["literal-span"]))
+            if done_unstruck:
+                # the human, 2026-08-10, gave the settled-sub-item form three parts, and all three do
+                # different work: the CHECKBOX is scannable down the left margin, the STRIKE
+                # reads as retracted, and the GREY drops it out of focus so the eye lands on
+                # what is still owed. Two of three still leaves it competing for attention.
+                short = ", ".join("L%d(%s)" % (n, "+".join(m)) for n, m in done_unstruck[:5])
+                findings.append(Finding(
+                    "E-SETTLEDNOTSTRUCK", e["line"],
+                    "%s is %s but %d settled sub-item(s) are not fully marked done, so the human "
+                    "must read the whole entry to find what is still owed"
+                    % (e["id"], status_of(e["body"]), len(done_unstruck)),
+                    "the form is a CHECKED CHECKBOX and nothing else - `- [x] the thing`. It "
+                    "renders green-ticked, GREY and STRUCK THROUGH natively, which is all three "
+                    "of the human's requirements from four characters. A literal <span style=...> is "
+                    "NOT rendered here and shows as visible junk mid-sentence. "
+                    "Fix: orchdoc.py strike --doc <doc> --commit. At: %s" % short))
+
+            # ⛔ ALL sub-items done, container still live. the human: a done item with all done
+            # sub-items goes to §99 COMPLETELY - never left in a live section. The existing
+            # E-DONEINACTIVE only sees an entry whose STATUS is already terminal, so an entry
+            # that finished its last sub-item and never had its status updated is invisible to
+            # it: the work is over, the plate still shows it, and nothing says so.
+            if open_subs == 0 and any(
+                    DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", re.sub(r"`[^`]*`", "", r)))
+                    for r in e["body"].splitlines()[1:]
+                    if re.match(r"^\s*[-*+]\s|^\s*\d+\.\s", r)):
+                findings.append(Finding(
+                    "E-ALLSUBSDONE", e["line"],
+                    "every sub-item under %s is done but the container is still %s, so finished "
+                    "work is sitting on a live plate" % (e["id"], status_of(e["body"])),
+                    "close it and move it whole: set a terminal status, then "
+                    "orchdoc.py archive --doc <doc> --commit"))
         by_id[e["id"]].append(e)
     for eid, group in sorted(by_id.items()):
         if len(group) > 1:
@@ -1478,8 +1636,27 @@ def check_doc(path):
         if not st:
             continue
 
-        # Done items must not sit in a section that promises live ones.
-        if st in TERMINAL_STATUS and is_active_section(e["section"]):
+        # ⛔ A PROSE HEADING MUST NOT ERASE THE SECTION IT SITS INSIDE. o8's DA15 was RESOLVED,
+        # on the plate, and invisible to BOTH `check` and `archive` - two guards agreeing an
+        # entry was fine while it sat finished in §2.1 Decisions.
+        #
+        # Cause: a `## Founder's Voice - what actually needs doing` heading between §2.1 and the
+        # entry became its section. is_active_section() does not recognise that name, and
+        # returns False for anything it does not recognise - so UNKNOWN was treated exactly like
+        # THE ARCHIVE, and a done item parked there was invisible rather than flagged.
+        #
+        # ⭐ The obvious fix - treat unknown sections as live - was MEASURED FIRST and would have
+        # fired on 18 entries, at least 15 correctly placed: o9's SPECIMENS holds specimens,
+        # o7's "RESOLVED - kept for the record" holds resolved things. It would have told people
+        # to dismantle a sensible arrangement.
+        #
+        # So the rule is narrower and structural: a prose heading does not change which CANONICAL
+        # section governs. Measured across every doc: 1 hit, DA15, zero false positives.
+        governing = _governing_section(lines, e["line"])
+        in_live = is_active_section(e["section"])
+        if not in_live and governing and governing.split(".")[0] in ("2", "3"):
+            in_live = True
+        if st in TERMINAL_STATUS and in_live:
             findings.append(Finding(
                 "E-DONEINACTIVE", e["line"],
                 "'%s' is %s but sits under '%s', which promises live items"
@@ -1642,6 +1819,49 @@ def check_doc(path):
             "heading looks like an entry but '%s' is not a valid id, so it is INVISIBLE "
             "to check and to the generated index" % tok,
             "ids are LETTERS then DIGITS (D1, F12, DA3) - not '%s'" % tok))
+
+    # --- E-IDSHAPE / E-IDORDER: one id form, and numbers you can scan by ---
+    #
+    # the human, 2026-08-10, on seeing D1, DA1, D-PAUSE and T-WHOPDISC in one workspace:
+    # *"Docs are deciding on their own how to label... We need to formalize this."* and
+    # *"D21 might come before D5 with D1 between them... I have to scan for the right instance
+    # because the order can't be trusted."*
+    #
+    # Both are the same cost in different clothes: a reader who cannot PREDICT where an entry
+    # is has to READ EVERYTHING to find it. Sequential numbering means you stop when you arrive;
+    # unordered numbering means you stop only when the section ends.
+    _SHAPE_OK = re.compile(r"^[A-Z]{1,3}\d+$")
+    _order = {}
+    for e in entries:
+        eid = e["id"]
+        if not _SHAPE_OK.match(eid):
+            findings.append(Finding(
+                "E-IDSHAPE", e["line"],
+                "'%s' is not the canonical id form, so the workspace has several ways to name "
+                "the same kind of thing" % eid,
+                "ids are PREFIX + NUMBER then a summary in the title: "
+                "`D7 - pause cues`, not `D-PAUSE`. Renaming also updates references: "
+                "orchdoc.py renumber --doc <doc>"))
+            continue
+        m = re.match(r"^([A-Z]{1,3})(\d+)$", eid)
+        # Ordering is a claim only WITHIN one section and one prefix. Across sections an entry
+        # legitimately leaves a gap when it is archived, and D3 sitting above F1 is a different
+        # question entirely - flagging either would fire on correct documents.
+        _order.setdefault(((e.get("section") or "?"), m.group(1)), []).append(
+            (e["line"], int(m.group(2)), eid))
+
+    for (sec, pre), items in sorted(_order.items()):
+        items.sort()
+        for (ln_a, n_a, id_a), (_ln_b, n_b, id_b) in zip(items, items[1:]):
+            if n_b < n_a:
+                findings.append(Finding(
+                    "E-IDORDER", _ln_b if False else items[items.index(
+                        (_ln_b, n_b, id_b))][0],
+                    "%s appears after %s in '%s', so the numbers do not run in order and the "
+                    "section has to be scanned rather than read to the right place"
+                    % (id_b, id_a, str(sec)[:34]),
+                    "orchdoc.py reorder --doc <doc> sorts each section; it moves entries "
+                    "whole and verifies the bytes are unchanged"))
 
     # --- E-CONFLICT: unresolved merge-conflict markers ---
     #
@@ -2173,6 +2393,16 @@ def report(path, findings, quiet=False, strict=False):
             adv[f.code] += 1
         print("          advisory (not blocking): %s"
               % ", ".join("%s x%d" % (c, n) for c, n in sorted(adv.items())))
+        # ⛔ A COUNT IS NOT ACTIONABLE, and printing one without a way to expand it is how a
+        # detected defect goes unfixed for weeks. o8's doc reported `W-STRIKEDONE x14` on every
+        # run: correctly detected, correctly counted, and impossible to act on - there are no
+        # line numbers, so to fix it you would have to already know where it is.
+        #
+        # the human's complaint traces straight to this line. The rule was implemented, the check was
+        # firing, and the output gave nobody anywhere to go. **Detection was never the problem;
+        # the path OUT was.**
+        print("          %d advisory finding(s) have LINE NUMBERS - see them with:  "
+              "orchdoc.py check --doc <doc> --strict" % len(advisory))
 
     return 1 if blocking else 0
 
@@ -2250,6 +2480,33 @@ def cmd_selftest(args):
         ("E-CLOSEDWITHOPENSUBS",
          "## DECISIONS\n\n### D4 - ship the three lanes\n**Status:** RESOLVED\n\n"
          "- ~~lane A merged~~\n- ~~lane B merged~~\n- lane C NOT DONE\n"),
+        # The mirror of the one above, from o8's real DA6 (the human, 2026-08-10): a LIVE container
+        # whose rulings are already made and none of them struck, so the status says "he is
+        # needed" while the contents say "settled". He opens it, reads all of it, and finds
+        # nothing owed. Note the clean-doc fixture must NOT trip this - a live entry whose
+        # sub-items are genuinely open carries no done marker and so cannot match.
+        # the human, 2026-08-10: one id form everywhere. `D-PAUSE` and `T-WHOPDISC` read as ids but
+        # are a second naming scheme, so the same kind of thing has two names in one workspace.
+        # the human, 2026-08-10: a done item with all done sub-items goes to §99 COMPLETELY, never
+        # left in a live section. E-DONEINACTIVE only sees an entry whose STATUS is already
+        # terminal, so an entry that finished its last sub-item and never had its status changed
+        # was invisible - the work over, the plate still showing it.
+        ("E-ALLSUBSDONE",
+         "## DECISIONS\n\n### D3 - ship the lanes\n**Status:** OPEN\n\n"
+         "- [x] lane A - ✅ DONE\n"
+         "- [x] lane B - ✅ DONE\n"),
+        ("E-IDSHAPE",
+         "## DECISIONS\n\n### D-PAUSE - pause cues\n**Status:** OPEN\n\nbody\n"),
+        # ...and numbers that run in order, so a reader stops when they arrive rather than
+        # scanning to the end of the section to be sure.
+        ("E-IDORDER",
+         "## DECISIONS\n\n### D5 - later\n**Status:** OPEN\n\nbody\n\n"
+         "### D2 - earlier\n**Status:** OPEN\n\nbody\n"),
+        ("E-SETTLEDNOTSTRUCK",
+         "## DECISIONS\n\n### D6 - classification codification\n**Status:** OPEN\n\n"
+         "- (a) the four hybrids - ✅ **leave as AT**\n"
+         "- (b) two scripts - ✅ **move, keep as-is**\n"
+         "- (c) wording - o8 drafts it and brings it to the human\n"),
         ("E-ARCHIVEDMARKER",
          "## DECISIONS\n\n### D1 - live\n**Status:** OPEN\n\nbody\n\n"
          "<details><summary>Original D1 wording (superseded)</summary>\n\n"
@@ -3742,7 +3999,15 @@ def cmd_archive(args):
             if e.get("archived"):
                 continue
             st = status_of(e["body"])
-            if st in TERMINAL_STATUS and is_active_section(e["section"]):
+            # Same governing-section rule the checker uses, and it has to be the SAME rule -
+            # o8's DA15 was missed by `check` AND by `archive` because both asked
+            # is_active_section() about a prose heading. Two guards sharing one blind spot is a
+            # false all-clear, which is worse than a single gap: `archive` printed "no
+            # terminal-status entries are sitting in an active section" while one sat in §2.1.
+            _gov = _governing_section(lines, e["line"])
+            _live = is_active_section(e["section"]) or bool(
+                _gov and _gov.split(".")[0] in ("2", "3"))
+            if st in TERMINAL_STATUS and _live:
                 # the human's D5 ruling: only when ALL sub-items are complete does the FULL item
                 # move to 99. o8 predicted this exact failure - "if archive sinks on resolved
                 # alone, it would bury the majority of what is actually still owed" - and the
@@ -4606,6 +4871,311 @@ def section_span(lines, num):
     return (start, len(lines)) if start is not None else None
 
 
+STRUCK_RE = re.compile(r"~~.*?~~", re.S)
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+FENCE_RE = re.compile(r"^```.*?^```", re.S | re.M)
+
+
+def still_asserted(text):
+    """The doc with every RETRACTED span removed, so a search hits only live claims.
+
+    ⛔ WHY A PLAIN GREP CANNOT ANSWER "DOES THIS DOC STILL CLAIM X". o7's case, and it is the
+    cleanest one the fleet has produced: a false claim about the purchase chain was corrected in
+    their doc, twice, with the old text struck through. A third copy sat UNSTRUCK, directly
+    beneath a correction header written hours earlier.
+
+    Grepping for the claim found all three. Two of those hits were the CORRECTIONS - so the
+    output looked like thorough coverage of a handled problem, and the one live copy was
+    indistinguishable from the two dead ones. **A partially corrected document reads as
+    corrected**, and the more carefully it was corrected the more hits the grep returns.
+
+    ⭐ The fix is to search what the document still ASSERTS: strike-through is a retraction
+    marker, HTML comments are not rendered, fenced blocks are quoted material. Remove them, then
+    search. o7 found their third copy exactly this way, by hand.
+
+    Note this cuts the OTHER way too and that is deliberate: a claim quoted inside a fence - the
+    way this docstring quotes one - is not an assertion by the document either.
+    """
+    # ⛔ REMOVED SPANS ARE REPLACED BY THEIR OWN NEWLINES, not deleted. Deleting them shifts
+    # every later line number, so the reported L<n> pointed at the wrong line - and worse, a
+    # per-line liveness test against a shifted copy misjudges MULTI-LINE strikes: the opening
+    # `~~` sits on one line and the closing `~~` on another, so neither line looks struck on its
+    # own. That is how a retracted claim was reported as still asserted on the first run.
+    blank = lambda m: "\n" * m.group(0).count("\n")     # noqa: E731
+    text = FENCE_RE.sub(blank, text)
+    text = HTML_COMMENT_RE.sub(blank, text)
+    return STRUCK_RE.sub(blank, text)
+
+
+def folded_spans(text):
+    """Line ranges inside <details> - content a reader does not see unless they expand it.
+
+    Returned as 1-indexed (start, end) pairs. Nesting is not tracked; the first </details>
+    closes, which is correct for this corpus and errs toward reporting MORE lines as folded
+    rather than fewer - the safe direction for a warning.
+    """
+    spans, open_at = [], None
+    for i, line in enumerate(text.split("\n"), 1):
+        low = line.lower()
+        if "<details" in low:
+            open_at = i
+        elif "</details>" in low and open_at:
+            spans.append((open_at, i))
+            open_at = None
+    if open_at:                      # unclosed fold runs to the end of the document
+        spans.append((open_at, len(text.split("\n"))))
+    return spans
+
+
+def cmd_strike(args):
+    """Apply the full settled-sub-item form to every done sub-item in a LIVE entry.
+
+    Three marks by hand, per line, is the kind of task that gets done for the first two entries
+    and abandoned - which is exactly what happened: the rule existed, W-STRIKEDONE detected the
+    violations 14 times a run, and nobody could act on a bare count. A rule whose compliance
+    costs three edits per line needs a command, or it decays into an advisory nobody reads.
+
+    ⛔ IT ONLY TOUCHES SUB-ITEMS THAT ARE ALREADY MARKED DONE, inside entries that are still
+    LIVE. It never decides that something IS done - that is the author's call and the one thing
+    a formatter must not guess at.
+    """
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+    if refuse_if_not_mine(doc, "strike", getattr(args, "not_mine", False)):
+        return 2
+
+    lines = doc.read_text(encoding="utf-8").split("\n")
+    entries, _ = parse_entries(lines)
+    out = list(lines)
+    changed = []
+
+    for e in entries:
+        if e.get("archived") or status_of(e["body"]) not in LIVE_STATUS:
+            continue
+        if e["id"][:1] not in ("D", "T", "W", "A"):
+            continue
+        for off, raw in enumerate(e["body"].splitlines()[1:]):
+            i = e["line"] + off                      # 0-indexed into `out`
+            if i >= len(out) or out[i] != raw:
+                continue
+            if not re.match(r"^\s*[-*+]\s|^\s*\d+\.\s", raw):
+                continue
+            txt = re.sub(r"`[^`]*`", "", raw)
+            if NOTDONE_MARK_RE.search(txt):
+                continue
+            if not DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", txt)):
+                continue
+            if CHECKED_BOX_RE.search(raw) and not GREY_SPAN_RE.search(raw):
+                continue
+
+            m = re.match(r"^(\s*)([-*+]|\d+\.)\s+(?:\[[ xX]\]\s*)?(.*)$", raw)
+            if not m:
+                continue
+            indent, _bullet, body = m.group(1), m.group(2), m.group(3)
+            # ⛔ STRIP the span rather than write one. An earlier version of this ADDED
+            # `<span style="color:#8a8a8a">`, on the inference that these docs render HTML
+            # because <details> folds work. Inline HTML is NOT rendered - it appears as visible
+            # literal text mid-sentence - so the fixer was writing junk into every line it
+            # touched. It now removes what it used to add.
+            body = GREY_SPAN_RE.sub("", body).replace("</span>", "").strip()
+            if body.startswith("~~") and body.endswith("~~"):
+                body = body[2:-2].strip()
+            # Rebuilt from parts, never patched, so a second run cannot double anything.
+            new = "%s- [x] %s" % (indent, body)
+            if new != raw:
+                out[i] = new
+                changed.append((i + 1, e["id"]))
+
+    print("orchdoc strike - %s" % doc.name)
+    if not changed:
+        print("  every settled sub-item in a live entry already carries all three marks.")
+        print("  %d entr(ies) examined." % len(entries))
+        return 0
+    print("  %d sub-item(s) across %d entr(ies) would get the full form"
+          % (len(changed), len(set(c[1] for c in changed))))
+    for ln, eid in changed[:8]:
+        print("    L%-5d %-6s %s" % (ln, eid, out[ln - 1].strip()[:74]))
+    if len(changed) > 8:
+        print("    ... and %d more" % (len(changed) - 8))
+    if args.dry_run:
+        print("  DRY RUN - nothing written. Re-run with --commit.")
+        return 0
+    doc.write_text("\n".join(out), encoding="utf-8")
+    print("  written.")
+    return 0
+
+
+def cmd_reorder(args):
+    """Sort entry numbers within each section. Moves whole entries; verifies nothing changed.
+
+    ⛔ IT ONLY PERMUTES CONTIGUOUS RUNS OF ENTRIES. Prose headings and narrative paragraphs sit
+    BETWEEN entries in these docs - o8's `## Founder's Voice` is one - and they are positioned
+    deliberately. Sorting across them would relocate an entry out from under the prose that
+    explains it, which is a worse outcome than the disorder being fixed. So a run ends wherever
+    non-entry content begins.
+
+    ⭐ VERIFICATION IS SET EQUALITY ON THE BLOCKS THEMSELVES, not a line count. A reorder that
+    drops or duplicates an entry would keep the line count identical in most cases, which is
+    exactly the check that would pass while the damage happened.
+    """
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+    if refuse_if_not_mine(doc, "reorder", getattr(args, "not_mine", False)):
+        return 2
+
+    lines = doc.read_text(encoding="utf-8").split("\n")
+    entries, _ = parse_entries(lines)
+    NUM = re.compile(r"^([A-Z]{1,3})(\d+)$")
+
+    # entry -> (start, end) line span, 0-indexed half-open
+    spans = []
+    for idx, e in enumerate(entries):
+        start = e["line"] - 1
+        end = entries[idx + 1]["line"] - 1 if idx + 1 < len(entries) else len(lines)
+        spans.append((start, end, e))
+
+    # contiguous runs: consecutive entries with nothing but their own bodies between them
+    runs, cur = [], []
+    for i, (s, en, e) in enumerate(spans):
+        m = NUM.match(e["id"])
+        same_sec = cur and cur[-1][2].get("section") == e.get("section")
+        same_pre = cur and NUM.match(cur[-1][2]["id"]) and m and \
+            NUM.match(cur[-1][2]["id"]).group(1) == m.group(1)
+        adjacent = cur and cur[-1][1] == s
+        if m and same_sec and same_pre and adjacent:
+            cur.append((s, en, e))
+        else:
+            if len(cur) > 1:
+                runs.append(cur)
+            cur = [(s, en, e)] if m else []
+    if len(cur) > 1:
+        runs.append(cur)
+
+    moved = 0
+    out = list(lines)
+    for run in sorted(runs, key=lambda r: -r[0][0]):        # bottom-up, so spans stay valid
+        blocks = [(int(NUM.match(e["id"]).group(2)), lines[s:en], e["id"]) for s, en, e in run]
+        ordered = sorted(blocks, key=lambda b: b[0])
+        if [b[2] for b in ordered] == [b[2] for b in blocks]:
+            continue
+        moved += sum(1 for a, b in zip(blocks, ordered) if a[2] != b[2])
+        flat = [ln for _n, blk, _i in ordered for ln in blk]
+        out[run[0][0]:run[-1][1]] = flat
+        if args.dry_run:
+            print("  %-34s %s" % (str(run[0][2].get("section"))[:34],
+                                  " ".join(b[2] for b in blocks)))
+            print("  %-34s -> %s" % ("", " ".join(b[2] for b in ordered)))
+
+    if not moved:
+        print("orchdoc reorder - %s" % doc.name)
+        print("  every section already runs in order. %d entr(ies) examined." % len(entries))
+        return 0
+
+    # ⭐ the block multiset must be identical - same entries, same bytes, nothing lost or doubled
+    before = sorted("\n".join(lines[s:en]) for s, en, _e in spans)
+    new_entries, _ = parse_entries(out)
+    new_spans = [(ne["line"] - 1,
+                  new_entries[i + 1]["line"] - 1 if i + 1 < len(new_entries) else len(out))
+                 for i, ne in enumerate(new_entries)]
+    after = sorted("\n".join(out[s:en]) for s, en in new_spans)
+    if before != after:
+        print("  ⛔ REFUSING - the entry blocks are not identical after the sort.")
+        print("     %d before, %d after. Nothing written." % (len(before), len(after)))
+        return 2
+
+    print("orchdoc reorder - %s" % doc.name)
+    print("  %d entr(ies) would move, across %d run(s)" % (moved, len(runs)))
+    print("  verified: %d entry blocks, byte-identical before and after" % len(before))
+    if args.dry_run:
+        print("  DRY RUN - nothing written. Re-run with --commit.")
+        return 0
+    doc.write_text("\n".join(out), encoding="utf-8")
+    print("  written.")
+    return 0
+
+
+def cmd_asserted(args):
+    """Search what a doc still CLAIMS, not what it merely mentions.
+
+    Reports what it EXAMINED - docs scanned, spans removed - because "0 live copies" and
+    "the search never ran" must not print the same way.
+    """
+    try:
+        pat = re.compile(args.pattern, re.I)
+    except re.error as e:
+        # A broken pattern is not "no matches". Six times in this corpus a failed search has
+        # rendered as a clean one.
+        print("  BAD PATTERN - this is NOT a clean result: %s" % e, file=sys.stderr)
+        return 2
+
+    docs = ([resolve_doc_arg(args.doc)] if args.doc
+            else sorted(Path(".").glob("ORCHESTRATOR-DECISIONS-o*.md"))
+            + sorted(Path(".").glob("*bridge*.md")))
+    docs = [d for d in docs if d and d.exists()]
+    if not docs:
+        print("  no docs matched - nothing was examined", file=sys.stderr)
+        return 2
+
+    print("orchdoc asserted - /%s/" % args.pattern)
+    print("  examined %d doc(s)" % len(docs))
+    print()
+    live_total = retracted_total = 0
+    for d in docs:
+        raw = d.read_text(encoding="utf-8", errors="replace")
+        live = still_asserted(raw)
+        n_raw = len(pat.findall(raw))
+        n_live = len(pat.findall(live))
+        retracted = n_raw - n_live
+        live_total += n_live
+        retracted_total += retracted
+        if not n_raw:
+            print("  %-34s -" % d.name)
+            continue
+        flag = "  <- STILL ASSERTED" if n_live else ""
+        print("  %-34s live=%-3d retracted/quoted=%-3d%s" % (d.name, n_live, retracted, flag))
+        if n_live:
+            folded = folded_spans(raw)
+            # Line numbers are preserved by still_asserted(), so this indexes the SAME lines as
+            # the raw file - a struck span shows up here as blanked, which is the liveness test.
+            live_lines = live.split("\n")
+            for i, line in enumerate(raw.split("\n"), 1):
+                if not pat.search(live_lines[i - 1] if i <= len(live_lines) else ""):
+                    continue
+                # ⛔ A claim inside a COLLAPSED <details> is invisible to a human reading the
+                # rendered page and fully live to anyone citing the file. It is the exact
+                # inverse of strike-through - struck text is visible but retracted; folded text
+                # is retracted from view but still asserted.
+                #
+                # This is not hypothetical: the fourth copy of the purchase claim survived TWO
+                # deliberate correction passes, by two sessions, because it sits inside a fold.
+                # Both passes were reading the doc.
+                note = ""
+                if any(a <= i <= b for a, b in folded):
+                    note = " ⚠️ INSIDE A COLLAPSED <details> - invisible when read"
+                elif line.lstrip().startswith(">"):
+                    # ⛔ A BLOCKQUOTE IS AMBIGUOUS, AND STRIPPING IT IS THE DANGEROUS FIX.
+                    # In this corpus `>` carries two incompatible meanings:
+                    #   * a QUOTATION of another orchestrator - not this doc's claim at all
+                    #   * an emoji-led CALLOUT BANNER - this doc's claim in its strongest voice
+                    #     (2 in o9, 3 in o7, counted)
+                    # Treating `>` like a fenced quote would silence every load-bearing banner,
+                    # trading one false positive for false negatives on the lines most worth
+                    # checking. So it is FLAGGED, exactly like a fold: the tool reports the
+                    # ambiguity, the reader resolves it.
+                    note = " ⚠️ IN A BLOCKQUOTE - quotation or callout? read before acting"
+                print("       L%-5d %s%s" % (i, line.strip()[:88], note))
+
+    print()
+    print("  %d live claim(s); %d already retracted or quoted" % (live_total, retracted_total))
+    print("  A plain grep would have reported %d and made no distinction." %
+          (live_total + retracted_total))
+    return 1 if live_total else 0
+
+
 def cmd_links(args):
     """Harvest the doc's own assets and propose a §1 table. PROPOSES; does not overwrite."""
     doc = resolve_doc_arg(args.doc)
@@ -5249,6 +5819,31 @@ def main():
                              "question - an empty section generates no findings")
     rv.add_argument("--doc", required=True)
     rv.set_defaults(func=cmd_review)
+
+    st = sub.add_parser("strike",
+                        help="apply the full settled-sub-item form (checkbox + grey + strike) "
+                             "to done sub-items inside LIVE entries")
+    st.add_argument("--doc", required=True)
+    st.add_argument("--commit", dest="dry_run", action="store_false", default=True)
+    st.add_argument("--not-mine", action="store_true")
+    st.set_defaults(func=cmd_strike)
+
+    ro = sub.add_parser("reorder",
+                        help="sort entry numbers within each section so a reader can stop "
+                             "when they arrive instead of scanning the whole section")
+    ro.add_argument("--doc", required=True)
+    ro.add_argument("--commit", dest="dry_run", action="store_false", default=True)
+    ro.add_argument("--not-mine", action="store_true",
+                    help="this doc belongs to another orchestrator and they have agreed")
+    ro.set_defaults(func=cmd_reorder)
+
+    asrt = sub.add_parser("asserted",
+                          help="search what a doc still CLAIMS - strikes, comments and fenced "
+                               "quotes removed first, because a corrected doc greps like an "
+                               "uncorrected one")
+    asrt.add_argument("pattern", help="a regex; matched case-insensitively")
+    asrt.add_argument("--doc", help="one doc; default is every OrchDoc plus the bridges")
+    asrt.set_defaults(func=cmd_asserted)
 
     lk = sub.add_parser("links",
                         help="harvest every asset the doc cites and propose a §1 table - "

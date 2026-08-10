@@ -37,6 +37,39 @@ sees what the updater said.**
 
 ## What it does
 
+**Phase 0 - the mechanical pass. Run the fixers before spending any judgment.**
+
+```bash
+python $SK/orchdoc.py strike  --doc <id> --commit    # settled sub-items -> `- [x]`
+python $SK/orchdoc.py reorder --doc <id> --commit    # numbers back into order
+python $SK/orchdoc.py check   --doc <id>             # what is left is judgement
+```
+
+Everything these two fix is deterministic, so **no human and no auditor should spend attention
+on it.** Doing this first means Phase 1 reads a document whose form is already right.
+
+⭐ **THE FORM OF A SETTLED SUB-ITEM IS A CHECKED CHECKBOX AND NOTHING ELSE:**
+
+```markdown
+- [x] the thing that is settled
+```
+
+That renders with a green tick, **grey text and strike-through, natively** - all three at once,
+from four characters. ⛔ **Do NOT add `<span style="color:…">` or `~~…~~`.** Inline HTML is not
+rendered in this viewer: it appears as *visible literal text* in the middle of the sentence.
+(That mistake shipped once, from a sound-looking inference - these docs use `<details>` folds,
+folds render, so HTML must render. Block-level `<details>` is handled; an inline `<span>` is
+escaped and printed. **Anything about rendering has to be seen rendered.**)
+
+And the rules the gate now enforces, so none of them can be closed past:
+
+| code | the rule |
+|---|---|
+| `E-SETTLEDNOTSTRUCK` | a settled sub-item in a LIVE entry is `- [x]` |
+| `E-ALLSUBSDONE` | all sub-items done -> close it and move it to §99 **whole**; never leave it live |
+| `E-IDSHAPE` | ids are PREFIX+NUMBER with the summary in the title - `D7 - pause cues`, not `D-PAUSE` |
+| `E-IDORDER` | numbers run in order within a section, so a reader stops when they arrive |
+
 **Phase 1 - forced, one section at a time.**
 
 ```bash
@@ -127,3 +160,14 @@ advice: **the deliverable is small because the WORKER is small.**
   The tooling refuses by default (`$ORCHDOC_ME`, `--not-mine` for an agreed pass).
 - ⭐ **When the audit and the sweep disagree, the audit is usually right** - it read the
   document as a reader, and the sweep read it as its author.
+- ⛔ **Run the mechanical fixers FIRST, and never hand-format what a fixer owns.** Three marks
+  per line by hand is the task that gets done for two entries and abandoned - which is exactly
+  what happened. `strike` and `reorder` are idempotent and verify their own output.
+- ⛔ **A rule with no enforcement point decays into an advisory nobody reads.** The
+  strike-through rule existed for weeks, its check fired 14 times per run, and it was ADVISORY
+  and printed a bare count with no line numbers. **Detection was never the problem - nothing
+  required anything.** The gate in `orchdoc_sweep.py done` is where a form rule becomes real:
+  a step cannot be closed while its own section violates one.
+- ⚠️ **Advisory findings have line numbers; the default output hides them.** `check` prints
+  `W-FOO x14` and stops. Use `check --doc <id> --strict` to see WHERE. A count you cannot act
+  on is how a detected defect survives.

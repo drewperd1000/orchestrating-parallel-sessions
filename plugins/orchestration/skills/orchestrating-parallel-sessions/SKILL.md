@@ -670,6 +670,8 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   | `orchdoc.py plate --doc o<N>` | REGENERATE the human-facing index |
   | `orchdoc.py scaffold --doc o<N>` | write/repair the spine + header |
   | `orchdoc.py archive --doc o<N>` | sink closed items to §99 |
+  | `orchdoc.py strike --doc o<N> --commit` | ⭐ settled sub-items → `- [x]`. Idempotent; never decides that something IS done |
+  | `orchdoc.py reorder --doc o<N> --commit` | ⭐ numbers back into order within each section; verifies the blocks byte-for-byte |
   | `orchdoc.py commit --doc o<N> -m "..."` | land on `main`, five gates, dry-run first |
   | `orchdoc.py verify landed --path <file>` | is what I have what is canonical? |
 
@@ -686,6 +688,34 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   - **Stale status logs** → sink to the BOTTOM (historical, newest-first), superseded by the sections above.
   - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
   - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
+
+- **⛔ THE ENTRY FORM — four rules, all enforced, none of them a matter of taste.** These exist
+  because the human was re-reading items that were finished and decided, hunting for what was
+  still owed. Every one of them costs *his* attention, which is the only scarce thing here.
+
+  | rule | the form | enforced by |
+  |---|---|---|
+  | a **settled sub-item** inside a live entry | `- [x] the thing` | `E-SETTLEDNOTSTRUCK` |
+  | **all** sub-items done | close it and move it to §99 **whole** — never leave it live | `E-ALLSUBSDONE` |
+  | **ids** | `PREFIX` + `NUMBER`, summary in the title: `D7 - pause cues`, never `D-PAUSE` or `DA7` | `E-IDSHAPE` |
+  | **numbering** | ascends within a section, so a reader stops when they arrive instead of scanning | `E-IDORDER` |
+
+  ⭐ **A CHECKED CHECKBOX IS THE WHOLE FORM.** `- [x]` renders with a green tick, **grey text
+  and strike-through, natively** — all three at once, from four characters.
+
+  ⛔ **Do NOT add `<span style="color:…">` or `~~…~~`.** Inline HTML is *not rendered* in this
+  viewer; it appears as visible literal text mid-sentence. That mistake shipped once, on a
+  sound-looking inference: these docs use `<details>` folds, folds demonstrably render, so HTML
+  must render. Block-level `<details>` is handled; an inline `<span>` is escaped and printed.
+  **A claim about rendering has to be SEEN rendered** — the test written from the same wrong
+  belief as the code passed the whole time.
+
+  ⭐ **Fixers, not discipline.** Three marks per line by hand is the task that gets done for two
+  entries and abandoned. `strike` and `reorder` do it, are idempotent, and verify their own
+  output. **And `orchdoc_sweep.py done` refuses to close a step whose section breaks any of the
+  four** — which is the difference between a rule and a rule that holds. The strike-through rule
+  existed for weeks as an ADVISORY that printed a bare count with no line numbers: detected 14
+  times a run, unfixable, unfixed. **Detection was never the problem; nothing required anything.**
 - ⛔ **"Refresh the OrchDoc" is TOO LARGE A TASK TO FINISH — invoke the `orchdoc-audit` skill** (`/orchestration:orchdoc-audit`), which drives `orchdoc_sweep.py` through the whole procedure.** The
   observation behind it: *the shorter and more concise the exact deliverable, the more complete
   the answer.* A whole-document refresh produces a spotty update that is never complete, and

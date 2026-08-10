@@ -35,6 +35,7 @@ one sentence keeps its meaning, and the sentence lands in the commit message whe
 reader finds it.
 """
 import argparse
+import os
 import pathlib
 import re
 import subprocess
@@ -66,15 +67,42 @@ def meaningful(line):
 
 
 def check(cwd, remote, branch):
-    """Lines present on the remote and absent locally, per path. {} means safe."""
+    """Lines present on the remote and absent from what THIS PUSH WOULD LAND. {} means safe.
+
+    ⛔ COMPARE HEAD, NOT THE WORKING TREE. A push lands commits; the working tree is irrelevant
+    to it. Comparing the tree made this gate fire on files another session had merely OPEN -
+    which in a shared checkout is the normal state, not the exception.
+
+    ⭐ The direction of that error is the damaging part. Every one of those refusals was about
+    lines MY commit could not possibly remove, and the only way past it was to write a --because
+    override. So the gate trained its user to override it, on evidence that was never real,
+    which is precisely how a guard stops being read. It fired hardest exactly when a colleague
+    was working alongside me - the case it exists to protect.
+
+    Now it asks the only question that matters: does the tree I am about to PUSH drop a line the
+    remote has?
+    """
     rc, _, err = git(["fetch", "-q", remote, branch], cwd)
     if rc != 0:
         return None, "could not fetch %s/%s: %s" % (remote, branch, err.strip()[:90])
 
     ref = "%s/%s" % (remote, branch)
-    rc, out, _ = git(["diff", "--name-only", ref], cwd)
+
+    # ⛔ ONLY A FAST-FORWARD CAN DELETE ANYTHING. If the remote tip is NOT an ancestor of HEAD,
+    # the push will be rejected as non-fast-forward and the rebase path below runs - so every
+    # line the remote has and HEAD lacks is a line I have simply not fetched yet, not a line I
+    # am about to destroy. Reporting those as losses conflates "I am behind" with "I would
+    # delete", and it produces the largest, most alarming, least real number this gate can
+    # print: 104 lines on its first run in that state, none of them at risk.
+    #
+    # Same disease as everywhere else tonight - two different states rendered identically.
+    rc_a, _, _ = git(["merge-base", "--is-ancestor", ref, "HEAD"], cwd)
+    if rc_a != 0:
+        return {}, None
+
+    rc, out, _ = git(["diff", "--name-only", ref, "HEAD"], cwd)
     if rc != 0:
-        return None, "could not diff against %s" % ref
+        return None, "could not diff %s against HEAD" % ref
     paths = [p for p in out.split("\n") if p.strip()]
 
     losses = {}
@@ -82,10 +110,11 @@ def check(cwd, remote, branch):
         rc, remote_text, _ = git(["show", "%s:%s" % (ref, p)], cwd)
         if rc != 0:
             continue                      # new file on our side - nothing to lose
-        local = pathlib.Path(cwd or ".") / p
-        try:
-            local_text = local.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        # Read the COMMITTED version, not the file on disk. Note both of these go through
+        # subprocess with an argument list, so the Git Bash rev-string mangling that eats
+        # `<ref>:.shared/...` in a shell never applies here.
+        rc_l, local_text, _ = git(["show", "HEAD:%s" % p], cwd)
+        if rc_l != 0:
             local_text = ""
         have = set(l.strip() for l in local_text.split("\n"))
         gone = [l for l in remote_text.split("\n")
@@ -157,6 +186,66 @@ def main():
         return 0
 
     rc, out, err2 = git(["push", a.remote, "HEAD:%s" % a.branch], a.cwd)
+
+    # ⛔ NON-FAST-FORWARD IN A SHARED WORKING TREE. Several orchestrators edit one checkout, so
+    # "someone pushed while you worked" is the normal case, not the exception - and the ordinary
+    # fix (rebase) is unavailable precisely when it matters: another session has UNCOMMITTED
+    # edits, so git refuses, and every way around that refusal endangers their work.
+    #
+    #   git stash        the stash is REPO-GLOBAL; a concurrent lane reorders the stack
+    #   reset --hard     destroys their uncommitted edits outright
+    #   add -A           commits their in-progress work under your message (nearly did this)
+    #
+    # ⭐ A private worktree at the remote tip sidesteps all three: the cherry-pick happens on a
+    # checkout nobody else has open, the shared tree is never touched, and the worktree is
+    # removed afterwards. Done by hand twice tonight before it became a flag - which is the tell
+    # that it should have been one.
+    if rc != 0 and "non-fast-forward" in (err2 + out):
+        print("  remote moved while you worked - rebasing in a PRIVATE worktree so the shared")
+        print("  checkout, and anyone's uncommitted edits in it, are never touched.")
+        wt = os.path.join(os.path.expanduser("~"), ".safe-push-wt")
+        head = git(["rev-parse", "HEAD"], a.cwd)[1].strip()
+        git(["worktree", "remove", wt, "--force"], a.cwd)
+        rc_w, _, e_w = git(["fetch", "-q", a.remote, a.branch], a.cwd)
+        rc_w, _, e_w = git(["worktree", "add", "-q", "--detach", wt,
+                            "%s/%s" % (a.remote, a.branch)], a.cwd)
+        if rc_w != 0:
+            print("  could NOT create the worktree: %s" % e_w.strip()[:120])
+            print("  Nothing pushed. The shared tree is untouched.")
+            return 1
+        rc_c, o_c, e_c = git(["cherry-pick", head], wt)
+        if rc_c != 0:
+            print("  cherry-pick CONFLICTED - your commit and the remote touch the same lines.")
+            print("  %s" % (e_c or o_c).strip()[:160])
+            git(["cherry-pick", "--abort"], wt)
+            git(["worktree", "remove", wt, "--force"], a.cwd)
+            print("  Nothing pushed, nothing altered. Reconcile by hand.")
+            return 1
+        rc, out, err2 = git(["push", a.remote, "HEAD:%s" % a.branch], wt)
+        git(["worktree", "remove", wt, "--force"], a.cwd)
+        if rc == 0:
+            # the local branch still points at the pre-rebase commit; move it WITHOUT touching
+            # the working tree, so another session's edits survive the sync
+            git(["fetch", "-q", a.remote, a.branch], a.cwd)
+            # ⛔ --mixed, NOT --soft. This line, as --soft, silently reverted another
+            # orchestrator's committed fix - the exact correction we had spent the evening
+            # hunting - inside a commit whose message was about something else entirely.
+            #
+            # --soft moves HEAD and LEAVES THE INDEX ALONE. The index still held my older tree,
+            # including a stale copy of a file another session had since corrected. `git add
+            # <my-file>` stages one path, but `git commit` commits the WHOLE INDEX - so the next
+            # commit reverted their work as collateral, in a file I never opened.
+            #
+            # Measured, not reasoned: with --soft the colleague's file rides along and reads
+            # 'old'; with --mixed it is absent from the commit and reads 'CORRECTED'.
+            # test_safe_push.py pins it.
+            #
+            # ⭐ --mixed resets the INDEX to the new HEAD and still leaves the WORKING TREE
+            # untouched, which was the entire reason --soft looked right. The guard written to
+            # protect a colleague's UNCOMMITTED work was destroying their COMMITTED work.
+            git(["reset", "--mixed", "%s/%s" % (a.remote, a.branch)], a.cwd)
+            print("  local branch fast-forwarded - index synced, working tree untouched")
+
     if rc != 0:
         print("  push failed: %s" % (err2 or out).strip()[:200])
         return 1

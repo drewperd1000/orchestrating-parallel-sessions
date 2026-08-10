@@ -261,6 +261,39 @@ def gate(doc, step, before_text, require_change=True):
                 "§%s holds %d line(s) and 0 parseable entries, so none of it reaches the "
                 "generated plate and no invariant runs on it. Give each item an "
                 "`### <ID> - title` heading." % (sec, len(body)))
+
+        # ⛔ THE FORM RULES, ENFORCED HERE RATHER THAN DOCUMENTED SOMEWHERE (the human, 2026-08-10).
+        #
+        # W-STRIKEDONE is the cautionary case: the strike-through rule existed, the check fired
+        # 14 times a run, it was ADVISORY, and it printed a bare count with no line numbers. It
+        # went unfixed for weeks and cost the human his reading time. **Detection was never the
+        # problem; nothing REQUIRED anything.**
+        #
+        # So these run against THIS SECTION, at the moment a step is closed, and a step cannot
+        # be closed while they fail. Scoped to the one section on purpose - a gate that re-checks
+        # the whole document fires on other sections' problems and gets overridden, which is how
+        # a gate dies.
+        FORM = {
+            "E-SETTLEDNOTSTRUCK": "settled sub-items are not `- [x]` (the checked box renders "
+                                  "green, grey and struck NATIVELY - that is the whole form)",
+            "E-ALLSUBSDONE":      "every sub-item is done but the container is still live",
+            "E-IDSHAPE":          "an id is not PREFIX+NUMBER (`D7 - pause cues`, not `D-PAUSE`)",
+            "E-IDORDER":          "numbers do not run in order, so the section must be scanned",
+        }
+        try:
+            findings = od.check_doc(doc)
+        except Exception:
+            findings = []
+        here_lines = set(range(span[0] + 1, span[1] + 1))
+        hits = {}
+        for f in findings:
+            if f.code in FORM and f.line in here_lines:
+                hits.setdefault(f.code, []).append(f.line)
+        for code, lns in sorted(hits.items()):
+            reasons.append(
+                "%s in §%s at line(s) %s - %s. Fixers: `orchdoc.py strike --doc <doc> "
+                "--commit` and `orchdoc.py reorder --doc <doc> --commit`."
+                % (code, sec, ", ".join(str(n) for n in lns[:6]), FORM[code]))
     return (not reasons), reasons
 
 

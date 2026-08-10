@@ -44,6 +44,33 @@ correctly ignored by someone doing their job properly.** Both parties behaved we
 paths are untouched, which is why this appears when you inspect infrastructure and never when
 you inspect application code.
 
+EXTENDED 2026-08-08, after a fifth session was about to adopt an over-broad form of the rule
+("never use a slashed path in a rev string"). Full matrix, every path verified to exist on the
+ref first so a missing file could not be mistaken for a mangle:
+
+    origin/main:.shared/scripts/x.py    leading dot, slashes     MANGLED
+    origin/main:.gitignore              leading dot, NO slash    MANGLED   <- slashes irrelevant
+    origin/main:/etc/passwd             leading SLASH            MANGLED   <- not just dots
+    origin/main:x/y.md                  slashes, no leading dot  clean     <- the over-broad
+                                                                              rule forbids this
+    origin/main:./.shared/scripts/x.py  explicit ./ prefix       clean     <- a workaround
+
+⭐ **THE TRIGGER IS: THE RIGHT OF THE COLON BEGINS WITH `.` OR `/`** - i.e. it looks to MSYS
+like a POSIX path, so `a:b` is read as a PATH LIST. Nothing else matters.
+
+⛔ AND AN OVER-BROAD RULE IS NOT THE SAFE ERROR HERE. "Never use a slashed path" is disproved by
+one command (`origin/main:x/y.md` works), and the session that disproves it discards the whole
+warning - which is EXACTLY how this bug survived the first time. A rule that is too wide gets
+falsified and thrown away; only a rule that names the real condition survives being tested.
+
+THREE FIXES, all verified, in order of preference:
+  1. keep the path OUT of the rev string:  `git ls-tree <ref> -- <path>`  (then cat-file the blob)
+  2. prefix the right-hand side with `./`  or set `MSYS_NO_PATHCONV=1`
+  3. call git from Python with an ARGUMENT LIST - no shell, so no conversion. This is why
+     `safe_push.py` was never affected despite doing `git show <ref>:.shared/...` on every run:
+     `subprocess.run([...])` never hands the string to MSYS. Worth knowing before auditing a
+     tool that looks vulnerable and is not.
+
     python shell_path_probe.py --arg "origin/main:.shared/scripts/thing.py"
 
   Type that INTO the shell in question. It reports what actually arrived.
@@ -69,6 +96,19 @@ CONTROLS = [
     ("slashes, no dot after the colon", "HEAD:some/dir/file.md"),
     ("both sides paths, no dot", "a/b:c/d"),
     ("dot on the LEFT only", ".a/b:c/d"),
+    # Added 2026-08-08. This one is a control and not a trigger, which is the whole objection to
+    # the over-broad "no slashed paths" rule: forbidding it costs a working command, and one
+    # session testing it will disprove the rule and discard the real warning with it.
+    ("slashes but no leading dot - WORKS", "origin/main:x/y.md"),
+    ("explicit ./ prefix - the workaround", "origin/main:./.shared/scripts/x.py"),
+]
+
+# Arguments that DO mangle. A probe that only carries controls can never fail, and a probe that
+# only carries triggers can never distinguish - both were separate bugs in this file's history.
+TRIGGERS = [
+    ("leading dot, with slashes", "origin/main:.shared/scripts/x.py"),
+    ("leading dot, NO slashes", "origin/main:.gitignore"),
+    ("leading SLASH", "origin/main:/etc/passwd"),
 ]
 
 
