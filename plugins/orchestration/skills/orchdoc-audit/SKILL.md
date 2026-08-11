@@ -171,3 +171,20 @@ advice: **the deliverable is small because the WORKER is small.**
 - ⚠️ **Advisory findings have line numbers; the default output hides them.** `check` prints
   `W-FOO x14` and stops. Use `check --doc <id> --strict` to see WHERE. A count you cannot act
   on is how a detected defect survives.
+- ⛔ **When a check fires on text that FOLLOWS the rules, the check is wrong - not the text.**
+  Three separate checks failed this way in one day: one punished detailed attestations, one
+  flagged a quotation as an assertion, one told an orchestrator to dismantle the exact
+  done-markup the rules demand. **A false positive that lands on correct behaviour costs you the
+  behaviour**, and invisibly, because the people penalised are the ones doing it right and the
+  advice they receive tells them to do more of what triggered the flag. Ask which DIRECTION a
+  check is wrong in before fixing the symptom.
+- ⭐ **A rule that recognises only the TIDY shape of a violation misses the messy one - and the
+  messy one is what accumulates.** `E-LOOSEINPARENT` first matched only `###` headings and
+  missed the doc it was written for, whose stray asks were wearing bullets. Tidy violations get
+  fixed by whoever made them; messy ones survive precisely because they do not look like the
+  thing the rule describes.
+- ⭐ **`E-LOOSEINPARENT` is not a tidiness check.** A loose bullet belongs to no entry, and every
+  invariant here is triggered BY an entry - so text in a container body is exempt from staleness,
+  status, archive and the sweep. **It rots there while still looking like part of the plate.**
+  Measured: all three items parked in one orchestrator's §2 container were DEAD, one of them
+  telling the human for ten days that go-live needed a PR that had already merged.

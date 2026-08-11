@@ -747,6 +747,80 @@ NOTDONE_MARK_RE = re.compile(
         "NEVER|NOT DONE|NOT YET|UNTESTED|UNBUILT|OUTSTANDING"
         "|STILL NEED|TODO|BLOCKED|PENDING"))
 
+# \u26d4 OPENNESS THE DONE/NOT-DONE VOCABULARY MISSES ENTIRELY.
+#
+# o1's specimen, 2026-08-11: `strike` converted 7 lines on their doc and FIVE were wrong. Every
+# one of the five contained a \u2705 or bold text REPORTING PARTIAL PROGRESS - the tick landed on the
+# sentence saying the work was not finished:
+#
+#     - **8th-Pillar title - \u2705 FINAL (the human, 2026-07-30). Remaining: the Google Doc**
+#     - **\ud83d\udcd8 8th-Pillar title -> apply in the Google Doc - o1's next step.**
+#     - **\ud83d\udcd8 7 Pillars ebook restructure ... awaiting the human's eyeball.**
+#
+# NOTDONE_MARK_RE knew none of `remaining`, `next step`, `awaiting`, `do LAST`. So a line could
+# say "FINAL \u2026 Remaining: the Google Doc" and register as unambiguously finished.
+#
+# \u2b50 AND A FALSE TICK IS THE EXPENSIVE DIRECTION. A checked box tells the human HE OWES NOTHING THERE.
+# It is unfalsifiable from inside the document - the tick looks identical whether earned or
+# fabricated, and the sentence beside it still says "next step" in prose nobody re-reads once the
+# box is green. This is the "None open while items are open" harm, written by a tool.
+#
+# These do NOT mean "not done". They mean **AMBIGUOUS - a human decides**, which is a third state
+# the tool previously could not express.
+AMBIGUOUS_RE = re.compile(
+    r"\b(?:remaining|next step|awaiting|await|still (?:shows|needs|open|to)|"
+    r"do (?:it )?last|"                       # `do it LAST` slipped a rule written for `do LAST`
+    r"tbd|to be (?:done|decided|confirmed)|unless|once .{0,24} lands|after .{0,24} lands|"
+    r"waiting on|depends on|partial|in part)\b", re.I)
+
+# ⭐ THE STRUCTURAL SIGNALS, WHICH DO NOT DEPEND ON PHRASING AT ALL. o1's, and they are better
+# than the word list above: `do LAST` was added, their line said `do it LAST`, and one word beat
+# the rule. **A keyword list loses that race by construction** - there is always another phrasing.
+#
+# Two facts on a line mean OPEN regardless of how it is worded:
+#
+#   a TRACKER ID   the line has delegated its status to another system. The document is
+#                  therefore NOT the authority on whether it is finished, and a formatter must
+#                  not assert completion on the doc's behalf. (Resolvable, too: the id is either
+#                  open or closed over there, which turns a guess into a lookup.)
+#   a DUE DATE     a due date is a claim about UNFINISHED work. Nothing with a live one is done.
+#
+# ⛔ AND o1'S SHARPER POINT, which no vocabulary catches: on the line that slipped, the ✅
+# modified **"Motion-tracked"** - not the task. The tick was true about a PROPERTY of the item,
+# and the formatter read it as being about its COMPLETION. Identical shape to
+# `"✅ FINAL … Remaining: the Google Doc"`. A glyph proves nothing about what it is attached to,
+# which is the whole reason done-ness cannot be inferred from formatting.
+# The fingerprints of a RUNNING HISTORY - text about how the entry got here rather than about
+# what is being asked. Deliberately narrow: each of these describes a PAST STATE of the record
+# itself, which is the one thing a decision entry never needs to carry.
+PLATE_HISTORY_RE = re.compile(
+    r"~~|\b(?:superseded|corrected|correction|retracted?|"
+    r"was (?:false|wrong|stale|incorrect|inaccurate)|"
+    r"used to (?:say|read|claim)|earlier version|previously (?:said|read|claimed)|"
+    r"turned out to be (?:false|wrong)|o\d+ (?:was wrong|caught|flagged))\b", re.I)
+
+TRACKER_ID_RE = re.compile(r"\b(?:tk_[A-Za-z0-9]{8,}|[A-Z][A-Z0-9]{1,9}-\d+)\b")
+DUE_DATE_RE = re.compile(r"\bdue\b(?!\s+to\b)", re.I)
+
+
+def looks_open(text):
+    """Openness by PHRASE or by STRUCTURE. Structure is the half that survives rewording."""
+    return bool(AMBIGUOUS_RE.search(text)
+                or TRACKER_ID_RE.search(text)
+                or DUE_DATE_RE.search(text))
+
+
+def why_open(text):
+    """The exact token that made it ambiguous, so a refusal can be argued with rather than
+    merely obeyed. A gate that will not say WHY gets overridden on reflex."""
+    for rx, label in ((AMBIGUOUS_RE, None),
+                      (TRACKER_ID_RE, "tracker id"),
+                      (DUE_DATE_RE, "a due date")):
+        m = rx.search(text)
+        if m:
+            return label or m.group(0)
+    return "?"
+
 # ---- THE HUMAN'S CLARITY REQUIREMENTS (2026-08-06) ----
 #
 # "Done items are left cluttering up the active list, and/or they are not clearly
@@ -1039,7 +1113,7 @@ BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
             "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE", "E-CLOSEDWITHOPENSUBS", "E-SETTLEDNOTSTRUCK",
-            "E-IDSHAPE", "E-IDORDER", "E-ALLSUBSDONE", "E-STUBLEFT", "E-EMPTYLINKS", "E-LEGACYDOC",
+            "E-IDSHAPE", "E-IDORDER", "E-ALLSUBSDONE", "E-STUBLEFT", "E-EMPTYLINKS", "E-LEGACYDOC", "E-PLATEHISTORY", "E-LOOSEINPARENT",
             "E-NOOWNER", "E-DONEINACTIVE", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO"}
 ADVISORY = {"W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
@@ -1378,10 +1452,22 @@ def check_doc(path):
                 and status_of(e["body"]) in LIVE_STATUS):
             done_unstruck, open_subs = [], 0
             for off, raw in enumerate(e["body"].splitlines()[1:]):
-                if not re.match(r"^\s*[-*+]\s|^\s*\d+\.\s", raw):
+                # Same two guards as `strike`, and they have to BE the same. o1 reverted five
+                # false ticks and the gate immediately demanded them back, naming the exact
+                # lines - so obeying it would have re-inserted the falsehood. A check and its
+                # fixer disagreeing about what qualifies turns the gate into a machine for
+                # restoring the defect.
+                if not re.match(r"^\s*[-*+]\s", raw):
                     continue
                 txt = re.sub(r"`[^`]*`", "", raw)
                 if NOTDONE_MARK_RE.search(txt):
+                    open_subs += 1
+                    continue
+                if looks_open(txt):
+                    # Neither settled nor plainly open - so it is NOT evidence the container is
+                    # finished, and NOT something to demand a tick on. Same predicate the fixer
+                    # uses, deliberately: when they diverged, the gate demanded back exactly the
+                    # false ticks a colleague had just reverted.
                     open_subs += 1
                     continue
                 if not DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", txt)):
@@ -1599,15 +1685,28 @@ def check_doc(path):
             # first run. A check that fires on the fix is worse than no check.
             done = DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", txt))
 
-            # the human: a DONE sub-item should be struck through, so the not-done ones are
-            # what the eye lands on. A container may carry a status only when the whole
-            # container is done - which E-MIXEDSTATE already allows, since a fully-done
-            # bullet carries no not-done claim and therefore never trips it.
-            if done and not notdone and "~~" not in raw:
+            # ⛔ THIS CHECK USED TO TEACH THE WRONG FORM, AND THAT IS WHY IT KEPT REAPPEARING.
+            #
+            # It detected a missing `~~` and said *"wrap it in ~~ ~~"*. Tildes give
+            # strike-through and NOTHING ELSE - no green tick, no grey. the human's rule is three
+            # marks, and greying is the one that makes settled items recede so an open one
+            # stands out. So every session that obeyed this remedy produced one mark out of
+            # three, and then tripped E-SETTLEDNOTSTRUCK, which asks for the checkbox.
+            #
+            # ⭐ TWO CHECKS IN ONE FILE GAVE CONTRADICTORY INSTRUCTIONS. That is worse than
+            # either being wrong alone: whichever one a session obeys, the other one fires, and
+            # the natural read is that the tool is noisy rather than that the advice conflicts.
+            # I repeated the bad phrasing to another orchestrator this morning, because the
+            # tooling's own words for this rule were "struck through".
+            #
+            # ONE FORM, EVERYWHERE: `- [x]` renders green-ticked, GREY and struck NATIVELY.
+            if done and not notdone and not CHECKED_BOX_RE.search(raw):
                 findings.append(Finding(
                     "W-STRIKEDONE", e["line"] + 1 + off,
-                    "a done sub-item is not struck through",
-                    "wrap it in ~~ ~~ so the eye lands on what is NOT done"))
+                    "a done sub-item is not a checked checkbox, so it is not greyed out",
+                    "`- [x] the thing` - green tick, GREY and strike-through, all native. "
+                    "Not `~~ ~~`, which strikes without greying, and not a <span>, which "
+                    "renders as visible literal text here"))
 
             if done and notdone:
                 findings.append(Finding(
@@ -1819,6 +1918,147 @@ def check_doc(path):
             "heading looks like an entry but '%s' is not a valid id, so it is INVISIBLE "
             "to check and to the generated index" % tok,
             "ids are LETTERS then DIGITS (D1, F12, DA3) - not '%s'" % tok))
+
+    # --- E-LOOSEINPARENT: entries parked in a container section, outside every subsection ---
+    #
+    # the human, 2026-08-11, on o1's doc: *"you have a MASSIVE wall of items that sit between §2 and
+    # §2.1. There should NOT be anything there... why are you putting to-do items and decisions
+    # in this space and NOT where they are obviously supposed to go???"* And, on the pattern:
+    # *"This is a game of whack-a-mole. We need to codify this into the OrchDoc process."*
+    #
+    # ⭐ HE IS RIGHT ABOUT THE WHACK-A-MOLE, AND THIS IS THE GENERAL FORM. A section that HAS
+    # subsections is a CONTAINER: its own body is for its heading and a line of description,
+    # nothing else. An entry parked in the container sits outside every subsection - so no
+    # per-subsection rule reaches it, `plate` does not index it, and `archive` does not sort it.
+    # **It is invisible to the tooling by position rather than by content**, which is why it
+    # accumulates rather than being caught, and why fixing symptoms one at a time never ends.
+    #
+    # ⛔ AND IT IS NOT A TIDINESS CHECK - o7 established that empirically. All THREE items parked
+    # in their §2 container were DEAD: a ruling index still saying go-live needed "one PR (#70)
+    # then one command" ten days after #70 merged and production promoted; a REVIEW ask whose
+    # links were already in §1; and a READ ask belonging to a decision that was PAUSED.
+    #
+    # ⭐ Three for three, and the reason is structural: **a loose bullet belongs to no entry, and
+    # every check in this file is triggered BY AN ENTRY.** So it is not merely unsorted - it is
+    # exempt from staleness, from status, from archive, from the sweep. **The container is where
+    # text goes to stop being maintained**, and it rots there while still looking like part of
+    # the plate. Same shape as F71: absence of a trigger produces silence, not a finding.
+    #
+    # Measured: 293 lines sit in parent bodies across the fleet, including 5 entries in o9's own
+    # §99. Prose and a description line are legitimate there (o1's own "items live in §2.1/2.2/
+    # 2.3 below" rule lives exactly there, correctly).
+    _parent_heads = [(i, m.group(1)) for i, l in enumerate(lines)
+                     if (m := SECTION_RE.match(l)) and "." not in m.group(1)]
+    _all_heads = [(i, m.group(1)) for i, l in enumerate(lines) if (m := SECTION_RE.match(l))]
+    for ln, num in _parent_heads:
+        sub = next((h for h in _all_heads
+                    if h[0] > ln and h[1].startswith(num + ".")), None)
+        if not sub:
+            continue                     # no subsections: the body is legitimately its own
+        stray = [i + 1 for i in range(ln + 1, sub[0])
+                 if re.match(r"^#{3,4}\s", lines[i])]
+        # ⛔ AND TOP-LEVEL BULLETS, WHICH IS THE FORM THE HUMAN ACTUALLY POINTED AT. The first
+        # version flagged only `###` headings and missed o7's §2 entirely - its container body
+        # carries "👀 REVIEW - the offer pages" and "📖 READ - the two guides", which are ASKS
+        # wearing a bullet instead of a heading. A rule that only recognises the tidy shape of a
+        # violation misses the messy one, and the messy one is what accumulates.
+        #
+        # A blockquote index or a rule line is legitimate here, so only UNINDENTED bullets count.
+        asks = [i + 1 for i in range(ln + 1, sub[0])
+                if re.match(r"^[-*+]\s", lines[i])]
+        if stray or asks:
+            what = []
+            if stray:
+                what.append("%d entr(ies)" % len(stray))
+            if asks:
+                what.append("%d loose bullet(s)" % len(asks))
+            findings.append(Finding(
+                "E-LOOSEINPARENT", ln + 1,
+                "§%s holds %s in its own body, above §%s - a loose bullet belongs to NO entry, "
+                "so every check here (which is triggered by an entry) is blind to it and it is "
+                "never swept, statused or archived" % (num, " and ".join(what), sub[1]),
+                "a section WITH subsections is a container: heading, and a description or index "
+                "at most. Move each item into the subsection that owns it - a decision to §%s.1, "
+                "a question to .2, a to-do to .3. Lines %s"
+                % (num, ", ".join(str(n) for n in sorted(stray + asks)[:6]))))
+
+    # --- E-PLATEHISTORY: the reasoning trail, filed on the human's plate ---
+    #
+    # the human, 2026-08-11, on o7's §2: *"You are taking notes INSIDE the §2 components. THAT IS
+    # EXTRAORDINARILY difficult for me to parse. You should be putting those in Findings. I need
+    # the decision that I need to make visible, and the basic info that I need to understand in
+    # order to make the decision. DO NOT KEEP A RUNNING HISTORY THERE."*
+    #
+    # Measured across the corpus before writing this: o8's plate runs 61 lines per DECISION with
+    # 10 of 11 entries carrying history; o7's D21 is 76 lines. The section he reads in order to
+    # DECIDE is three times denser than the section built to hold detail.
+    #
+    # ⭐ THE DISTINCTION IS WHAT MAKES THIS CHECKABLE: a §2 entry is a QUESTION, a finding is a
+    # RECORD. Appending history to a question does not enrich it, it buries it - a reader looking
+    # for "what do I need to do" reads past a paragraph about how the last version was wrong.
+    #
+    # ⛔ AND IT CUTS AGAINST A HABIT THIS WORKSTREAM SPENT ALL WEEK REINFORCING. Recording
+    # provenance in place - struck text, retraction blocks, who caught what - is genuinely
+    # valuable and it is FINDINGS material. Right thing, wrong section.
+    #
+    # o7 proposed two checks and this is the better one: **do not measure the SIZE of the text,
+    # measure what KIND of text it is.** A ceiling says an entry is fat; this says what to move.
+    # Same shape as `asserted`.
+    for e in entries:
+        sec = (e.get("section") or "").lstrip("# ")
+        if e.get("archived") or not sec.startswith("§2"):
+            continue
+        hits = []
+        in_settled = False
+        in_strike = False          # a ~~span~~ left open by the previous line
+        for off, raw in enumerate(e["body"].splitlines()[1:], start=1):
+            # Text INSIDE a multi-line struck span is part of the struck item, even when the
+            # wrap happens to begin with a dash. L309 of o8's doc is the second half of a
+            # settled sub-item's sentence and was flagged as history on its own.
+            was_in_strike = in_strike
+            if raw.count("~~") % 2:
+                in_strike = not in_strike
+            if was_in_strike:
+                continue
+            is_bullet = bool(re.match(r"^\s*(?:[-*+]|\d+\.)\s", raw))
+            # ⛔ A SETTLED SUB-ITEM IS NOT HISTORY. It is the CURRENT state of a live item, and
+            # the human explicitly wants those visible on the plate - struck, greyed, still there.
+            #
+            # The first version excluded only `- ~~…`, so it flagged `- ✅ **DONE** - ~~(a) the
+            # 4 hybrids…~~`, which is the settled form with text between the bullet and the
+            # tildes. That is the expensive direction: the check would have told o8 to dismantle
+            # exactly the markup the rule asks for. A bullet carrying a DONE marker is settled,
+            # whatever else is on the line.
+            if is_bullet:
+                in_settled = bool(CHECKED_BOX_RE.search(raw)
+                                  or DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", raw))
+                                  or re.match(r"^\s*[-*+]\s*~~", raw))
+                if in_settled:
+                    continue
+            elif in_settled and raw.startswith((" ", "\t")) and raw.strip():
+                # A wrapped continuation of a settled sub-item is still that sub-item - L283 was
+                # the second half of L282's sentence and got flagged on its own.
+                #
+                # ⚠️ INDENTED only. Treating ANY non-blank line as a continuation swallowed the
+                # flush-left paragraph that follows a settled bullet, so history written directly
+                # under a done item became invisible - a false NEGATIVE introduced while fixing a
+                # false positive. The fixture caught it immediately, which is the argument for
+                # writing one per code.
+                continue
+            elif not raw.strip():
+                in_settled = False
+            m = PLATE_HISTORY_RE.search(re.sub(r"`[^`]*`", "", raw))
+            if m:
+                hits.append((e["line"] + off, m.group(0)[:22]))
+        if hits:
+            findings.append(Finding(
+                "E-PLATEHISTORY", e["line"],
+                "%s is on the human's plate but carries %d line(s) of reasoning HISTORY, so the "
+                "decision he has to make is buried in how it got here" % (e["id"], len(hits)),
+                "a §2 entry answers two questions and stops - what do you need to decide, and "
+                "the minimum needed to decide it, plus a recommendation. Move the history to a "
+                "finding and leave a pointer. At: %s"
+                % ", ".join("L%d(%s)" % (n, w) for n, w in hits[:4])))
 
     # --- E-STUBLEFT / E-EMPTYLINKS: the scaffold's own placeholders, still sitting there ---
     #
@@ -2543,7 +2783,9 @@ def cmd_selftest(args):
         # o8 meant by "burying the majority of what is actually still owed" - it looks finished.
         ("E-CLOSEDWITHOPENSUBS",
          "## DECISIONS\n\n### D4 - ship the three lanes\n**Status:** RESOLVED\n\n"
-         "- ~~lane A merged~~\n- ~~lane B merged~~\n- lane C NOT DONE\n"),
+         # The settled ones carry the canonical checked-checkbox form. A fixture is read as an
+         # EXAMPLE of correct markup, so one written in a superseded form teaches it.
+         "- [x] lane A merged\n- [x] lane B merged\n- lane C NOT DONE\n"),
         # The mirror of the one above, from o8's real DA6 (the human, 2026-08-10): a LIVE container
         # whose rulings are already made and none of them struck, so the status says "he is
         # needed" while the contents say "settled". He opens it, reads all of it, and finds
@@ -2561,6 +2803,21 @@ def cmd_selftest(args):
         # ⛔ The fixture name MATTERS here - the check is scoped to real OrchDocs, so a fixture
         # written under any other name would test nothing and pass. Same shape as the publish
         # probe that renamed its subject and verified itself by circularity.
+        # the human, 2026-08-11: "DO NOT KEEP A RUNNING HISTORY THERE." The settled sub-item MUST NOT
+        # trip it - he wants those visible on the plate; it is the prose about how the record
+        # used to read that belongs in a finding.
+        # the human, 2026-08-11: "There should NOT be anything there." An entry in a container
+        # section is outside every subsection, so nothing else in this file can see it.
+        # Prose in the container is fine and must NOT trip it - the rule line telling readers
+        # where items go legitimately lives exactly there.
+        ("E-LOOSEINPARENT",
+         "## §2 LIVE ON THE PLATE\n\nItems live in §2.1 below, never loose here.\n\n"
+         "### D4 - a decision parked in the container\n**Status:** OPEN\n\nbody\n\n"
+         "## §2.1 Decisions\n\n### D5 - correctly placed\n**Status:** OPEN\n\nbody\n"),
+        ("E-PLATEHISTORY",
+         "## §2.1 Decisions\n\n### D3 - pick a tier\n**Status:** OPEN\n\n"
+         "- [x] the price was set\n"
+         "This entry previously said $25, which was wrong; o7 caught it and it is now corrected.\n"),
         ("E-LEGACYDOC",
          "# Decisions\n\n## Open items\n\n### D1 - a decision\n**Status:** OPEN\n\nbody\n"),
         ("E-STUBLEFT",
@@ -5030,7 +5287,20 @@ def cmd_strike(args):
     lines = doc.read_text(encoding="utf-8").split("\n")
     entries, _ = parse_entries(lines)
     out = list(lines)
-    changed = []
+    changed, ambiguous, spans_only = [], [], []
+
+    # ⛔ LITERAL SPANS ARE STRIPPED EVERYWHERE, not only where a line converts. I told another
+    # orchestrator this command "strips the 17 <span> tags in your doc"; it did not - it only
+    # touched lines inside LIVE D/T/W/A entries that it was already converting, so the tags in
+    # every other entry survived and it reported `written.` regardless. An inline span renders
+    # as visible literal text in this viewer whatever the line's status, so removing one asserts
+    # nothing about done-ness and is safe to do unconditionally.
+    for i, raw in enumerate(out):
+        if GREY_SPAN_RE.search(raw):
+            fixed = GREY_SPAN_RE.sub("", raw).replace("</span>", "")
+            if fixed != raw:
+                out[i] = fixed
+                spans_only.append(i + 1)
 
     for e in entries:
         if e.get("archived") or status_of(e["body"]) not in LIVE_STATUS:
@@ -5041,12 +5311,24 @@ def cmd_strike(args):
             i = e["line"] + off                      # 0-indexed into `out`
             if i >= len(out) or out[i] != raw:
                 continue
-            if not re.match(r"^\s*[-*+]\s|^\s*\d+\.\s", raw):
+            # ⛔ NEVER A NUMBERED LIST. `2.` is document STRUCTURE, not a settled sub-item, and
+            # rewriting it to `- [x]` orphans it between its own `1.` and `3.`. o1's specimen:
+            # `2. ✅ **RETAINED in the stored script**` became a checkbox and broke the list it
+            # belonged to. A formatter must not change what kind of thing a line IS.
+            if not re.match(r"^\s*[-*+]\s", raw):
                 continue
             txt = re.sub(r"`[^`]*`", "", raw)
             if NOTDONE_MARK_RE.search(txt):
                 continue
             if not DONE_MARK_RE.search(NOTDONE_MARK_RE.sub(" ", txt)):
+                continue
+            # ⭐ AMBIGUOUS IS A THIRD STATE, AND IT IS THE HUMAN'S. A line carrying BOTH a done
+            # marker and an openness signal is exactly where the tool was guessing - and it
+            # guessed wrong five times out of seven on a real document. It now refuses, and
+            # SAYS SO: a silent skip is the same defect as a silent conversion, one direction
+            # over.
+            if looks_open(txt):
+                ambiguous.append((i + 1, e["id"], why_open(txt), raw))
                 continue
             if CHECKED_BOX_RE.search(raw) and not GREY_SPAN_RE.search(raw):
                 continue
@@ -5070,16 +5352,38 @@ def cmd_strike(args):
                 changed.append((i + 1, e["id"]))
 
     print("orchdoc strike - %s" % doc.name)
-    if not changed:
-        print("  every settled sub-item in a live entry already carries all three marks.")
-        print("  %d entr(ies) examined." % len(entries))
+    print("  %d entr(ies) examined" % len(entries))
+    if spans_only:
+        print("  %d literal <span> tag(s) stripped (they render as visible text here): L%s"
+              % (len(spans_only), ", L".join(str(n) for n in spans_only[:8])))
+
+    # ⭐ REFUSALS ARE PRINTED FIRST AND ALWAYS. These are the lines where the tool would have
+    # been GUESSING at done-ness, and on a real document it guessed wrong five times out of
+    # seven. Deciding whether work is finished is judgement; the tool is the one place that must
+    # never do it silently in either direction.
+    if ambiguous:
+        print()
+        print("  ⚠️  %d line(s) REFUSED - each carries a done marker AND an openness signal, so"
+              % len(ambiguous))
+        print("      only their owner can say. Mark them by hand, or reword the line.")
+        for ln, eid, word, raw in ambiguous[:8]:
+            print("      L%-5d %-6s says %-12r %s" % (ln, eid, word, raw.strip()[:56]))
+        if len(ambiguous) > 8:
+            print("      ... and %d more" % (len(ambiguous) - 8))
+
+    if not changed and not spans_only:
+        print()
+        print("  nothing to convert: every settled sub-item in a live entry already carries the")
+        print("  checked-checkbox form.")
         return 0
-    print("  %d sub-item(s) across %d entr(ies) would get the full form"
-          % (len(changed), len(set(c[1] for c in changed))))
-    for ln, eid in changed[:8]:
-        print("    L%-5d %-6s %s" % (ln, eid, out[ln - 1].strip()[:74]))
-    if len(changed) > 8:
-        print("    ... and %d more" % (len(changed) - 8))
+    if changed:
+        print()
+        print("  %d sub-item(s) across %d entr(ies) get the full form"
+              % (len(changed), len(set(c[1] for c in changed))))
+        for ln, eid in changed[:8]:
+            print("    L%-5d %-6s %s" % (ln, eid, out[ln - 1].strip()[:74]))
+        if len(changed) > 8:
+            print("    ... and %d more" % (len(changed) - 8))
     if args.dry_run:
         print("  DRY RUN - nothing written. Re-run with --commit.")
         return 0

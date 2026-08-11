@@ -763,7 +763,7 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   would have survived a count.** Applies to your own reports too — a clean verdict that does not
   say what it looked at is indistinguishable from not having looked.
 - ⭐ **Enforce a timestamp by GENERATING it, never by asking for it.** `orchdoc_stamp.py
-  --done "<text>"` emits `- ~~text~~ - DONE dd-Mon-yyyy @ HH:MM (UTC±n)`. Granularity is only
+  --done "<text>"` emits `- [x] text - DONE dd-Mon-yyyy @ HH:MM (UTC±n)` - the CHECKED-CHECKBOX form, which renders green-ticked, grey and struck through natively. Granularity is only
   expensive when it demands judgement: *"write today's date"* is a judgement an agent gets
   wrong from a stale context, and hand-written dates are the most-repeated defect this tool
   exists to remove. ⭐ **A generated stamp is also the first thing in the record that is
@@ -829,7 +829,7 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   cannot stop someone writing whatever passes. The layers: **(1) FORMAT** — a slot must exist;
   cheap, structural, gameable on its own. **(2) ORACLE** — what goes in the slot must be
   checkable by someone else (a sha, a path, a command), never prose. **(3) IMMUTABILITY** — the
-  text inside `~~ ~~` must be the SAME text that was there before it was struck, which git can
+  text inside a settled sub-item must be the SAME text that was there before it was marked done, which git can
   verify and no format can fake. Layer 3 is what makes following-the-format insufficient.
   `orchdoc_restrike.py` reads the diff and reports any strike that also changed the wording.
   ⚠️ **It asks rather than blocks, and must stay that way:** a line reading "pending your call"
@@ -864,7 +864,7 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   remembered rather than read, and a to-do with no obvious home lands on the human's plate by
   default — the exact direction the schema exists to prevent.
 - ⛔ **A closed item with an unfinished sub-item is a FALSE DONE.** Mark the container
-  `IN PROGRESS`, ~~strike through~~ the sub-items that are finished, and move nothing to §99
+  `IN PROGRESS`, mark the finished sub-items `- [x]` (green tick + GREY + strike, all three), and move nothing to §99
   until ALL of them are done. ⭐ **The struck sub-items STAY VISIBLE** — seeing where the
   finished work sits is what makes the remaining decision readable, so do not hide them. A
   status label alone throws that context away. `archive` holds back any entry with an open
