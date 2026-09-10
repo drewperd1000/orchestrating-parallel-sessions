@@ -460,7 +460,7 @@ run in the background. This **frees the orchestrator's inference the instant it 
 3. **Set `CLAUDE_CODE_OAUTH_TOKEN`** from that file for the launch. It sits at **auth-chain position 5 and OVERRIDES the stale on-disk token**, so the child authenticates with the long-lived token instead of the expired disk one:
 
    ```
-   CLAUDE_CODE_OAUTH_TOKEN=$(cat <your gitignored secrets dir>/claude-code-oauth-token.txt) \
+   CLAUDE_CODE_OAUTH_TOKEN=$(cat <your gitignored secrets dir>/claude-code-oauth-token.txt | tr -d '[:space:]') \
      claude -p "<seed>" --model opus --allowedTools "Bash(git *)" Edit Write Read ...
    ```
 
@@ -468,6 +468,50 @@ run in the background. This **frees the orchestrator's inference the instant it 
 - ⛔ **Do NOT pass `--bare`.** Bare mode does **not** read `CLAUDE_CODE_OAUTH_TOKEN` — it falls back to the disk creds and 401s again. Launch headless WITHOUT `--bare`.
 - ⛔ **Do NOT use `ANTHROPIC_API_KEY`.** That's the **metered** API path (auth-chain position 3), billed pay-as-you-go and **NOT Max-covered** — the opposite of what you want. `CLAUDE_CODE_OAUTH_TOKEN` (position 5) is the Max-covered path; use it, not the API key.
 - The disk token can't be refreshed non-destructively (interactive `/login` only) — so don't try to "refresh the disk token before launching." The long-lived `setup-token` value IS the durable fix; read it from the secrets file each launch.
+
+#### ⛔ Two traps that BOTH report as something else — measured, not theorised
+
+Neither of these says what it is. Each produces a message pointing at a different, plausible, wrong
+cause, so the time is lost diagnosing the wrong thing.
+
+**1. Reading the token strips only the ENDS — a token with whitespace INSIDE stays broken.**
+`$(cat file)` strips trailing newlines. Python's `.strip()` strips leading and trailing whitespace.
+Neither touches whitespace in the MIDDLE, and a token file can carry it (one measured file held 110
+characters around a 108-character token). What you get is a token of the right shape, the right
+length at a glance, and invalid.
+
+⛔ **It fails as `401 OAuth access token is invalid`, which reads as an expired credential.** That
+is the same false signature the section above exists to warn about, arriving from an unrelated
+cause — so the reflex it triggers is "re-mint the token" or "send the human to `/login`", and both
+are wrong. One of them spends the human's time on work they have already done.
+
+Strip ALL whitespace, not the ends:
+
+```bash
+# shell
+TOKEN=$(cat <secrets>/claude-code-oauth-token.txt | tr -d '[:space:]')
+```
+```python
+# python - "".join(s.split()) removes every whitespace character; .strip() does not
+token = "".join(pathlib.Path(p).read_text(encoding="utf-8").split())
+```
+
+⭐ **Check the LENGTH against the file size, not the value.** `test -s` proves the file is
+non-empty, which this defect passes cleanly. Compare the token length to the file's byte count and
+the discrepancy IS the bug. Never echo the token to inspect it — that is the credential-exposure
+rule above.
+
+**2. On Windows, `bash script.sh` resolves in the Bash tool and NOT in PowerShell — and the failure
+spawns nothing while looking survivable.**
+An orchestrator that writes a launch script and invokes it through a PowerShell tool call gets
+`bash is not found in the PATH`. **No children start.** The parent call returns, the orchestrator
+reads a completed command, and the lanes simply never exist — measured at one lane in ten on a
+ten-lane run, because tool selection varied between otherwise identical launches.
+
+**Do the spawn in Python, which resolves the same either way.** Do not depend on which tool a given
+call happened to route through, and do not treat a launch as successful because the launching
+command returned — **count the children.** A launcher that cannot say how many sessions it started
+is not reporting success, it is reporting that it finished.
 
 #### 🔒 Protecting the token — it's a live credential
 
@@ -485,7 +529,7 @@ The `setup-token` value is a **real, year-long credential to your Claude account
 - **Reference it indirectly — NEVER paste the literal token on a command line.** Always read it from the file at launch:
 
   ```
-  CLAUDE_CODE_OAUTH_TOKEN=$(cat .secrets/claude-code-oauth-token.txt) claude -p "<seed>" …
+  CLAUDE_CODE_OAUTH_TOKEN=$(cat .secrets/claude-code-oauth-token.txt | tr -d '[:space:]') claude -p "<seed>" …
   ```
 
   That way the token never lands in your **shell history**, the **process list** (`ps`), or any **log**. ⛔ NEVER `CLAUDE_CODE_OAUTH_TOKEN=eyJ… claude -p …` with the literal value — a literal on the command line gets captured by shell history and CI/CD logs, where it lives forever.
