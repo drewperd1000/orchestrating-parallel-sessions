@@ -1,6 +1,6 @@
 """A fact owned by a cornerstone may not be restated anywhere else. Enforced at commit.
 
-the human, 2026-08-17: *"We need a hook attached to this that forces any agent attempting to write a
+\1The human, 2026-08-17: *"We need a hook attached to this that forces any agent attempting to write a
 new doc that concerns this info to either edit it in the cornerstone, or justify why they need a
 new doc, and if they create a new doc, to document the new doc in the cornerstone. It must be
 forced at every step."*

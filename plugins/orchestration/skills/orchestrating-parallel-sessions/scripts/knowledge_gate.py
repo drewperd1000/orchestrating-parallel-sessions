@@ -384,6 +384,25 @@ def overlapping(rel, text, pool=None):
     if is_correspondence(text):
         return []
     named = " ".join(SUPERSEDES.findall(text) + DISTINCT.findall(text))
+    # ⛔ THE 4000 STAYS, AND IT IS A RULING RATHER THAN AN OVERSIGHT (o9, 2026-09-08). A peer
+    # fixed the same-looking truncation in route.py, found this alongside it, and correctly
+    # stopped rather than changing it unasked.
+    #
+    # ⭐ THE OTHER THREE READERS TRUNCATED A **DECLARATION**; THIS ONE TRUNCATES A **SIMILARITY
+    # POOL**, and that is a different kind of number. A declaration either exists or it does
+    # not, so where the line sits is an accident of the file growing and reading further only
+    # finds what was always there. This window instead decides HOW MUCH TEXT TWO DOCUMENTS ARE
+    # COMPARED ON - so widening it makes the duplicate guard progressively STRICTER, and would
+    # refuse documents today that it admitted yesterday, with nobody having decided that.
+    #
+    # ⚠️ AND IT CUTS BOTH WAYS, which is the part that makes leaving it defensible rather than
+    # merely cautious: truncation can also MANUFACTURE duplicates, when two docs share a long
+    # preamble and diverge past the cap. Moving the number in either direction trades one error
+    # for the other. That is a policy call for the human, on evidence nobody has gathered.
+    #
+    # Measured before ruling: at 4000 versus a whole-file read, 0 documents gain a declaration
+    # and 2 lose one - both non-declarations (a generator's string literal, a test fixture).
+    # So there is no live defect here to fix, only a parameter to leave alone.
     if pool is None:
         pool = []
         for p in list(ROOT.glob("*.md")) + list((ROOT / "docs").rglob("*.md")):
@@ -576,6 +595,36 @@ def check():
         print("          than they type your topic. Declaring them costs one line each and")
         print("          expands, at query time, to every alias anyone might type instead.")
         print()
+        # ⛔ THIS REFUSAL OMITTED THE ONE REMEDY THAT FITS AN AUDIT. `detect()` counts
+        # WORDS, so it cannot tell "this document is ABOUT X" from "this document says X is
+        # ABSENT" - and a gap analysis is built almost entirely of the second kind. One measured
+        # case: an audit naming a sibling application five times and an analytics vendor nine,
+        # every single mention a denial of the form "not here, by design" or "X is not
+        # referenced anywhere in this repository", was told to declare eight facets. Several of
+        # them would have been false, and a false facet is worse than a missing one because a
+        # searcher lands on the document that says the opposite of what they need.
+        #
+        # ⭐ `declined()` HAS EXISTED FOR EXACTLY THIS AND THIS MESSAGE NEVER NAMED IT. A guard
+        # whose printed remedy is the wrong one is the same defect as a guard whose printed
+        # remedy cannot be performed - `block_shared_tree_ops` has that recorded from 2026-08-18.
+        # The author was left choosing between a false facet and a bypass.
+        #
+        # ⚠️ NOT auto-suppressed by looking for negation words. This file already prefers
+        # structural signals to phrasing, and a decline carries a STATED REASON, which is
+        # strictly better information than a silent skip - a facet is judgement and belongs with
+        # the author, because a wrong facet routes with the map's authority.
+        print("          ⛔ IF THE DOC NAMES IT ONLY TO SAY IT IS ABSENT - an audit, a gap")
+        print("          analysis, a boundary statement - DO NOT DECLARE IT. Decline it with a")
+        print("          reason instead, and the check stops asking:")
+        # ⚠️ COLON AFTER THE FACET NAME, and the reason at least 12 characters - both required by
+        # `facets.NOT_FACET`. My first draft printed `not-facet: component pwa` without the colon
+        # and I ran it through `declined()` rather than trusting it: it returned an empty set.
+        # I nearly shipped an unperformable remedy INSIDE the fix for printing one.
+        print("              <!-- not-facet: %s: %s - names it only to record that it is absent -->"
+              % (facetgaps[0][1], facetgaps[0][2]))
+        print("          The reason is required and is the point: a stated refusal is worth more")
+        print("          than a silent skip, and more than a facet that is not true.")
+        print()
         print("          If this doc covers a path that NO LONGER EXISTS, say so too -")
         print("              <!-- retired: <the-path-that-was-removed> -->")
         print("          so a search for it lands here instead of returning a clean miss,")
@@ -639,6 +688,58 @@ def check():
         print()
         print("            Not applicable? A doc that opts out of routing says so:")
         print("              <!-- unindexed: <why> -->")
+        print()
+        # ⛔ RULED BY THE HUMAN 2026-09-08: "lanes may draft, only orchestrators may land."
+        #
+        # ⭐ HE ASKED FOR SOMETHING BETTER THAN THE CHECK THIS MESSAGE ENFORCES. His question was
+        # whether a headless lane could ping its orchestrator for clearance - "a second pair of
+        # eyes from a higher perspective on whether the new doc should be created at all". The
+        # ping cannot work: a `claude -p` lane runs to completion and exits, so there is no
+        # moment at which it is still alive to receive an answer. Placing the responsibility
+        # gets the same review with no round trip.
+        #
+        # ⚠️ AND IT COVERS A GAP NEITHER SPRAWL CHECK REACHES. `route.py` asks "does an artifact
+        # already cover these words"; `overlapping()` asks "does this share tags with one". Both
+        # ask whether a DUPLICATE exists. Neither asks whether this should be a doc AT ALL rather
+        # than a section of one - and a doc that belongs inside an existing artifact passes both
+        # cleanly while still being sprawl. That judgement needs cross-lane context a lane
+        # structurally does not have.
+        #
+        # ⛔ WORDED AS A RULE, NOT AS AN INSTRUCTION TO WHOEVER IS READING - and the human is the
+        # reason. The first version opened "IF YOU ARE A LANE, THIS DOC IS NOT YOURS TO LAND",
+        # printed to every session, and I priced the cost of that as "an orchestrator reads a
+        # paragraph that does not apply and skips it". He asked how certain we are that they
+        # skip it, when the whole point of this workstream is determinism.
+        #
+        # ⭐ HE IS RIGHT, AND THE COST WAS MISPRICED RATHER THAN SMALL. An instruction shown to
+        # someone it does not apply to is not neutral: an orchestrator reading "this doc is not
+        # yours to land" might decline to land a doc that IS theirs. That is the same shape as a
+        # false facet - wrong guidance carrying the tool's authority. Stating the RULE is true
+        # for both readers and misleads neither.
+        #
+        # ⚠️ IT CANNOT BE SHOWN ONLY TO LANES, AND THIS IS NOW MEASURED RATHER THAN ASSUMED. The
+        # desktop app saves one JSON file per session under
+        # `AppData/Roaming/Claude/claude-code-sessions/`, holding that session's title, which is
+        # how `orchdoc_stop_check.py` identifies orchestrators. Ran a headless `claude -p` and
+        # counted: 1354 files before, 1354 after. A headless lane gets NO file, so title-based
+        # detection would find nothing and conclude "not a lane" for exactly the sessions that
+        # are one.
+        #
+        # ⭐ THE DETERMINISTIC HALF IS NOT HERE AT ALL - it is in the lane seed, which the
+        # orchestrator writes and which therefore KNOWS the answer without inferring it. See the
+        # `orchestrating-parallel-sessions` skill. This message is the backstop for a lane whose
+        # seed did not say it.
+        print("            THE RULE (the human, 2026-09-08): lanes may DRAFT a new knowledge doc,")
+        print("            only orchestrators may LAND one. A lane that reaches this refusal")
+        print("            reports the draft to its orchestrator with why it believes the")
+        print("            subject is new - it does not use --no-verify and does not add")
+        print("            <!-- unindexed --> to get past it.")
+        print()
+        print("            Why an orchestrator: the router asks whether an artifact already")
+        print("            covers these WORDS, and the overlap check asks whether one shares")
+        print("            TAGS. Neither asks whether this should be a doc at all rather than a")
+        print("            section of one - and a doc that belongs inside an existing artifact")
+        print("            passes both cleanly while still being sprawl.")
 
     for p, why in tomb:
         print()
@@ -649,6 +750,7 @@ def check():
     return REFUSE
 
 
+#: failure-value: None   # what it returns when it CANNOT TELL - o8's rule, o9:F148
 def undurable(index_text):
     """Docs the INDEX names that exist on NO pushed branch - i.e. on one laptop only.
 

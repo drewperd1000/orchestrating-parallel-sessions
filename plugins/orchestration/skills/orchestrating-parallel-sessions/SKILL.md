@@ -2,6 +2,7 @@
 name: orchestrating-parallel-sessions
 description: Use to run a whole project - or a whole business - through orchestrator agents that fan work out to parallel Claude Code sessions, headless or hand-launched, keep them from colliding, tell workers to fan out their own agents when the work needs it, and collate what returns. Several orchestrators can each own a domain and COLLABORATE: comparing work, pinging each other for data and critique, and catching what the others missed. For research, planning, brainstorming, copywriting, data capture and analysis, applications, websites, integrations - any large project with layered, overlapping parts. Its core instrument is a linted decision doc holding open questions, pending decisions and live links where the human can find them, so nobody scrolls back through thousands of lines of chat or re-asks an answered question.
 ---
+<!-- route-tags: checkbox orchdoc settled strike -->
 
 # orchestrating-parallel-sessions
 
@@ -248,15 +249,329 @@ information weekly, they were one world.
 
 **Keeping them apart, mechanically:**
 
-- **Give each world its own id namespace.** Numeric ids (`o1`, `o2`, …) inside one host; a short
-  mnemonic prefix when hosts coexist on one machine (`wl1`, `hb1`) so a lane label is never
-  ambiguous about which world it belongs to. See *Naming sessions + mailboxes*.
+- ⛔ **Give each world its own BAND of numeric ids — RULED by the human, 2026-09-14.** One project
+  owns one band of 99, and the band is everything before the last two digits:
+
+  | project | band | ids |
+  |---|---|---|
+  | the first | `` (none) | `o1` – `o99` |
+  | the second | `1` | `o101` – `o199` |
+  | the tenth | `9` | `o901` – `o999` |
+  | the eleventh | `10` | `o1001` – `o1099` |
+
+  ⭐ **The id stays a bare `o<N>`, so no tool changes, and the number still says which world it
+  belongs to.** Each band keeps its own *"next free id"* counter in its own registry.
+
+  ⚠️ **THIS REPLACES THE MNEMONIC-PREFIX ADVICE THAT STOOD HERE** (*"a short mnemonic prefix
+  when hosts coexist on one machine (`wl1`, `hb1`)"*). That advice had never been exercised —
+  there has only ever been one host — and it would require changing **every** tool that parses
+  an id: the session-title matcher that binds a session to its doc, id allocation, mailbox
+  filenames, lane labels, the plate generator, the contacts table. **Each miss fails silently**:
+  a session that does not bind, a message that goes nowhere.
+
+  ✅ **Banding was measured before it was ruled**, across all 1,188 ids the scheme allocates for
+  12 projects — every one resolves through every real parser, and **zero of the 19
+  orchestrator-id regexes in the workspace has a 2-digit limit.**
+
+  ⛔ **Never zero-pad a band.** `o0101` and `o101` are int-equal, so any code keyed on
+  `int(id[1:])` treats them as one group while the strings differ.
+
+  ⚠️ Past the tenth project the band is not readable at a glance (`o110` is band 1 member 10;
+  `o1101` is band 11 member 01). The rule is unambiguous; the eye is not — use the registry's
+  generated contacts table.
 - **Separate registries and separate mailbox directories.** An id is only unique inside its
   registry, so two hosts sharing one file will collide the first time both allocate.
 - **Separate decision docs, always.** A doc is the human's view of one world; merging two is how
   it stops being readable.
 - **No cross-host mailboxes.** If a message genuinely needs to cross, it goes through the human
   — and that should be rare enough to notice, because if it is not, see the warning above.
+
+### ⛔ Starting a session that must NOT be folded into an existing world
+
+**RULED by the human, 2026-09-14.** He started a session deliberately meant to stay outside the
+orchestrator process, touched no orchestrator, checked in with nobody — and the Maestro adopted
+the work anyway.
+
+⭐ **THE TOOLING DID NOT DO IT, AND ASSUMING IT DID SENDS YOU TO FIX THE WRONG THING.** A session
+is bound to a decision doc **by its TITLE and nothing else** — `orchdoc_stop_check.py`'s
+`_bound_orchestrator()`. Measured over the desktop app's own session store: **1,234 sessions
+carry a title, exactly 10 parse to an orchestrator id, zero false positives.** A session not
+titled `o<N>` is never bound, and the Stop hook never asks it for anything.
+
+**What adopted the work is a sentence in a markdown file:** the Maestro's registry row grants it
+*"whatever has no other owner"*, read and applied by judgement. No scanner, no automation — which
+is why no setting could have prevented it, and why the remedy is also a doc rule.
+
+⛔ **THE CATCH-ALL HAS NO OPT-OUT. "Nobody owns this" and "the Maestro owns this" are the same
+state today** — the registry's status vocabulary is `active` / `dormant` / `retired` /
+`consolidated`, with no word meaning *deliberately unowned*. That is a known gap, not an oversight
+you should work around silently.
+
+**THE RULE — start it in a directory OUTSIDE the workspace root.**
+
+That is the only boundary that is **structural rather than declared**. One move sheds the project
+`CLAUDE.md`, the codesight orientation, the OrchDoc conventions, the router and the registry,
+with nothing to remember and nothing for another orchestrator to read differently.
+
+⛔ **Saying so in chat is NOT a substitute, and it is what was tried.** The next session cannot
+read that conversation. A boundary that lives only in an instruction is not a boundary.
+
+⚠️ **This is a rule for STARTING somewhere else. It does not cover work already inside the
+workspace that should be unowned** — nothing marks that today. If you need it, raise it with the
+human rather than inventing a status word.
+
+## ⛔ Guard the ARTIFACT, not the claim — it predicts which guards will hold
+
+o1, 2026-08-17, and it is the most useful line anyone has written about this system:
+
+> **A guard that fires on producing an ARTIFACT — a file, a commit, a doc, a deploy — is
+> mechanisable, because the artifact passes through a chokepoint. A guard that fires on
+> producing a CLAIM has no chokepoint, because assistant text goes straight to the human.**
+
+So stop trying to mechanise claim-guards. **Mechanise the artifact each claim would lead to.**
+A pre-commit gate catches a file; a PreToolUse hook catches a command; nothing catches a
+sentence, and no amount of rule-writing changes that.
+
+⛔ **Which means every rule phrased as "before you say X, check Y" is behavioural, not
+enforced** — including the router trigger in the project CLAUDE.md. It failed for the
+orchestrator who had it loaded in context, on the day they wrote a memory note about that exact
+failure shape. Treat those rules as pressure, and put the real guard on whatever the claim
+causes you to WRITE.
+
+⭐ **The residual class, stated because leaving it looking covered is worse:** an assertion of
+absence that leads to **no artifact at all**. o1 said "there is no DB backup process," took no
+action, and nothing could have caught it — the backup was a cron job, not a doc, so there was
+no chokepoint to sit at. The claim went straight to the human and only his memory caught it.
+That class is small, real, and **not closeable**.
+
+## ⛔ Disk is the durable channel. The message is only the notification.
+
+**Put it in a file. Send a pointer.** That is the rule; everything below is why, and what to do
+when something genuinely was not worth a file.
+
+o8's formulation, 2026-08-12, after **four** silent drops in both directions in a single day —
+and it is better than the two rules o1 and o9 each wrote before it, because those were both
+*"verify the send"* and this one is *"the send is never the artifact."* Verification is a
+**fallback**, not the safeguard.
+
+⭐ This is not a new discipline. It is the mailbox discipline this skill has always prescribed
+for orchestrator↔worker traffic, finally applied to the lane it never covered:
+orchestrator-to-orchestrator. A file append either happens or raises. A watcher reads the file,
+not a receipt. That design has never lost a message; the `send_message` shortcut lost four in a
+day.
+
+**For anything load-bearing:** write it to a file in the target's own working area
+(`working_corpus_o8/O1-BRIEF-<topic>-<date>.md`), send a short pointer to that path, then check
+the pointer landed. A dropped pointer costs a re-send. A dropped 4,500-word brief costs the
+hand-off, and you will not know it is gone.
+
+## ⛔ "Sent" is not "arrived" — verify a cross-session message landed
+
+`send_message` to a session that is mid-turn returns **"queued … it will be processed after the
+in-flight turn finishes _if that session stays healthy_."** That last clause is the whole problem:
+a queued message is **dropped** if the recipient compacts, is interrupted, or ends before it is
+processed. Nothing tells you. The send looks identical either way.
+
+⛔ **So silence from another orchestrator is NOT evidence they ignored you, and a successful send
+is NOT evidence they read it.** Measured 2026-08-12: o10 replied to o9 and the reply never
+arrived; o9's inbox showed zero messages while o10's transcript showed the send. Both sessions
+were behaving correctly.\1The human noticed before either of them did, which is the wrong order.
+
+**The check.** Read the recipient's own transcript — it is authoritative, where your inbox is not:
+
+```
+mcp__ccd_session_mgmt__search_session_transcripts   query: <a distinctive phrase from your message>
+mcp__ccd_session_mgmt__list_events                  session_id: <theirs>, limit: 4
+```
+
+⛔ **AND YOU MUST WAIT UNTIL THE TARGET IS NOT RUNNING BEFORE YOU BELIEVE IT.** A **queued**
+`<cross-session-message>` is *visible in `list_events` and not yet delivered* — it sits behind the
+in-flight turn and may never be folded in. So while `isRunning: true`, `list_events` is a
+**pending** indicator, not a delivery confirmation.
+
+o1 and o9 both made this exact mistake on 2026-08-12, within an hour of each other, *while
+writing this rule*: each confirmed the turn was present mid-flight and reported the hand-off
+done. o1's went on to vanish — o8 never received it, and two distinctive phrases from it now
+return nothing from o8's transcript, so the turn that was seen was real and then went away.
+**The rule failed in the way the rule exists to prevent, which is the strongest argument for
+not relying on it as the primary safeguard.**
+
+**The receipt wording tells you which case you are in, and they are not equivalent:**
+
+| receipt | what it means |
+|---|---|
+| `Message sent to session …` | **The confident one — and the one that has silently lied.** It accompanied both of o1's total drops. |
+| `Message queued …; processed after the in-flight turn finishes **if that session stays healthy**` | At least honest: it tells you it has *not* landed yet, and names the condition under which it never will. |
+
+Neither is proof. Treat the confident wording as the more dangerous of the two, because it reads
+as settled.
+
+If your text is in their transcript **and their turn has completed**, it arrived. If not,
+**re-send — do not assume they are thinking about it.**
+
+Run this whenever the message actually matters: a correction, a directive from the human, a
+hand-off, anything where them-not-acting is expensive. And **before concluding that another
+orchestrator dropped the ball, check whether they were ever told.**
+
+⭐ Control your own test first. If the search finds nothing, confirm the search works by querying
+a phrase you know exists in that session — an empty result from a broken query looks exactly like
+a message that never arrived.
+
+⛔ **A DROPPED MESSAGE HAS NO SIGNATURE.** o1, 2026-08-12, after a send that returned the plain
+success receipt — *"Message sent to session …"* — and was never delivered anywhere: the text
+appeared in no transcript, `list_events` across 44 messages spanning the window did not contain
+it, and the file it asked for went untouched. **In the same window, sends between two other
+orchestrators delivered fine**, so the channel was healthy; that one send vanished.
+
+The reason this is worth a rule rather than a caution: **a dropped message and a session that
+simply has not got to it yet look identical.** Receipt says sent, target is idle, nothing
+happened. o1 had `isRunning: false` and an activity timestamp that moved on send, and built a
+confident wrong story that fit both — then told the human twice that the brief was fine and waiting.
+He opened the session; there was nothing there. **The failure cannot be reasoned about, only
+checked.** (Same shape as the 401 banner in the project CLAUDE.md: a status line that reads as a
+fact about the world when it is only a fact about what one call returned.)
+
+### Put the payload on disk; send a pointer
+
+Detection is not enough on its own, because the cost is not symmetric. **A dropped pointer costs
+a re-send. A dropped 4,500-word brief costs the whole hand-off — and you will not know it is
+gone.** So for anything substantial:
+
+1. Write the brief to a file in the target's own working area
+   (e.g. `working_corpus_o8/O1-BRIEF-<topic>-<date>.md`).
+2. Send a short message pointing at that path.
+3. Read the target's transcript back to confirm the pointer landed.
+
+⭐ **This is the mailbox discipline the skill already prescribes, applied to the lane it did not
+cover.** Orchestrator↔worker traffic has always gone through mailbox FILES with a watcher, and
+that design is **immune to this failure** — a file append either happens or raises, and the
+watcher reads the file rather than a receipt. The exposure is entirely in the `send_message`
+shortcut orchestrators reach for when talking to **each other**, which the skill was never
+written for.
+
+**So: orchestrator-to-orchestrator messages get the same durability discipline as lane traffic.**
+A file, or a pointer to a file, plus a read-back check. Never a bare receipt for anything you
+would be unwilling to lose silently.
+
+## ⛔ The recipient is a DECISION. A broadcast cannot make it for you.
+
+Once orchestrators can message each other cheaply, the recipient field stops being a choice.
+**A thread has momentum:** whatever comes up next goes to the session you are already talking
+to, rather than to the session that owns it. When sending was expensive you thought about who
+you were writing to; at near-zero cost, "reply to the open thread" is the path of least
+resistance.
+
+⚠️ **The cost is second-order and it does not announce itself.** A message to the wrong owner
+does not bounce. It gets a thoughtful reply from someone with no authority over the thing, which
+reads as engagement and can look like consensus - while the real owner never learns the question
+was asked.
+
+**The mechanism that works: make the sender state, in the message, why THIS recipient.** One
+clause, printed at the top, before the argument. Not policed - *"asking as a courtesy, not your
+call"* is an honest answer. The point is that the recipient becomes a decision again.
+
+⭐ **Put the claim in front of the READER, not just the sender.** The mismatch is visible to the
+person receiving it long before it is visible to the person sending it - they can already see
+whether they own the surface. **As a reader: check that line first, and REDIRECT rather than
+answer.** A considered reply from the wrong owner is worse than no reply, because it
+manufactures apparent consensus.
+
+### ⛔ Broadcast is the hole in that, and it is worth naming separately
+
+A broadcast carries **one justification for every reader**, so it cannot vouch for relevance to
+any of them. A sender writes something generic - *"you all run this loop"* - and any finding
+tucked inside lands on people it does not concern, with a relevance claim nothing checked.
+
+**Broadcast is for something EVERY recipient must act on:** a tool change, a protocol change, a
+retraction of something you sent them all. ⛔ **A finding that belongs to one owner is not a
+broadcast.** Send it to that owner.
+
+### ⛔ And a decision that belongs to the HUMAN does not become an agent's by passing through one
+
+A finding often splits, and the halves have different owners: *the number in the tracking file*
+belongs to whoever maintains it; *whether the work is abandoned or parked* belongs to the human,
+and only to him. Handing the whole thing to an orchestrator converts his decision into their
+task. It reaches him eventually - after three hops, having lost the fact that it was his to
+make, and arriving as someone else's relay rather than as a question.
+
+**Split it before you send it. If a half is the human's call, that half goes to the human.**
+
+## ⛔ A doc reaches a FUTURE session. Only a message reaches a RUNNING one.
+
+**Writing it down is not distribution.** An orchestrator who records a decision in the shared
+registry, the standard, or their own decision doc has made it available to whoever opens that
+file next - which is nobody, until somebody does. Every session already running keeps operating
+on what it knew before you wrote it, indefinitely.
+
+⭐ **The two channels answer different questions and neither substitutes for the other:**
+
+| | reaches | fails by |
+|---|---|---|
+| **the doc** | whoever opens it later | nobody opens it |
+| **the message** | the sessions running now | the running sessions end |
+
+So a change that affects other groups needs **both**, and in that order: land it where it will
+outlive you, then send a pointer to every group it touches. Landing alone leaves live sessions
+acting on the old rule; messaging alone means the next session to start has never heard of it.
+
+**The tell that you are about to get this wrong:** you have just written something into a shared
+artifact and feel finished. Ask who is running right now that this changes, and whether anything
+will tell them.
+
+## ⛔ LANDED is not DELIVERED — one worktree each, but the human reads ONE checkout
+
+Giving each orchestrator its own worktree removes the collisions (see the worktree section
+below) and creates a gap that is invisible from inside any of them.
+
+**Each group lands to the canonical branch from its own tree. The human opens files - and every
+session invokes shared tooling - from ONE checkout. Nothing carries a landed file from the first
+place to the second.** A file can be correct on the branch and absent from the only place
+anybody actually uses it, indefinitely.
+
+⛔ **And every check reports green, because each group's checks run where that group's work
+already is.** Measured: one orchestrator's own gate PASSED in their worktree and FAILED in the
+shared checkout, naming a file that had landed hours earlier and never arrived. Four files were
+missing outright and thirty-three were stale, including the checklist that governs a whole
+category of work.
+
+**So run a delivery sweep, and never take a green check from your own tree as evidence about the
+human's copy.** The sweep is a few lines: list what the canonical ref holds, compare against the
+shared checkout, write what is missing.
+
+⚠️ **The hazard in writing it, and it is why this is not a bulk checkout.** A file in the shared
+tree that differs from the branch is one of two completely different things:
+
+- **superseded** — its content equals a version that was once ON the canonical branch, and the
+  branch has moved past it. Nobody is editing it; refresh it.
+- **in flight** — its content matches no landed version, so a person typed it. **Never touch it.**
+
+⛔ **Do NOT decide that by comparing against the shared tree's own HEAD.** That checkout usually
+sits on a stale branch, so any file refreshed once by hand - which is exactly what delivery does
+- matches neither HEAD nor the branch from then on, is classified as somebody's live work
+forever, and is never delivered again. The discriminator breaks the first time the tool is used,
+silently, while still printing a confident category.
+
+⛔ **And do NOT search every ref for the match.** Side branches and autosave snapshots contain
+work in progress, so searching them makes live work look superseded. One sweep matched a
+colleague's recovered feature - a commit literally titled *recover the feature, which existed
+only in autosave* - and would have overwritten it with the branch's older copy. **An autosave
+commit is evidence somebody is editing, not evidence they are done.** Match against the
+canonical ref only.
+
+## ⛔ A tool that distributes itself cannot be trusted to distribute its own repair
+
+A distribution tool with a defect that excludes some part of the corpus will exclude **itself**
+if it lives in that part - so the fixed version lands on the branch and the broken copy keeps
+running, keeps excluding, and keeps reporting that everything is current. Nothing in its own
+output can reveal this, because its output is exactly what the defect suppresses.
+
+**Break the loop from outside:** run the corrected copy from wherever you built it, once, by
+hand. After that the delivered copy is the corrected one and it can carry itself.
+
+Same shape for any self-applying mechanism - a linter that lints its own source, a sync that
+syncs its own config, a generator that generates its own index. **Ask what the broken version
+would print, and whether the fix can reach the place that runs it without the broken version's
+cooperation.**
 
 ## Roles
 
@@ -363,6 +678,76 @@ The human relaying each worker's reply to the orchestrator and the next order ba
 
 **Why a watcher, not model-polling:** a 5-minute "re-read the board" loop wakes the model to do nothing ~12x/hour per session and churns the prompt cache. Instead run a tiny script that stats the file every ~20s and EXITS the instant new mail appears - exiting re-invokes the session (cheap, ~20s latency, zero idle inference). A long heartbeat exit (default 2700s) re-arms the loop so a session proves itself alive.
 
+### ⛔ Which channel — and the reply path must move with the read path
+
+Two ways for sessions to reach each other, and they fail differently:
+
+| | wakes a stopped session | reaches an unattended session | fails by |
+|---|---|---|---|
+| **a direct messaging primitive** | yes, when it is working | **no** - and cannot deliver to one | silently, if the platform breaks it |
+| **an append-only mailbox + watcher** | only while the watcher is armed | **yes** | a watcher nobody re-armed |
+
+**Use the direct primitive when it demonstrably wakes a stopped session.** Verify that rather
+than assume it: send one and confirm the receiver acted. When it works, polling is redundant
+cost, and the mailbox becomes a durable RECORD rather than a channel anyone watches.
+
+**Keep the mailbox** for the case the primitive cannot serve at all - scheduled runs and other
+unattended sessions - and as the fallback when it breaks. Both happened inside one month.
+
+⛔ **THE SWITCH HAS ITS OWN FAILURE MODE, AND IT IS WORSE THAN THE BUG IT FIXES.** If you stop
+READING one channel but keep REPLYING on it, your answer lands in a place nobody is polling -
+**and the send reports success.** Move both halves together, in the same turn, or you have built
+the silent-drop you just escaped.
+
+⚠️ **A platform primitive's behaviour is a MOMENT, not a property.** One was silently dropping
+mail; a session-lookup call stopped refusing on your own id and started returning metadata, which
+turned a documented verification step into one that could not pass. **Both moved in the
+reassuring direction**, which is where nobody looks. Re-verify a channel before relying on it,
+and again after anyone reports it changed.
+
+### ⛔ The re-arm is UNCONDITIONAL. The reading is not.
+
+A watcher exits, the session is re-invoked, and it must arm a new watcher or the loop is over -
+silently, with mail piling up and every sender believing it arrived. Two holes were found in
+this loop in one day, both in the direction where a session goes quiet while looking fine:
+
+**Phrase the loop as re-arming, with mail handling attached when there happens to be mail:**
+
+```
+ANY watcher exit
+  mail?  yes -> read it   (reading is also what ACKS it)
+         no  -> nothing to do here
+  RE-ARM. ALWAYS. It does not depend on the step above.
+  only now: act on the mail, and reply
+```
+
+⭐ **A heartbeat exit carries no mail**, so a loop written as *"on mail: read, re-arm, act"*
+reads as inapplicable and the re-arm goes with it. That fires on a QUIET bus, guaranteed - and a
+quiet session is exactly the one nobody notices has gone dark.
+
+⛔ **A watcher completing mid-work is an INTERRUPT to service, not information to note.** The
+notification arrives looking like a status update while you are busy, so the natural move is to
+note it and carry on - which ends the loop. Read, re-arm, then resume.
+
+⚠️ **Do not "improve" this by re-arming BEFORE the read.** Tempting, since nothing could then
+fail ahead of it. But the mail is still unacked at that point, so the new watcher sees unread
+immediately and exits again - an instant re-fire loop. Reading is what acks. Read first when
+there is mail; re-arm regardless.
+
+**Make the silence visible.** Have the watcher stamp a heartbeat file each poll, and a status
+view report liveness from it rather than inferring. Two properties matter: a fresh beat is
+DEFINITIVE (that watcher polled just now), and a missing beat is WEAK (a watcher started before
+the heartbeat existed stamps nothing and reads identically to none). ⛔ **So a status view must
+say which of its readings is proof and which is a reason to ask** - and nothing may refuse on
+the weak one. Acting on a missing beat by re-arming a session that is already listening leaves
+two watchers racing to ack the same message.
+
+⭐ **One place the tool CAN catch a dead loop by itself:** sending runs inside the sender's own
+session, so at that instant the sender is provably alive. If their beat is cold there, they are
+working while their loop is dead - warn, in the send output. It turns "check your own row" from
+something to remember into something you are told while already looking. It does not catch a
+session that goes cold and then sends nothing; that stays with the status view and the human.
+
 **One mailbox per lane** (`mailboxes/lane1.md` ...). Both sides append blocks; nobody edits earlier blocks:
 
 ```
@@ -468,6 +853,67 @@ run in the background. This **frees the orchestrator's inference the instant it 
 - ⛔ **Do NOT pass `--bare`.** Bare mode does **not** read `CLAUDE_CODE_OAUTH_TOKEN` — it falls back to the disk creds and 401s again. Launch headless WITHOUT `--bare`.
 - ⛔ **Do NOT use `ANTHROPIC_API_KEY`.** That's the **metered** API path (auth-chain position 3), billed pay-as-you-go and **NOT Max-covered** — the opposite of what you want. `CLAUDE_CODE_OAUTH_TOKEN` (position 5) is the Max-covered path; use it, not the API key.
 - The disk token can't be refreshed non-destructively (interactive `/login` only) — so don't try to "refresh the disk token before launching." The long-lived `setup-token` value IS the durable fix; read it from the secrets file each launch.
+
+#### ⛔ A LANE IS A LEAF BY DEFAULT - spawn capability is granted, never assumed
+
+**the human ruled this 2026-09-15** (o9:W25). Nothing about recursive lanes is removed; what changed
+is that fanning out is now something somebody said out loud.
+
+```
+# a normal lane - it cannot spawn children, and does not need to
+env ORCHDOC_LANE=o<N>L<m> CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" claude -p "<seed>" ...
+
+# a lane that WILL fan out - one extra variable
+env ORCHDOC_LANE=o<N>L<m> ORCHDOC_LANE_MAY_SPAWN=1 CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" \
+    claude -p "<seed>" ...
+```
+
+`lane_spawn.py` refuses with **exit 3** when the grant is absent, before allocating an id or
+starting anything. **The grant is not inherited** - a lane passes it on explicitly with
+`--may-spawn`, so a three-deep tree states it at each hop rather than once at the top.
+
+⭐ **WHAT A LANE DOES WHEN IT NEEDS TO FAN OUT AND CANNOT - the human's procedure, and it is the
+same shape he ruled for the ingress-taint hook:**
+
+1. **Finish everything that does not need a sublane.** A refused spawn is not a dead lane.
+2. **Report to the orchestrator that spawned you**, with the REASON you need to fan out and the
+   **exact seed** you need run. Reasoning, not just a request - the orchestrator is deciding
+   whether the work genuinely needs a tree.
+3. **Stop.** The orchestrator launches a fresh lane for the same purpose, this time with the
+   grant.
+
+⛔ **WHY THE CREDENTIAL IS NOT THE THING BEING WITHHELD, because the obvious reading is wrong
+and I measured it:**
+
+```
+env -u CLAUDE_CODE_OAUTH_TOKEN claude -p "Reply with exactly: OK" --model haiku
+  -> Failed to authenticate: OAuth session expired and could not be refreshed
+```
+
+**The token is what lets a lane RUN AT ALL.** Withhold it from a leaf and there is no leaf. Spawn
+capability actually comes from **read access to the token file on disk**, which every lane
+holding `Bash` has - so the grant is carried by an env var instead.
+
+⚠️ **AND THIS IS A GUARD, NOT A BOUNDARY. Say so rather than relying on it.** A lane
+with `Bash` can read the token off disk and call `claude -p` itself, ignoring `lane_spawn.py`
+entirely. It closes the **accidental** case - a confused lane fanning out when nobody meant it
+to, which is the likeliest damage - and makes the deliberate case attributable. The real fence is
+the sandbox, which is a separate and larger job.
+
+#### 📋 Every lane launch is logged - `.shared/state/lane-launches.jsonl`
+
+One JSON row per launch: timestamp, parent, child, pid, model, `allowed_tools`,
+`permission_mode`, `may_spawn`, `token_injected`, `token_sha8`, `seed_sha8`, `seed_len`.
+
+⛔ **The log NEVER contains the token or the seed text.** `token_sha8` is the first 8 hex of
+the credential's SHA-256 - enough to say *"these launches used the token that was on disk in
+September"*, useless to anyone who steals the log. The seed is hashed the same way because a seed
+can quote untrusted material.
+
+⭐ **`token_injected` is recorded SEPARATELY from `token_sha8`** rather than inferred from
+it, because an empty fingerprint would otherwise mean both *"no credential was used"* and *"the
+token file was unreadable"*. And a launch that could not be logged prints a WARNING naming itself
+as unlogged - an empty log must never read as "no lanes launched".
 
 #### ⛔ Two traps that BOTH report as something else — measured, not theorised
 
@@ -648,6 +1094,25 @@ had already passed the author's own tests:
   it. The tooling enforces this (`$ORCHDOC_ME`, and `--not-mine` for an agreed edit), because
   the author of that rule broke it inside an hour of writing it down.
 
+## ⛔ Who owns what — the SESSIONS versus the SKILL
+
+Two different jobs, and conflating them is how a tool ends up with three drifted copies while
+everyone assumes someone else is maintaining it.
+
+| | owner | scope |
+|---|---|---|
+| creating new orchestrator **sessions** | **the Maestro** | claiming an id, scaffolding the doc, writing the bootstrap prompt, deciding the group should exist at all |
+| the **SKILL** itself | **the process orchestrator** | this document, the scripts, the checks, the repos, the published copies, the docs |
+
+⭐ **The split is not organisational tidiness — it is about who has the EVIDENCE.** The Maestro
+sees whether a surface already has an owner and whether a group is worth spawning; that judgement
+cannot be scripted. The process owner sees every defect report from every orchestrator, which is
+what a rule has to be built from. Neither can do the other's half well.
+
+⚠️ **A defect in the tooling goes to the process owner, not around it.** Absorbing one and
+working around it locally is how a fix stays in one session's head - and it is how two guards end
+up pointed at each other, which has already happened twice.
+
 ## The Orchestrator Decision Doc — the OrchDoc (one per orchestrator)
 
 > 🔗 **Companion skill: `orchdoc-audit`** (`/orchestration:orchdoc-audit`). Invoke it to run a
@@ -732,6 +1197,53 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   - **Stale status logs** → sink to the BOTTOM (historical, newest-first), superseded by the sections above.
   - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
   - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
+
+- **⛔ `T<n>` IS THE HUMAN'S NAMESPACE. Your own work is `W<n>` in §3.** (the human, 2026-08-11.)
+
+  | prefix | means | lives in |
+  |---|---|---|
+  | `D<n>` | a **decision** needing the human's ruling | §2.1 |
+  | `Q<n>` | a **question** needing an answer, not a ruling | §2.2 |
+  | `T<n>` | a to-do **for the human** | §2.3 |
+  | `W<n>` | **your** work, in flight | §3 |
+  | `F<n>` | a **finding** - a measured fact, a permanent record | §4 |
+  | `A<n>` | an **agreement** - a standing commitment the group will not break | §5 |
+  | `G<n>` | a **guard** - a refusal, phrased *"o8 will not ..."* | §5 |
+  | `S<n>` | a **standing practice** the group holds itself to | §5 |
+  | `DA<n>` | ⛔ **CLOSED.** o8's original decision series, superseded by `D` on 2026-09-04. Never file a new one; it is listed so tools and readers can still resolve the 23 that exist | §2.1 |
+
+  ⛔ **`G` IS "GUARD", NOT "GUARANTEE", AND `DA` IS NOT "DECISION-AUDIO" - both corrected
+  2026-09-14 after o8 caught them.** Both wrong the same way: a meaning inferred from the LETTER
+  instead of read off the entries. "DA" plausibly expands to "Decision-Audio" for a doc about
+  audio scripts, which is exactly why it survived review - but `DA3` is an authoring-model
+  bake-off and `DA5` is TAGR product integration, and the date split is clean with zero overlap
+  (DA1-DA23 opened 2026-07-28 to 2026-08-17; D3 onward from 2026-09-04). All 16 `G` entries
+  across o5 and o8 sit in `§5 GUARDS` and every one is phrased as a refusal.
+  ⭐ **A plausible expansion of an abbreviation is not evidence of what it abbreviates.**
+
+  ⛔ **DO NOT INVENT A TENTH PREFIX, AND THIS IS NOT A STYLE PREFERENCE.** Every reader that
+  parses ids - guards, checks, the plate generator - has to know the whole set, and one it has not
+  seen is **invisible rather than wrong**: a non-match looks exactly like an absence, so the tool
+  reports clean.
+
+  ⭐ **MEASURED, 2026-09-14, after this bit twice in one day.** o8 had coined `DA<n>` (23 entries)
+  and o5 `G<n>` (16). **Five** separate guards each carried their own hard-coded
+  `[DFWSTQA]\d+` - and they did not agree with each other, one spelling it `[DFWSTAQ]`. None could
+  match `DA10` or `G1`, so in o8's doc an override that **correctly** named `DA10` was refused, and
+  a reply **correctly** anchored to one was blocked. A guard that punishes correct behaviour is
+  worse than no guard.
+
+  ✅ **The machine-readable source is `.shared/scripts/orchdoc_ids.py`** - import `find_ids()`
+  from it rather than writing a pattern. Exposing only a regex makes its capture-group shape part
+  of the contract, which broke every caller the first time the shared version landed.
+
+  ⚠️ **Genuinely need a new prefix?** Add it there first, in one edit, and say what it means. A
+  prefix that exists in a doc and not in that file is one no tool can see.
+
+  ⭐ **Not a tidiness rule.** A prefix is what he SAYS OUT LOUD — *"where's T3?"* — so if `T`
+  means his to-do in one section and an orchestrator's own work in another, **the shorthand he
+  uses to point at things stops resolving.** The cost lands on the person the doc exists for.
+  `E-WRONGSECTION` blocks it; `scaffold` emits `W<n>` for §3.
 
 - **⛔ THE ENTRY FORM — four rules, all enforced, none of them a matter of taste.** These exist
   because the human was re-reading items that were finished and decided, hunting for what was
@@ -965,6 +1477,206 @@ surface the brief question in the chat - it lets me know they are there. I just 
 to record them and then tell me where to find them."*
 
 
+## ⛔ Not one was caught by care. Every one was caught by a measurement.
+
+**On 2026-08-18 four orchestrators produced six wrong claims in one day. Every one of them was
+holding the relevant rule at the time. Not a single one was caught by an agent being careful.**
+
+| the claim | caught by |
+|---|---|
+| "the fix is not on main" | comparing a byte count to a file that was plainly larger |
+| "nothing is unrecoverable, only stale copies" | diffing blobs instead of counting paths |
+| "the marker is seven days stale" | comparing the marker's session id to the reader's own |
+| "so a new session started recently" | the same comparison, one turn later |
+| "all four owners are clear, safe to drop" | checking 1,323 blobs against every permanent ref |
+| "the durability check reports the tree" | asserting an OUTCOME on one known file |
+
+⭐ **Four of those six were CORRECT MEASUREMENTS with over-wide sentences.** The number was right
+and the claim built on it was wider than the number supported. That distinction decides what a
+mandate can achieve, so build to it rather than around it.
+
+### ⛔ How a wrong claim gets delivered: attached to a true one
+
+> **"'and also X' riding along on a correct finding gets the finding's credibility for free."**
+> - an orchestrator, 2026-08-18, correcting the session that had just found a real problem in
+>   their repo
+
+**The wrong half is almost never alone.** It is stapled to something true, arrives in the same
+sentence, and inherits the trust the true half earned. That is why these survive review: the
+reader is already nodding.
+
+Worked example, from the day this section describes. One orchestrator reported to another:
+
+    "external_provider-OAUTH-DECISIONS-AWAITING-THE HUMAN.md exists on no permanent ref"     <- TRUE, and urgent
+    "also .claude/launch.json, which carries your o7L113 entry"            <- WRONG, both halves
+
+The first was measured and mattered - a security decision doc, three days from silent deletion.
+The second came from a DIFFERENT object measured hours earlier (a stash's copy of that file) and
+was welded into the same sentence. **Two correct measurements of two different things, fused into
+one false claim**, delivered inside a report the recipient had every reason to trust.
+
+⭐ **THE HABIT THAT CATCHES IT, and it is cheap: check the ride-along separately, or drop it.**
+The recipient did exactly that - measured the blob before acting, found it byte-identical to
+main, and did not commit. Committing a file identical to main is a no-op that looks like a save,
+so the ride-along would have produced a fake fix on top of a wrong claim.
+
+⛔ **And when you are the AUTHOR: a finding and an aside are not the same claim and must not
+share a sentence.** If the aside were alone, would you have measured it before sending? If not,
+it has not earned the space, and attaching it to real work is how it gets through.
+
+### ⛔ Two measurements agreeing is not corroboration if they share a defect
+
+An orchestrator swept ten documents against a branch and reported nine stale. The comparison was
+`md5sum <file>` against `git show <ref>:<file> | md5sum` - **CRLF on disk against LF from the
+pipe.** It could not return CURRENT for any tracked file containing a newline, whatever the
+content. The proof was one extra byte per line, in every file, exactly:
+
+    o1  delta=1466  lines=1466        o7  delta=2681  lines=2681
+    o8  delta=2229  lines=2229        o10 delta=1611  lines=1611
+
+⭐ **AND THE ONE THAT PASSED WAS THE TELL, READ BACKWARDS.** A single file came back CURRENT -
+because it was modified in place by a Python tool, so LF on disk, so it matched the LF pipe. The
+author read *"only that one is current"* as *"that one has a working sync"*. It meant *"that one
+was not checked out by git"*. **The single data point treated as the control was the one anomaly
+in the set.**
+
+⛔ **THEN, WHILE CORRECTING IT, A SECOND WRONG READING THAT AGREED WITH THE FIRST.** Testing the
+CRLF theory with `git show <ref>:<f> | grep -c $'\r'` returned a count equal to the line count,
+which suggested the stored blobs were CRLF and would have exonerated the original command.
+`cmp -l` contradicted it directly.
+
+⭐ **Three readings of one axis inside an hour, two of them wrong - and the two wrong ones
+agreed with each other, which is precisely why neither caught the other.** A confirming second
+measurement feels like proof and is worth nothing when it crosses the same broken boundary.
+
+**So when a result is confirmed, ask what the two measurements SHARE** - the same filter, the
+same shell, the same assumption about encoding - before treating agreement as evidence.
+
+### ⛔ A uniform result is more likely to be the instrument than the world
+
+*"Everything is broken except one"* is the signature of a broken test, not a broken system. Real
+defects are patchy; instruments fail uniformly.
+
+**So explain the exception FIRST.** In the sweep above, understanding why one file passed would
+have revealed the encoding bug immediately - the exception was not noise around a finding, it
+was the finding.
+
+⭐ Two corollaries worth carrying:
+
+- **Ask the tool, never hand-roll a comparison across a filter boundary.** `git diff <ref> --
+  <path>`, or `git hash-object` against `git rev-parse <ref>:<path>` - both apply the same
+  filters to both sides. A shell pipeline does not.
+- **A true number attached to the wrong axis will happily agree with a broken test.** The same
+  sweep also reported the checkout 35 commits behind - true, and irrelevant to those files,
+  because the tool that writes them lands the working-tree copy from that same checkout. Two
+  things pointing the same way, neither measuring the thing.
+
+### What a skill can actually mandate
+
+**A check that REFUSES is obeyed. A check that REPORTS is ignored.** This is measured, not
+asserted: one workspace's `block_python_heredoc` hook stopped two orchestrators seven times in a
+day with immediate compliance, while an advisory check detected its own defect fourteen times per
+run for weeks and was ignored. Same detection, opposite outcome.
+
+**So: any rule an orchestrator wants future sessions to follow must end in something that
+refuses at a chokepoint, or it will not hold.** The rule may be correct, written down, indexed,
+and cited in the session's own memory - four of the six above were exactly that, and three were
+broken by the session that had just written them.
+
+Reachable chokepoints, in the order they are worth building:
+
+1. **PreToolUse hooks** - they arrive INSTEAD of the tool result. The only mechanism in this
+   environment with demonstrated compliance.
+2. **Pre-commit / commit-msg gates** - they refuse the artifact rather than the intent.
+3. **Selftests that assert an OUTCOME** - see the warning below.
+4. **Generated views** - a hand-kept index drifts; a computed one cannot.
+
+⛔ **A selftest must assert what the code PRODUCED, not that it ran.** The durability checker
+above passed its own tests while silently skipping every modified file, because the tests
+confirmed it executed. One test that dirtied a known file and demanded a specific verdict found
+it in a minute.
+
+### The class no mechanism reaches, and what to do instead
+
+⛔ **No check knows which axis you meant to read a number on.** "The marker says 2026-08-11" is
+true; "so the human has not seen a banner" is a different claim, and nothing in the file distinguishes
+them. Four of the six failures live here, and a citation requirement catches none of them - every
+one had its receipt.
+
+⭐ **What caught all four was a SECOND PARTY MEASURING THE SAME THING DIFFERENTLY.** So the
+practice to mandate is on the RECEIVING side, and it is cheap:
+
+> **A claim that will change your behaviour gets re-measured by you before you act on it -
+> especially one you are about to write into a prompt, a seed, or an instruction someone else
+> will follow.**
+
+One orchestrator stated the reason better than a rule could: *"I checked rather than repeating it
+because it is now an instruction someone else will act on."* An inherited fact repeated into N
+worker prompts is N copies of an unverified claim, and none of them carry their own provenance.
+
+**And make the second measurement cheap, or it will not happen.** Every re-check that worked that
+day took one command against a known input. If verifying a claim in your workspace is expensive,
+that is the thing to fix - not the diligence of the people skipping it.
+
+## ⛔ One WORKTREE per orchestrator — a shared tree makes every git command a cross-session action
+
+**Give each orchestrator its own working directory.** Not its own branch — its own *tree*.
+
+**Why a branch is not enough:** a branch does not isolate files on disk. With one checkout,
+every session sees every other session's uncommitted files, so `git add -A`, `git stash`,
+`git clean -fd` and `git reset --hard` all operate on other people's work while reading as
+ordinary local commands.
+
+**Measured in one workspace on 2026-08-17, all from that single fact:**
+
+| what happened | cost |
+|---|---|
+| one `git stash -u` during a rebase | 64 files, +2161/−1148, across three sessions; the pop did not restore them |
+| `git add -A` | 24 unrelated docs swept into one commit; gates refused it for defects in files the author never opened |
+| everyone committing to whichever branch the checkout was on | 26 commits from three orchestrators piled onto one lane branch, unmerged, for a day |
+| — | *"is this change mine?"* had no answer |
+
+**Setup — one directory and branch per orchestrator, each cut from `origin/main`:**
+
+```
+git worktree add -b o<N>/work ../<workspace>-worktrees/o<N> origin/main
+```
+
+⛔ **Cut from `origin/main`, never from whatever the shared checkout is currently on.** In the
+incident above the workspace sat on another orchestrator's lane branch for a day; inheriting it
+is exactly how those 26 commits landed somewhere nobody merges.
+
+### ⚠️ What worktrees do NOT fix — say this out loud or the next incident is identical
+
+**`git stash` is repo-global.** A stash created in any worktree is visible from all of them and
+captures the whole tree. Worktrees would not have prevented the incident that motivated them.
+
+**So pair the worktrees with a guard.** A `PreToolUse` hook is the mechanism, because
+**git aliases cannot shadow built-in commands** — `git stash` is unreachable from git config.
+Refuse, with the reason and the alternative in the refusal text:
+
+| refused | because | instead |
+|---|---|---|
+| `git stash` | repo-global; takes the whole tree | name your paths and commit them |
+| `git add -A` / `commit -a` | stages everyone's work | `git add path/one path/two` |
+| `git clean -fd` | deletes others' untracked files, no undo | delete the files you made, by name |
+| `git reset --hard` | discards others' uncommitted work | `git restore <path>`, or do it in *your* worktree |
+
+Give it an escape marker (`# shared-tree-ok`) so a genuine need is possible and stays in the
+shell history as a claim the author checked.
+
+### ⭐ The general lesson — a hazard note belongs INSIDE the guard, not behind a pointer
+
+That workspace already had a memory note documenting the repo-global stash hazard. It was
+correct, it was indexed, and the orchestrator did it anyway. **Forcing an agent to READ a doc is
+still prose — it can believe it has read enough.** So the fix is not a link to the note:
+**put the note's load-bearing sentence in the refusal text.** The note becomes the error message,
+delivered at the only moment it matters.
+
+Generalise it: **every memory note that documents a hazard should have its operative sentence
+living inside whatever guard fires on that hazard.** A pointer requires someone to follow it
+precisely when they are certain they do not need to.
+
 ## Keep the workspace git-clean (an orchestrator chore)
 
 Parallel sessions spray ephemeral scratch into the workspace root — git worktrees (`.wt-*`), per-lane mailbox files, throwaway scripts, generated artifacts. Left alone the root repo's uncommitted diff balloons (e.g. `+24,000` of mostly-stale noise) until the number means nothing and nobody trusts it. **The orchestrator periodically runs a workspace git-hygiene cleanup** to keep that diff grounded.
@@ -1023,6 +1735,19 @@ There are two tiers of memory, and **putting a note in the wrong tier is the #1 
 
 ## Worker-prompt template
 
+⛔ **THE SEED IS WHERE A LANE LEARNS WHAT IT IS, AND THAT IS WHY IT IS DETERMINISTIC.** the human,
+2026-09-08: *"Wouldn't it be possible to build it deterministically into the creation of the
+headless? Eg, 'you are session o15L45. You must do this and this for documentation...'"*
+
+⭐ **The orchestrator KNOWS it is launching a lane - it is writing the seed - so nothing has to be
+inferred at run time.** Measured the same day: a headless `claude -p` session writes NO file to
+the desktop app's session store (1354 before, 1354 after), so a tool trying to detect "am I a
+lane?" from the session title finds nothing and concludes "not a lane" for exactly the sessions
+that are one. **A guard downstream can only guess; the seed can simply say.**
+
+The same mechanism o1 measured that day for titles: a session told its own name in the prompt
+set it. Tell a lane what it is and it acts accordingly.
+
 Paste one per worker session - ONCE (MANUAL mode). In **HYBRID** mode the orchestrator feeds this same prompt to `claude -p` instead of the human pasting it — drop the *Title this session* line (`-n`/the seed handles naming) and the *LOOP* line (a headless worker is one-shot: do the task, post the result, exit; don't re-arm a watcher). Fill every field:
 
 ```
@@ -1031,6 +1756,10 @@ Title this session: o<N>L<m>: <short subject>   (set on creation, or /rename - i
 Repo + clone path.
 You OWN: <these files/dirs only>.
 Do NOT touch: <files other lanes own>.
+You are a LANE, not an orchestrator. You may DRAFT a new knowledge doc; you may NOT land one.
+  If you write one, leave it uncommitted and report it with why you believe the subject is new -
+  your orchestrator runs the router and decides. Never `--no-verify` and never add
+  `<!-- unindexed -->` to get a doc past the knowledge gate.
 Branch: git fetch, then cut <branch> off latest main.
 Task: <the specific deliverable>.
 Verify: <how to prove it works - tests / build / the exact check>.

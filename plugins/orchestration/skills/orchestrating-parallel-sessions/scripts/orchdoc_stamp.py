@@ -131,7 +131,19 @@ def main():
         # is what makes the stamp checkable against a commit's own time later.
         off = now.utcoffset()
         hrs = int(off.total_seconds() // 3600) if off else 0
-        print("- ~~%s~~ - DONE %s @ %s (UTC%+d)"
+        # ⛔ A CHECKED CHECKBOX, NOT TILDES. This used to emit `- ~~text~~`, and it is the
+        # worst possible place for the wrong form to live: the generator whose entire job is to
+        # make compliance the path of least effort was producing non-compliant output.
+        #
+        # the human's rule is three marks - green checkbox, struck through, GREYED OUT. Tildes give
+        # exactly one of them. `- [x]` renders all three natively, which is why he said it is
+        # "most easily accomplished with checkbox markdown format".
+        #
+        # ⭐ AND THE GENERATOR WAS FIGHTING THE FIXER. `orchdoc.py strike` STRIPS redundant
+        # tildes when it normalises a line, so this command wrote something the other command
+        # immediately undid. Two tools in one workspace disagreeing about the canonical form is
+        # how a form rule stops being one.
+        print("- [x] %s - DONE %s @ %s (UTC%+d)"
               % (a.done.strip(), now.strftime("%d-%b-%Y"), now.strftime("%H:%M"), hrs))
         return 0
 

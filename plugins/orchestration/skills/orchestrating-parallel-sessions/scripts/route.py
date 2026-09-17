@@ -65,8 +65,31 @@ artifact that appears and is NEWER than the receipt is normal growth and means n
 artifact that appears and is OLDER than the receipt was already sitting there when the miss
 was declared - so the miss was wrong when it was made, and the doc it authorised is a
 duplicate. That is the only condition this fails on.
+
+⛔ AND A VERIFIED MISS CAN BE MANUFACTURED BY THIS FILE'S OWN INDEXING - fixed 2026-09-03.
+A doc's `<!-- route-tags: ... -->` line used to be read out of the same truncated string used
+for prose ranking. So when a doc's frontmatter grew past its store's cap, the tag line fell
+outside the read and EVERY tag on that document stopped matching - silently, with no error,
+the doc simply becoming unroutable. Queries then returned VERIFIED MISS, the strongest
+negative this tool has, produced by an indexing artifact rather than by absence.
+
+Measured on `fine-tunable-models-research-2026-08-12.md`: adding a section moved its tag line
+from char 3,861 to char 7,206, and `kimi`, `alibaba`, `qwen`, `moonshot`, `SG7` and
+`corpus-in-context` all went dead in one commit.
+
+⭐ THE CAP NOW BOUNDS PROSE ONLY (`PROSE_CAP`). A declaration is a fixed regex hunt, not a
+ranking cost - reading all 503 artifacts whole is 0.16 s - so `declared_tags` reads the tag
+line over the WHOLE file and no amount of growth can hide it again.
+
+    route.py <terms>      ask
+    route.py enrich       add terms to an artifact, placing the line in its frontmatter
+    route.py fixtures     replay every recorded query->artifact promise
+    route.py receipts     re-test every stored VERIFIED MISS against today's corpus
+    route.py markers      are the markers that STILL have a window inside it?
+    route.py stores       what is covered, and what is deliberately not
 """
 import argparse
+import ast
 import os
 import datetime as dt
 import json
@@ -162,6 +185,8 @@ STOP = {"the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "how", "do
         "is", "it", "my", "we", "what", "where", "with", "use", "using", "does", "can"}
 
 from mentions import ROUTE_TAGS as TAG_RE  # noqa: E402 - ONE definition
+from mentions import declaration_region as mentions_declaration_region  # noqa: E402
+from mentions import outside_fences as mentions_outside_fences  # noqa: E402
 # ⛔ IMPORTED, NOT RETYPED. A marker format is a contract between every tool that reads it, and
 # this file, knowledge_gate.py and knowledge_pages.py all read the same one. Three copies of the
 # pattern is three chances to drift - and the drift would be silent, because a doc whose
@@ -339,11 +364,91 @@ def tokenize(terms):
     return toks, dropped
 
 
-def _read(p, n=6000):
+# ⛔ A CAP ON THE PROSE, NEVER ON THE DECLARATION - and for a year it was both, silently.
+#
+# `harvest()` used to pull a file's route-tags line out of the SAME truncated string it used for
+# prose ranking. So a doc whose frontmatter grew past its store's cap stopped matching on every
+# tag it carried, with no error and no warning - it simply became unroutable, and the router
+# then answered questions about it with VERIFIED MISS: its strongest possible negative, the one
+# the workspace treats as a licence to create a new doc.
+#
+# ⭐ MEASURED 2026-09-03 on `fine-tunable-models-research-2026-08-12.md`. Adding a section moved
+# its tag line from char 3,861 to char 7,206. Queries for `kimi`, `alibaba`, `qwen`, `moonshot`
+# went to VERIFIED MISS - and so did `SG7` and `corpus-in-context`, tags that had been working
+# for three weeks. Nothing about those subjects had changed. The doc had simply grown.
+#
+# ⭐ THE TWO JOBS HAVE DIFFERENT COSTS, WHICH IS WHY ONE CAP COULD NEVER SERVE BOTH:
+#   - RANKING prose is proportional to the text scanned, and aboutness lives at the top, so a
+#     cap is right and this dict is it.
+#   - FINDING a declaration is a fixed regex hunt. Measured: reading all 503 artifacts whole is
+#     7.7 MB and 0.16 s. There was never anything to save by capping it.
+#
+# So the cap stays for prose and is GONE for the tag line. Raising a number here cannot bring
+# the defect back, and lowering one cannot hide a tag.
+PROSE_CAP = {"memory": 6000, "script": 3000, "doc": 3000, "repo": 3000, "skill": 2500}
+# What an unknown store gets. Named so the drift check and `_read` cannot disagree about it.
+DEFAULT_CAP = 6000
+
+
+def _read(p, n=None):
+    """The artifact's text. `n` caps it FOR PROSE RANKING; None returns the whole file.
+
+    ⛔ Never pass a cap when what you are about to look for is a declaration. See PROSE_CAP.
+    """
     try:
-        return p.read_text(encoding="utf-8", errors="replace")[:n]
+        t = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+    return t if n is None else t[:n]
+
+
+def _declaration_region(text, path=None):
+    """The part of an artifact where a marker counts as ITS OWN declaration.
+
+    ⛔ WIDENING THE SCAN WIDENS WHAT IT PICKS UP - the `mentions.py` failure class, eight
+    instances in one day. A file that TEACHES a marker contains that marker, so reading the
+    whole file naively hands a teaching doc the vocabulary of its own examples.
+
+    Two rules, each measured against this corpus rather than guessed:
+
+      MARKDOWN - the whole file, fenced blocks removed. A fence means "here is what one looks
+      like"; a bare line means "here is mine" - the distinction `_outside_fences` already draws
+      for the subject marker. Measured: zero artifacts lose a tag to fence-stripping.
+
+      PYTHON - the module docstring only, however long. This is not a new rule: `cmd_enrich`'s
+      own refusal message has always told authors to put the line "inside its top docstring".
+      Measured: 25 scripts keep their tag, 1 loses it - `test_marker_diagnosis.py`, whose tag is
+      a TEST FIXTURE (`alpha beta gamma delta`) that was never a declaration. A test must
+      contain the strings it exercises; reading them as claims is the same defect again.
+
+    An unparseable .py falls back to the old prose window - the conservative direction, since
+    that is exactly what it got before this function existed.
+    """
+    # ⛔ ONE IMPLEMENTATION, IN THE SHARED MODULE. This rule now has four readers - route,
+    # knowledge_gate, knowledge_pages and dev_docs_index - and the whole reason they disagreed
+    # about a doc's markers was that each carried its own answer to this question. Keeping a
+    # second copy here, however correct today, is how they diverge again.
+    # `mentions.py` already owns `ROUTE_TAGS` for exactly this reason.
+    return mentions_declaration_region(text, path)
+
+
+def declared_tags(text, path=None):
+    """This artifact's OWN route-tags line, found over the WHOLE file. "" when it has none.
+
+    ⭐ FIRST MATCH, not every match - the semantics `cmd_enrich` and `knowledge_gate` already
+    use. A file has one declaration; `enrich` merges terms into a single line rather than
+    adding a second. The old `findall` over a window was the only reader that disagreed, and
+    over a whole file it would collect every example in the 11 artifacts that teach or test
+    this marker.
+    """
+    # ⛔ CHEAP REJECT FIRST. Of 700 artifacts only 83 carry this marker, and without this line
+    # the other 617 each paid for an `ast.parse` and a whole-file fence regex to be told so -
+    # measured at +55% on every query, which is the kind of cost that gets a correct fix
+    # reverted. A plain substring test settles it for the overwhelming majority.
+    if "route-tags" not in text:
+        return ""
+    m = TAG_RE.search(_outside_fences(_declaration_region(text, path)))
+    return m.group(1) if m else ""
 
 
 def _fm_field(text, name):
@@ -389,12 +494,16 @@ def harvest():
     # S1 - memory notes, RECURSIVE. memory/automation/** holds the sweep + briefing runbooks
     # and was silently unharvested in v1 while the receipt claimed the memory store was covered.
     for p in by_kind.get("memory", []):
-        t = _read(p)
+        # ⛔ TWO NAMES, TWO JOBS. `whole` is for DECLARATIONS, `t` is the capped prose. Reading
+        # the tag line out of `t` is the defect PROSE_CAP documents; it looked identical to
+        # working code for as long as no file outgrew its cap.
+        whole = _read(p)
+        t = whole[:PROSE_CAP["memory"]]
         add("memory", p, [
             (3, p.stem.replace("_", " ").replace("-", " ")),
             (2, _fm_field(t, "description")),
             (2, _fm_field(t, "name").replace("-", " ")),
-            (3, " ".join(TAG_RE.findall(t))),
+            (3, declared_tags(whole, p)),
             (3, _subject_aliases(t)),
             (3, " ".join(CANONICAL_RE.findall(t))),
             (2, _facet_aliases(t)),
@@ -412,11 +521,12 @@ def harvest():
 
     # S3 - shared scripts, recursive, pycache excluded
     for p in by_kind.get("script", []):
-        t = _read(p, 3000)
+        whole = _read(p)
+        t = whole[:PROSE_CAP["script"]]
         add("script", p, [
             (3, p.stem.replace("_", " ")),
             (2, " ".join(t.split("\n")[:6])),
-            (3, " ".join(TAG_RE.findall(t))),
+            (3, declared_tags(whole, p)),
             (3, _subject_aliases(t)),
             (2, _facet_aliases(t)),
         ], canonical=_canon(t))
@@ -426,11 +536,12 @@ def harvest():
     # is; the STORE it came from is kept as its kind so a reader can see where an answer lives.
     for kind in ("doc", "repo"):
         for p in by_kind.get(kind, []):
-            t = _read(p, 3000)
+            whole = _read(p)
+            t = whole[:PROSE_CAP[kind]]
             add(kind, p, [
                 (3, p.stem.replace("-", " ").replace("_", " ")),
                 (1, " ".join(re.findall(r"^#{1,2}\s+(.+)$", t, re.M)[:4])),
-                (3, " ".join(TAG_RE.findall(t))),
+                (3, declared_tags(whole, p)),
                 (3, _subject_aliases(t)),
                 (2, _facet_aliases(t)),
                 (1, t.split("\n\n")[1][:200] if "\n\n" in t else ""),
@@ -442,11 +553,12 @@ def harvest():
         if p.parent.name in seen:
             continue
         seen.add(p.parent.name)
-        t = _read(p, 2500)
+        whole = _read(p)
+        t = whole[:PROSE_CAP["skill"]]
         add("skill", p, [
             (3, p.parent.name.replace("-", " ")),
             (2, _fm_field(t, "description")),
-            (3, " ".join(TAG_RE.findall(t))),
+            (3, declared_tags(whole, p)),
             (3, _subject_aliases(t)),
             (2, _facet_aliases(t)),
         ], canonical=_canon(t))
@@ -610,6 +722,58 @@ def cmd_ask(args):
     return 1
 
 
+# The markers a route-tags line belongs directly beneath, most specific first. Both are
+# top-of-file frontmatter by construction, so anchoring to them puts the declaration in the
+# block a reader already scans.
+DEV_DOC_RE = re.compile(r"^<!--\s*dev-doc:.*?-->[^\S\n]*$", re.M | re.S)
+H1_RE = re.compile(r"^#\s+\S.*$", re.M)
+
+
+def _cut_tag_line(text, m):
+    """Remove an existing tag line. Returns (text, the offset it was removed from).
+
+    Takes the whole LINE when the marker is alone on it - leaving a blank line behind would
+    make every enrich add one - and only the marker's own span when it shares the line with
+    other content, where deleting the line would destroy that content.
+    """
+    start = text.rfind("\n", 0, m.start()) + 1
+    end = m.end()
+    if not text[start:m.start()].strip() and not text[end:].split("\n", 1)[0].strip():
+        nl = text.find("\n", end)
+        end = len(text) if nl == -1 else nl + 1
+    else:
+        start = m.start()
+    return text[:start] + text[end:], start
+
+
+def _tag_anchor(text):
+    """Where a route-tags line belongs: an offset at a line boundary.
+
+    Order is deliberate. Frontmatter must be cleared before anything else - a line inserted
+    inside a YAML block corrupts it - and after that the most specific marker wins.
+
+      1. below a `<!-- dev-doc: ... -->` marker, the workspace's own top-of-file frontmatter
+      2. below a YAML frontmatter block
+      3. below the H1, so the file still opens with its title
+      4. the very top, when the file has none of those
+    """
+    at = 0
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if 0 < end < 1500:
+            close = text.find("\n", end + 1)
+            at = len(text) if close == -1 else close + 1
+    dev = DEV_DOC_RE.search(text, at)
+    if dev:
+        nl = text.find("\n", dev.end())
+        return len(text) if nl == -1 else nl + 1
+    h1 = H1_RE.search(text, at)
+    if h1:
+        nl = text.find("\n", h1.end())
+        return len(text) if nl == -1 else nl + 1
+    return at
+
+
 def cmd_enrich(args):
     """Append searched-with terms to the artifact so the next session's query hits.
 
@@ -630,6 +794,9 @@ def cmd_enrich(args):
         print("  `<!-- route-tags: ... -->` line inside its top docstring - route.py indexes")
         print("  that at full weight (plain docstring prose ranks lower and may not clear")
         print("  the hit floor).")
+        print("  THE DOCSTRING IS NOW THE RULE, not a suggestion: a marker anywhere else in")
+        print("  a .py is read as a MENTION, not a declaration, so a script that writes the")
+        print("  line into a file it generates does not accidentally claim those terms.")
         return 2
 
     good, bad = [], []
@@ -656,17 +823,27 @@ def cmd_enrich(args):
         print("  REFUSED - the tag line would exceed 800 chars. A tag that long has stopped")
         print("  being vocabulary; split the artifact or prune the terms.")
         return 2
+    # ⛔ PLACE IT AT THE TOP, don't rewrite it where it sits. v1 spliced the new line into the
+    # old line's span, so a tag that had drifted down the file stayed exactly where it was -
+    # and `enrich` reported success for terms nothing could reach. That is a repair tool
+    # confirming a fix it did not make.
+    #
+    # ⭐ The tag no longer needs to be near the top to be INDEXED (see PROSE_CAP), so this is
+    # not the fix for that defect - it is hygiene that keeps the declaration where a reader
+    # looks for it, next to the file's other frontmatter, instead of buried mid-document.
+    #
+    # Remove-then-insert rather than move-in-place: computing the anchor on the text with the
+    # old line already gone means no offset can shift under it. When the line is already at the
+    # anchor the result is byte-identical to a splice, so the no-op case writes no diff.
+    moved = False
     if m:
-        # span splice, never re.sub - a replacement string containing backslashes was being
-        # interpreted for group references, corrupting the tag while stdout reported the clean
-        # version. The write and the report must come from the same bytes.
-        text = text[: m.start()] + line + text[m.end():]
-    elif text.startswith("---") and 0 < text.find("\n---", 3) < 1500:
-        end = text.find("\n---", 3)
-        close = text.find("\n", end + 1)
-        text = text[: close + 1] + line + "\n" + text[close + 1:]
+        text, removed_at = _cut_tag_line(text, m)
+        anchor = _tag_anchor(text)
+        moved = removed_at != anchor
     else:
-        text = line + "\n" + text
+        anchor = _tag_anchor(text)
+    nl = "\r\n" if "\r\n" in text[:8000] else "\n"
+    text = text[:anchor] + line + nl + text[anchor:]
 
     # newline-preserving write. Path.write_text on Windows translated every LF to CRLF, so
     # enriching one line rewrote the whole file's endings - a 1-line change arriving as a
@@ -678,6 +855,8 @@ def cmd_enrich(args):
                   for r in [MEM, WS] if r.exists())
     print("  enriched %s" % p.name)
     print("  route-tags now: %s" % " ".join(terms))
+    if moved:
+        print("  moved the tag line up to the file's frontmatter (it was further down)")
     if not covered:
         print("  ⚠️  this file is OUTSIDE every covered store - the tag was written but no")
         print("      query will ever read it. Move the artifact or extend the stores.")
@@ -774,7 +953,8 @@ def _outside_fences(text):
     - a false negative, the survivable direction, and CREATE.md says paste the line, not fence
     it.
     """
-    return FENCE_RE.sub("", text)
+    # One implementation, in the shared module - see `_declaration_region`.
+    return mentions_outside_fences(text)
 
 
 def _receipt_docs():
@@ -929,6 +1109,100 @@ def cmd_receipts(_args):
     return RECEIPT_REFUSE
 
 
+def cmd_markers(_args):
+    """Is every declaration this router reads actually inside the part of the file it reads?
+
+    ⛔ THE DEFECT THIS WATCHES FOR IS SILENT BY CONSTRUCTION. A marker outside the scanned
+    region does not error - the artifact simply stops carrying that signal, and the router then
+    answers questions about it with VERIFIED MISS. Nothing in the output of a query says "this
+    doc had tags I could not see", so the only way to know is to go and measure.
+
+    ⭐ THRESHOLDS COME FROM PROSE_CAP, never from a number retyped here. A check with its own
+    copy of the limit is a check that passes while the thing it guards has moved - the
+    marker-format-is-a-contract rule (`memory/marker_format_is_a_contract.md`) applied to a
+    threshold instead of a regex.
+
+    route-tags is NOT in this table, and its absence is the point: `declared_tags` reads it over
+    the whole file, so it has no window left to fall out of. What remains here is every marker
+    that still has one. If one of these is ever widened too, delete its row.
+    """
+    windowed = [
+        ("canonical", CANONICAL_RE,
+         "outranks every doc that merely contains the term - unread, the doc silently "
+         "drops back to ordinary ranking"),
+        ("cornerstone/subject", SUBJECT_RE,
+         "unread, the doc loses its subject's whole vocabulary - up to 23 terms"),
+    ]
+    from corpus import files as _corpus_files
+
+    problems, checked, tagged = [], 0, 0
+    py_outside = []
+    for kind, p in _corpus_files():
+        text = _read(p)
+        if not text:
+            continue
+        checked += 1
+        cap = PROSE_CAP.get(kind, DEFAULT_CAP)
+        # ⛔ ASK "IS THIS A DECLARATION?" BEFORE ASKING "IS IT IN RANGE?" - the same
+        # `_declaration_region` rule the tag scan uses, and the check needs it for the same
+        # reason. First run reported route.py itself as FAIL, for the `<!-- canonical: acme,
+        # acme-api, refunds -->` line in the comment block that DOCUMENTS the marker. The
+        # advice attached to that failure was to move it toward the top - which would have
+        # handed this router the canonical claim on somebody else's vendor.
+        #
+        # ⭐ A CHECK CAN COMMIT THE DEFECT IT WATCHES FOR. This one was one run from doing it.
+        region = _outside_fences(_declaration_region(text, p))
+        for label, rx, why in windowed:
+            mm = rx.search(region)
+            if not mm:
+                continue
+            # The offset that matters is where the marker sits in the REAL file, since that is
+            # what `_read`'s cap is measured against - not its offset inside the region.
+            at = text.find(mm.group(0))
+            if at >= cap:
+                problems.append((label, kind, p, at, cap, why))
+        if declared_tags(text, p):
+            tagged += 1
+        elif TAG_RE.search(_outside_fences(text)) and str(p).lower().endswith(".py"):
+            # A .py carrying the marker somewhere other than its module docstring. Usually
+            # correct - a generator emitting the line into the doc it writes - so this is
+            # REPORTED, never failed: the file is not claiming the tag for itself.
+            py_outside.append(p)
+
+    print("route - marker placement")
+    print()
+    print("  artifacts examined                  : %d" % checked)
+    print("  carrying a route-tags declaration   : %d" % tagged)
+    print("  route-tags read over                : the WHOLE file (no window - see PROSE_CAP)")
+    print("  windowed markers, by store          : %s"
+          % ", ".join("%s=%d" % kv for kv in sorted(PROSE_CAP.items())))
+    print()
+    if py_outside:
+        print("  %d .py file(s) mention route-tags outside their module docstring." % len(py_outside))
+        print("  Not a fault - a script that WRITES the marker into a generated doc contains")
+        print("  it without declaring it. Listed so the distinction stays visible:")
+        for p in py_outside:
+            print("     %s" % p.name)
+        print()
+    if problems:
+        print("  FAIL - %d marker(s) sit outside the window their store reads." % len(problems))
+        print("  Each one is inert: present in the file, invisible to the router.")
+        print()
+        for label, kind, p, off, cap, why in sorted(problems, key=lambda x: -x[3]):
+            print("     %-20s char %-7d > %s cap %d" % (label, off, kind, cap))
+            print("       %s" % p)
+            print("       cost: %s" % why)
+        print()
+        print("  FIX: move the marker up into the file's frontmatter - directly below the")
+        print("       <!-- dev-doc: ... --> marker, or below the H1. Never raise the cap:")
+        print("       the cap bounds PROSE ranking cost, and raising it to rescue one file")
+        print("       slows every query while leaving the next file to hit the same edge.")
+        return 1
+    print("  PASS - every windowed marker is inside the window its store reads, and every")
+    print("         route-tags declaration is read whole-file regardless of depth.")
+    return 0
+
+
 def cmd_stores(_args):
     arts = harvest()
     counts = {}
@@ -956,6 +1230,8 @@ def main():
         return cmd_fixtures(ap.parse_args(argv[1:]))
     if argv and argv[0] == "stores":
         return cmd_stores(None)
+    if argv and argv[0] == "markers":
+        return cmd_markers(None)
     if argv and argv[0] == "receipts":
         return cmd_receipts(None)
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])

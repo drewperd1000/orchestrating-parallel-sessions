@@ -17,7 +17,7 @@ WHY IT IS NEEDED AT ALL, given `orchdoc.py commit` already lands on main
 correct from ANY checked-out branch. Nothing forces anyone to use it. On 2026-08-06 o1 -
 the session that had just spent a day proving the two-states problem and had personally
 landed 174 uncommitted lines - committed its 189-line audit report to a feature branch
-with a plain `git commit`, within the hour. the human never saw it.
+with a plain `git commit`, within the hour.\1The human never saw it.
 
 Measured context, so the scale is honest: 216 OrchDoc commits reached `main` correctly
 and 14 went to a branch created 2026-08-01. This is a five-day regression, not a

@@ -60,6 +60,38 @@ def unseen_foreign(mailbox: Path, role: str):
 
 
 def cmd_watch(args):
+    # ⛔ REFUSE BY DEFAULT - a perpetual watcher is a thing the human does not want running.
+    #
+    # the human, 2026-09-16: "What I don't want are perpetual watchers firing for every session all
+    # the time. That creates its own problems that I don't want." And on the channel itself:
+    # "I had to vocally tell everyone to stop using the mailboxes... It was ONLY there while
+    # the send_message tool was broken by Anthropic."
+    #
+    # ⭐ THE ASYMMETRY THIS CLOSES. `orch_msg.py send` - the WRITE half - has refused since
+    # 2026-09-08. `watch` did not, so the decommissioned channel could still be armed by any
+    # session that read the docstring and used it exactly as documented. That is the shape that
+    # misled sessions before: the mechanism is explained here, and the ruling against it lives
+    # somewhere else.
+    #
+    # ⭐ A REFUSAL, NOT A WARNING. A warning prints and the watcher starts anyway.
+    if not getattr(args, "send_message_is_broken", None):
+        print("  REFUSED: do not arm a mailbox watcher.\n")
+        print("    the human, 2026-09-16: \"What I don't want are perpetual watchers firing for")
+        print("    every session all the time. That creates its own problems.\"\n")
+        print("    THE MAILBOX WAS A STOPGAP. It existed only while")
+        print("    mcp__ccd_session_mgmt__send_message was broken by Anthropic in August. That")
+        print("    tool works now, and it is the road.\n")
+        print("    TO REACH A LIVE SESSION")
+        print("      1. mcp__ccd_session_mgmt__list_sessions   - find the session by title")
+        print("      2. MATCH o<N> WITH ITS COLON - \"o1\" also matches o10 and o11")
+        print("      3. mcp__ccd_session_mgmt__send_message with that sessionId\n")
+        print("    TO REACH AN ORCHESTRATOR THAT IS NOT LIVE")
+        print("      Put it on their OrchDoc. The Stop hook surfaces it at their next turn")
+        print("      boundary and needs no process kept running.\n")
+        print("    Genuinely broken - send_message errored? Pass --send-message-is-broken")
+        print("    \"<what it did>\". That is a claim you tried, and it stays in the history.")
+        return 2
+
     boxes = [Path(m) for m in args.mailbox]
     start = time.time()
     while True:
@@ -98,6 +130,8 @@ def main():
     w.add_argument("--mailbox", nargs="+", required=True)
     w.add_argument("--interval", type=int, default=20)
     w.add_argument("--heartbeat", type=int, default=2700)
+    w.add_argument("--send-message-is-broken", metavar="WHAT_IT_DID",
+                   help="arm anyway, recording what send_message actually did")
     w.set_defaults(fn=cmd_watch)
     a = sub.add_parser("ack")
     a.add_argument("--role", required=True)

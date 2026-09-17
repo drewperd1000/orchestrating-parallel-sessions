@@ -1,0 +1,36 @@
+# Import every published script. That is the whole check, and it is enough.
+#
+# WHY THIS EXISTS. On 2026-09-17 six of the scripts in this repository failed on import -
+# route.py, corpus.py, knowledge_gate.py, knowledge_pages.py, dev_docs_index.py and
+# commitment_guard.py - because a module they all import at the top had never been published.
+# route.py is the first thing this repository's own documentation tells a reader to run, and it
+# had never run for anyone who cloned it. Nothing here noticed, because nothing here ran.
+#
+# The reasoning, and what this deliberately does NOT do, is in check_imports.py beside the
+# scripts. This file only decides when that check runs.
+
+name: imports
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  import-every-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The checker lives in the repository rather than in this file. A workflow that carries
+      # its own inline script is a second implementation that only CI can run, so it cannot be
+      # tried locally before it is pushed - and this repository's whole defect was a check
+      # that examined something other than what shipped.
+      - name: Import every published script
+        run: >
+          python
+          plugins/orchestration/skills/orchestrating-parallel-sessions/scripts/check_imports.py

@@ -88,6 +88,7 @@ while canonical has moved, which it reports rather than refuses.
 """
 import io
 import os
+import re
 import subprocess
 import sys
 
@@ -132,6 +133,33 @@ def canonical_ref(repo):
         if rc == 0:
             return ref
     return None
+
+
+def inherited_origin(repo):
+    """Reason this repo's `origin/*` cannot be trusted, or None.
+
+    ⛔ o7's POINT, AND IT IS THE SHARPEST VERSION OF THIS ALL DAY (relayed 2026-09-08): a tool
+    that does the RIGHT thing - reason about `origin/main` rather than `main` - is STILL wrong
+    inside a `--local` clone, and has no way to tell. `git clone --local` builds
+    `refs/remotes/origin/*` from the SOURCE'S LOCAL branches, so the staleness is inherited and
+    then wears the authoritative name.
+
+    ⭐ SO THE CHECK THAT CANNOT FAIL IS THE ONE TO WORRY ABOUT. Inside such a clone this guard
+    would compare a stale `origin/main` against a stale working copy, find them in agreement, and
+    report clean - which is exactly what happened to me: my own harness cloned locally, the
+    guard reported SILENCE on a merge that removed 21 of 25 lines, and only hand arithmetic
+    caught it.
+
+    A filesystem path where a URL belongs is the tell, and it is cheap.
+    """
+    rc, url, _ = git(repo, ["remote", "get-url", "origin"])
+    if rc != 0 or not url:
+        return None                       # no origin: `canonical_ref` already returns None
+    u = url.strip()
+    if "://" in u or re.match(r"^[\w.+-]+@[\w.-]+:", u):
+        return None                       # a real remote
+    return ("origin is a filesystem path (%s) - this is a local clone, so its origin/* was "
+            "built from the SOURCE's LOCAL branches and may be stale" % u[:60])
 
 
 def staged_paths(repo):
@@ -255,8 +283,31 @@ def check_undoes_commit(repo):
     for path in code_paths(repo):
         head_blob = _blob(repo, "HEAD:%s" % path)
         staged = _blob(repo, ":%s" % path)
-        if head_blob is None or staged is None or head_blob is False or staged is False:
+
+        # ⛔ "NOT AT HEAD" AND "COULD NOT READ IT" ARE DIFFERENT FACTS, and `_blob` returns None
+        # for both. The first is a NEW FILE - there is nothing to undo and skipping is right.
+        # The second is the checker failing, and skipping there is the fail-open I fixed in
+        # `entries_touched` this morning, still sitting in the guard I wrote to replace it.
+        #
+        # ⭐ FOUND BY A HARNESS BUG, WHICH IS THE ONLY REASON IT SURFACED. Checking whether a
+        # peer's PR would revert an already-merged commit, my scratch clone had no usable
+        # `origin/main`, so HEAD carried no such file, `_blob` returned None, and the guard
+        # reported SILENCE on a merge that removes 21 of 25 lines. The wrong answer and the
+        # right one are the same word.
+        if head_blob is None:
+            rc, _o, _e = git(repo, ["cat-file", "-e", "HEAD:%s" % path])
+            if rc == 0:
+                out.append((path, "<unreadable>",
+                            "cannot read this file at HEAD - the check could not run",
+                            ["the guard could not compare; treat as UNKNOWN, not as clean"]))
             continue
+        if staged is None:
+            out.append((path, "<unreadable>",
+                        "cannot read the staged copy - the check could not run",
+                        ["the guard could not compare; treat as UNKNOWN, not as clean"]))
+            continue
+        if head_blob is False or staged is False:
+            continue                       # binary: rule A reports these, line diffing cannot
         removed = {l.strip() for l in head_blob.split("\n") if _interesting(l)} \
             - {l.strip() for l in staged.split("\n")}
         if len(removed) < MIN_ADDED:
@@ -337,6 +388,21 @@ REFUSE = 9
 
 def main(argv):
     repo = argv[1] if len(argv) > 1 else os.getcwd()
+
+    # ⛔ SAY SO RATHER THAN ANSWER. Inside a `--local` clone both sides of every comparison below
+    # are inherited from the source's LOCAL branches, so the guard would find agreement and
+    # report clean - a check that cannot fail in the one place it is needed (o7's point, relayed
+    # 2026-09-08). This is the third time today that "could not tell" had to be prised apart
+    # from "nothing found"; the other two were `entries_touched` and `_blob`.
+    why = inherited_origin(repo)
+    if why:
+        print("UNKNOWN: this guard cannot answer here.\n", file=sys.stderr)
+        print("    %s\n" % why, file=sys.stderr)
+        print("    Both sides of the comparison come from the same inherited refs, so agreement\n"
+              "    between them is not evidence. Run it where the ORIGINAL clone is.\n",
+              file=sys.stderr)
+        return 0                          # not REFUSE: it adds no signal, it just has none
+
     undo = check_undoes_commit(repo)
     if undo:
         report_undo(undo)

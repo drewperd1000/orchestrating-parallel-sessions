@@ -9,7 +9,7 @@
 2026-08-17: route reached 1,326 artifacts and the knowledge map reached 198 - and nobody could
 see the gap, because each tool printed a confident count of its own set. The cornerstone
 candidate sheet was built from the smaller one and was therefore judging 15% of the corpus while
-reading as a survey of all of it. the human: *"the referenced docs were only just barely better than
+reading as a survey of all of it.\1The human: *"the referenced docs were only just barely better than
 randomly assigned."*
 
 ⭐ SO THE SCAN SET IS DATA, NOT CODE-PER-TOOL. One function enumerates; every drop is a named
@@ -32,8 +32,7 @@ place used that name:
                                which the human asked for by name and was told did not exist.
   2. `parent.name == "knowledge"`  hid `repo_2/docs/knowledge/` - 23 hand-authored
                                reference documents (authority_source_1, authority_source_2, authority_source_3, authority_source_4) -
-                               under a rule written for OUR generated pages at `docs/knowledge`.
-                               the human ruled `copywriting` "NONE - none of these fit" against a
+                               under a rule written for OUR generated pages at `docs/knowledge`\1The human ruled `copywriting` "NONE - none of these fit" against a
                                sheet that could not see them.
 
 ⭐ A PATH LIST CANNOT GROW ITS OWN BLAST RADIUS. A name pattern silently does, every time the
@@ -277,7 +276,7 @@ def stores():
             for p in _walk_md(d):
                 add("doc", p)
 
-    # ⭐ S3b - THE TWO RESEARCH CORPORA. the human ruled D17 on 2026-09-08: "index the two research
+    # ⭐ S3b - THE TWO RESEARCH CORPORA.\1The human ruled D17 on 2026-09-08: "index the two research
     # corpora, leave o5's scratch out."
     #
     # The doc store above is WS/*.md NON-RECURSIVE, so every working directory was outside the

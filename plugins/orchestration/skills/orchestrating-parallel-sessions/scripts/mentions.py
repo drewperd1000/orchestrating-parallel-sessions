@@ -33,8 +33,20 @@ import re
 # Places PROSE lives inside a shell command. Everything here is text a human wrote for a human;
 # none of it is executed, so none of it should be matched.
 _HEREDOC = re.compile(r"<<-?'?(\w+)'?.*?\n\1", re.S)
-_MSG_QUOTED = re.compile(r"-(?:m|F)\s+(['\"])(?:\\.|(?!\1).)*\1", re.S)
-_MSG_TOKEN = re.compile(r"-(?:m|F)\s+\S+")
+# ⛔ EVERY FLAG HERE CARRIES PROSE, AND PROSE IS NOT A COMMAND. `-m`/`-F` alone was not enough:
+# on 2026-09-16 `gh pr close --comment "...--autostash..."` was refused by the shared-tree guard
+# because the WORD appeared inside the comment explaining why the branch was landed by path.
+# Minutes later the same guard blocked an `echo` describing the rule it enforces.
+#
+# ⭐ That is the ninth time in one day a tool read a DESCRIPTION of a thing as an INSTANCE of it,
+# and the second time it happened to this very helper - whose docstring already says so. Fixing
+# it here fixes every guard at once, which is the reason the helper exists.
+_MSG_FLAGS = r"-(?:m|F)|--(?:message|comment|body|body-file|subject|title|notes|description)"
+_MSG_QUOTED = re.compile(r"(?:%s)[\s=]+(['\"])(?:\\.|(?!\1).)*\1" % _MSG_FLAGS, re.S)
+_MSG_TOKEN = re.compile(r"(?:%s)[\s=]+\S+" % _MSG_FLAGS)
+# `echo`/`printf` exist to EMIT text. Their arguments are never executed, and describing a
+# forbidden command is the most common legitimate thing to echo in this workspace.
+_ECHO_QUOTED = re.compile(r"\b(?:echo|printf)\s+(['\"])(?:\\.|(?!\1).)*\1", re.S)
 _COMMENT = re.compile(r"#[^\n]*")
 # ⛔ `echo` IS NOT STRIPPED, deliberately. It looks like prose and is not: `echo "<cmd>" | sh`
 # is a working bypass, and an agent echoing a retired tool name is usually reaching for it.
@@ -56,6 +68,7 @@ def executable_part(cmd):
         return ""
     s = _HEREDOC.sub(" ", cmd)
     s = _MSG_QUOTED.sub(" ", s)
+    s = _ECHO_QUOTED.sub(" ", s)
     s = _MSG_TOKEN.sub(" ", s)
 
     s = _COMMENT.sub(" ", s)
@@ -96,6 +109,67 @@ _CORRESPONDENCE = re.compile(r"<!--\s*correspondence:", re.I)
 _TEST = re.compile(r"^(test_|.*[/\\]test_)", re.I)
 # A placeholder is a shape, not a value: <vendor>, <slug>, _example, YOUR-KEY-HERE.
 PLACEHOLDER = re.compile(r"<[^>\s]{2,}>|_example|\bYOUR[-_][A-Z]+\b")
+
+
+# ---- 3. where a marker counts as a DECLARATION -----------------------------------------------
+# ⛔ FOUR READERS, ONE QUESTION, FOUR ANSWERS. `route.py` read a doc's marker out of the first
+# 3000 characters, `knowledge_gate.py` out of 4000, `knowledge_pages.py` and `dev_docs_index.py`
+# out of 8000. A declaration that drifted past a reader's own number stopped existing FOR THAT
+# READER ONLY - so a doc could be routable and absent from the knowledge map, or indexed and
+# unroutable, with nothing anywhere reporting a disagreement.
+#
+# ⭐ THE WINDOW WAS NEVER THE POINT. A declaration is not "a marker near the top"; it is a marker
+# the file makes as its OWN claim rather than as an example. That question has one right answer
+# and it belongs in one place - the same rule this module already applies to `ROUTE_TAGS`.
+# Reading all 503 artifacts whole costs 0.16s, so the caps were never buying anything either.
+SCRIPT_PROSE_CAP = 3000
+
+
+def outside_fences(text):
+    """Text with fenced code blocks removed - a marker inside a fence is an EXAMPLE.
+
+    ⭐ ANY DOC THAT TEACHES A MARKER CONTAINS THAT MARKER, so the distinction has to be
+    structural rather than a list of exempt files. A fence means "here is what one looks like";
+    a bare line means "here is mine". The cost is that a marker someone fences by accident goes
+    uncounted - a false negative, which is the survivable direction.
+    """
+    return re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
+
+
+def declaration_region(text, path=None):
+    """The part of an artifact where a marker counts as ITS OWN declaration.
+
+    MARKDOWN - the whole file. PYTHON - the module docstring only, however long, which is
+    already what `route.py enrich` tells authors when it refuses. An unparseable `.py` falls
+    back to the old prose window, the conservative direction: that is what it got before.
+
+    Measured across 700 artifacts when this rule was introduced: zero markdown artifacts lose a
+    marker to fence-stripping, 25 scripts keep theirs, and the 1 that loses it is a test fixture
+    that was never a declaration.
+    """
+    if path is not None and str(path).lower().endswith(".py"):
+        try:
+            import ast
+            return ast.get_docstring(ast.parse(text)) or ""
+        except (SyntaxError, ValueError, RecursionError):
+            return text[:SCRIPT_PROSE_CAP]
+    return text
+
+
+def declares(text, marker_re, path=None):
+    """The first value this artifact declares for `marker_re`, or "" - read over the whole file.
+
+    ⛔ CHEAP REJECT FIRST, and it is load-bearing rather than tidy. Most artifacts carry no
+    marker, and without a substring pre-check each one pays an `ast.parse` and a whole-file
+    fence regex to be told so - measured at +55% on every router query, which is the kind of
+    number that gets a correct fix reverted.
+    """
+    probe = getattr(marker_re, "pattern", "")
+    m = re.search(r"[a-z][a-z-]{3,}", probe)
+    if m and m.group(0) not in text:
+        return ""
+    hit = marker_re.search(outside_fences(declaration_region(text, path)))
+    return hit.group(1) if hit else ""
 
 
 def is_derived(text, path=None):

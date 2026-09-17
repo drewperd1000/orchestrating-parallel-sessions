@@ -62,7 +62,17 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import orchdoc as od  # noqa: E402
 
-STRUCK_RE = re.compile(r"~~(.+?)~~")
+# ⛔ BOTH FORMS, OR THE GUARANTEE SILENTLY LAPSES. This matched `~~ ~~` only, and the canonical
+# form for a settled sub-item is now a CHECKED CHECKBOX - which carries no tildes at all. So the
+# moment the form changed, this immutability check stopped finding anything to check, and would
+# have reported "clean" forever while the thing it protects went unguarded.
+#
+# ⭐ That is the same failure as `is_active_section` returning False for an unrecognised name and
+# as the schema check exempting docs with no sections: a change to the STRUCTURE silently turns
+# off a READER of that structure, and the reader keeps printing a passing result.
+#
+# Legacy `~~` lines still exist across the corpus, so both are matched, not one replaced.
+STRUCK_RE = re.compile(r"~~(.+?)~~|^\s*[-*+]\s*\[[xX]\]\s+(.+?)\s*$")
 
 
 def norm(s):
@@ -192,7 +202,8 @@ def main():
             m = STRUCK_RE.search(line)
             if not m:
                 continue
-            inner = norm(m.group(1))
+            # group(1) is the ~~legacy~~ form, group(2) the checked-checkbox form.
+            inner = norm(m.group(1) or m.group(2) or "")
             if not inner:
                 continue
             # An unchanged strike leaves the inner text intact SOMEWHERE in the old line.
@@ -245,7 +256,7 @@ def main():
             # "nothing to look at vs looked and found nothing" collapse this session named
             # three times, reproduced inside the check built to close it, within the minute.
             print("  NO DONE stamps found in this range - 0 examined, so this proves NOTHING")
-            print("  about the document. The `- ~~text~~ - DONE dd-Mon-yyyy @ HH:MM` form is")
+            print("  about the document. The `- [x] text - DONE dd-Mon-yyyy @ HH:MM` form is")
             print("  new; until sub-items carry it there is nothing here to verify.")
             print()
 

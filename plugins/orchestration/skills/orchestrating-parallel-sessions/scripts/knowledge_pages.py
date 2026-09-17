@@ -19,8 +19,7 @@ complete. So the SHAPE is authored (`knowledge_subjects.json`) and the CONTENT i
 artifact whose tags or FACETS intersect a node. Adding a node is a deliberate act; filling one
 is not.
 
-⛔ THE FIRST EIGHT SUBJECTS WERE DERIVED FROM TAG FREQUENCY, WHICH IS A MEASURE OF THE PAST.
-the human, 2026-08-17: *"These are some that I would expect, but not necessarily the organized
+⛔ THE FIRST EIGHT SUBJECTS WERE DERIVED FROM TAG FREQUENCY, WHICH IS A MEASURE OF THE PAST.\1The human, 2026-08-17: *"These are some that I would expect, but not necessarily the organized
 taxonomy I would expect. That taxonomy feels a bit shotgun."* A taxonomy is a claim about the
 business; counting what happened to get written agrees with that only by accident. The tree is
 now business-shaped, and a node must pass four tests before it earns a place - stated in
@@ -64,12 +63,13 @@ except Exception:
 
 OUT = WS / "docs" / "knowledge"
 from mentions import ROUTE_TAGS as TAG_RE  # noqa: E402 - ONE definition, see that module
+from mentions import declaration_region, declares, outside_fences  # noqa: E402
 
 # ⛔ ONE DEFINITION OF THE OWNERSHIP MARKER, IMPORTED BY EVERY READER. A marker format is a
 # contract between every tool that reads it, and three copies of a regex is three chances to
 # drift. `route.py` and `knowledge_gate.py` import this rather than carrying their own.
 #
-# ⭐ BOTH SPELLINGS ARE READ; `cornerstone` IS THE ONE TO WRITE. the human's word for a node is
+# ⭐ BOTH SPELLINGS ARE READ; `cornerstone` IS THE ONE TO WRITE.\1The human's word for a node is
 # cornerstone; the marker already deployed on nine artifacts and taught in CREATE.md says
 # `subject`. Rewriting nine files would be cheap, but the taught vocabulary lives in four places
 # and a rename that misses one is a silent un-declaration - the document keeps a line that looks
@@ -132,7 +132,7 @@ CORNERSTONES = _load_tree()
 # taxonomy the map is lying. That is the drift the "an index must be generated" rule exists to
 # stop, arriving through a side door.
 #
-# ⭐ So the vendor breakdown is GENERATED into this node's page from the facet table. the human gets
+# ⭐ So the vendor breakdown is GENERATED into this node's page from the facet table.\1The human gets
 # the shape he asked for and nobody maintains it: adding a platform to the vocabulary adds its
 # row on the next run. Capabilities (secrets, deploys, backup, tooling) stay as authored children
 # because they cut ACROSS vendors and so cannot be expressed as vendor sections at all.
@@ -246,7 +246,7 @@ def harvest():
     # here twice is what broke the cornerstone sheet. Measured 2026-08-17: this harvester
     # reached 198 artifacts while route.py reached 1,326, and NEITHER entered a product repo.
     # The candidate sheet built from the 198 was judging 15% of the corpus while reading as a
-    # survey of all of it. the human: *"the referenced docs were only just barely better than
+    # survey of all of it.\1The human: *"the referenced docs were only just barely better than
     # randomly assigned."*
     #
     # ⭐ The one exclusion this store still ASKS for is a declared slice of that enumeration,
@@ -258,12 +258,20 @@ def harvest():
     out = []
     for kind, p in corpus_files(include_generated=False):
         try:
-            t = p.read_text(encoding="utf-8", errors="replace")[:8000]
+            t = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        m = TAG_RE.search(t)
-        tags = {w.lower().strip(",.") for w in m.group(1).split()} if m else set()
-        fac = facet_words(t)
+        # ⛔ A DECLARATION IS NOT "A MARKER NEAR THE TOP". This read was `[:8000]`, route.py's
+        # was 3000 and knowledge_gate's 4000, so one doc could be routable and absent from the
+        # knowledge map with nothing reporting the disagreement. `declares` answers the question
+        # once, for every reader. Measured across 853 artifacts: 0 docs gained, 5 lost - and all
+        # five are non-declarations (a generator's string literal, a comment naming the marker,
+        # a test fixture). No artifact that genuinely declares loses anything.
+        decl = declares(t, TAG_RE, p)
+        tags = {w.lower().strip(",.") for w in decl.split()} if decl else set()
+        # ⚠️ FACETS STAY WINDOWED. They are derived from PROSE, not declared, so reading further
+        # changes what they mean rather than fixing where they were found.
+        fac = facet_words(t[:8000])
         owner = owner_of(t)
         if tags or fac or owner:
             out.append({"kind": kind, "path": p, "tags": tags, "facets": fac,
@@ -364,10 +372,13 @@ def _vendor_rows(arts):
     counts = {}
     for a in arts:
         try:
-            t = a["path"].read_text(encoding="utf-8", errors="replace")[:8000]
+            t = a["path"].read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for v in declared(t, "platform"):
+        # Same rule as the tag read above: a facet declared past 8000 characters was declared.
+        # The region is computed once and handed to `declared`, so this reader and the router
+        # cannot disagree about what counts as a declaration.
+        for v in declared(outside_fences(declaration_region(t, a["path"])), "platform"):
             for w in v.replace(",", " ").split():
                 counts[w] = counts.get(w, 0) + 1
     L = ["## Vendors", "",

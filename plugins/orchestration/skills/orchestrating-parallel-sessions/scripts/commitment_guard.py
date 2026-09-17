@@ -162,7 +162,14 @@ def weakened(old_text, new_text):
             # as a removal. Measured 2026-08-17: "...never leaves your device." extended to
             # "...your device, and is deleted within 24 hours." was refused outright.
             core = s.rstrip(" .;,:!?")
-            if core and any(core in k for k in kept):
+            # A line that is ONLY punctuation (a JSX line-wrap such as a lone "." after an
+            # <a> element) has an empty core, and the empty string is contained in every
+            # line - so the region reported "SHORTENED to '.'" on ANY commit touching the
+            # file, including a citation fix six lines above the region (measured
+            # 2026-09-16, ConsumerHealthData.tsx:371). It carries no promise; skip it.
+            if not core:
+                continue
+            if any(core in k for k in kept):
                 continue
             shorter = [k for k in kept if k and k.rstrip(" .;,:!?") in core]
             hits.append((lab, ("SHORTENED to %r: %s" % (shorter[0][:40], s[:60])) if shorter
@@ -372,6 +379,12 @@ def selftest():
     t("SHORTENING a promise is caught, not just deleting",
       any("SHORTENED" in w for _l, w in weakened(A, C)))
     t("a doc with no commitment region is untouched", not weakened("plain doc", "plain doc2"))
+    D = "\n".join(["<!-- commitment: wrapped -->", "see <a>the policy</a>", ".",
+                   "we never store your voice data", "<!-- /commitment -->"])
+    t("a punctuation-only line inside a region is not a promise (lone '.' from a JSX wrap)",
+      not weakened(D, "a line above the region changed\n" + D))
+    t("the real promise in that same region is still caught",
+      any("SHORTENED" in w for _l, w in weakened(D, D.replace("your voice data", "your voice"))))
     # ⭐ THE TEST THAT WOULD HAVE CAUGHT THE REAL BUG. Every assertion above exercises the
     # guard's LOGIC, and the logic was never wrong - it was never REACHED, because the hook
     # invoked an argument argparse rejected. So: read each installed hook, extract the command
