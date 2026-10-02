@@ -68,19 +68,21 @@ inference-free file **watcher** (`scripts/watch_mailbox.py`, Python stdlib only)
 
 ## Install
 
-This repo is a **plugin marketplace** holding two skills:
+This repo is a **plugin marketplace** holding three skills:
 
 | skill | what it does |
 |---|---|
 | `orchestrating-parallel-sessions` | the orchestration model — lanes, workers, mailboxes, the OrchDoc |
 | `orchdoc-audit` | a full forced section-by-section refresh of an OrchDoc, then an independent audit |
+| `optimize-and-automate-claude-md-files` | a method for trimming a CLAUDE.md without losing a rule that sessions need (text only, no scripts) |
 
 ```
 /plugin marketplace add drewperd1000/orchestrating-parallel-sessions
 /plugin install orchestration
 ```
 
-They surface as `/orchestration:orchestrating-parallel-sessions` and `/orchestration:orchdoc-audit`.
+They surface as `/orchestration:orchestrating-parallel-sessions`, `/orchestration:orchdoc-audit`
+and `/orchestration:optimize-and-automate-claude-md-files`.
 
 The tools — `orchdoc.py`, `orchdoc_sweep.py`, `creds.py`, `watch_mailbox.py`,
 `PROTOCOL-template.md` — ship inside the orchestration skill's `scripts/` directory. They are
