@@ -9,7 +9,7 @@
     {
       "name": "orchestration",
       "source": "./plugins/orchestration",
-      "description": "orchestrating-parallel-sessions + orchdoc-audit. Surface as /orchestration:<name>."
+      "description": "orchestrating-parallel-sessions + orchdoc-audit + optimize-and-automate-claude-md-files. Surface as /orchestration:<name>."
     }
   ]
 }
