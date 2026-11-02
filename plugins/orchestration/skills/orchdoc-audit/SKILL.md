@@ -35,6 +35,30 @@ sees what the updater said.**
 - At the end of a long working session, before the context that did the work is gone.
 - Any time you are about to attempt a whole-document refresh in one pass.
 
+## The commands an audit uses
+
+`python $SK/orchdoc.py --help` is the whole list and it is the answer to "does this exist".
+These are the ones an audit reaches for:
+
+| command | what it is for |
+|---|---|
+| `check --doc <id>` | the invariants. Add `--strict` to see WHERE an advisory fired - the default prints `W-FOO x14` and no line numbers |
+| `review --doc <id>` | walks EVERY section and forces the completeness question. `check` cannot see an absence; this asks about one |
+| `freshness --doc <id>` | is the working-tree copy equal to the canonical ref? Run it FIRST - auditing a copy that never landed audits nothing |
+| `plate --doc <id>` | regenerate the human-facing index. Never hand-edit the block |
+| `strike` / `reorder --doc <id> --commit` | the deterministic fixers |
+| `restamp <ID> --doc <id> --because "<what moved>"` | record a re-review, with the bar applied at the write |
+| `resolve <ID> --doc <id> --ruling "<what was decided, by whom>"` | flip a Status in place |
+| `archive --doc <id> --commit` | move finished entries out of the live sections |
+| `priority <ID> --doc <id>` | propose that the human look at an entry first. It always writes the PROPOSED form; his own bare mark outranks it |
+| `commit --doc <id> -m "<msg>" --commit` | the only supported way a doc reaches `main`. Without `--commit` it is a dry run, which is how to see the landing-only gates |
+| `selftest` | the built-in fixtures. Run it when a finding looks wrong before assuming the document is |
+
+⛔ **`restamp` holds the attestation to a bar, and the bar is about the WORLD rather than the
+entry.** `--because` must say what MOVED and why the entry survives it. "Re-read, unchanged" and
+anything under 40 characters is refused as `E-RUBBERSTAMP`. `--by` is optional and defaults to
+the document's owner.
+
 ## What it does
 
 **Phase 0 - the mechanical pass. Run the fixers before spending any judgment.**
@@ -69,6 +93,45 @@ And the rules the gate now enforces, so none of them can be closed past:
 | `E-ALLSUBSDONE` | all sub-items done -> close it and move it to §99 **whole**; never leave it live |
 | `E-IDSHAPE` | ids are PREFIX+NUMBER with the summary in the title - `D7 - pause cues`, not `D-PAUSE` |
 | `E-IDORDER` | numbers run in order within a section, so a reader stops when they arrive |
+
+### The findings an auditor should expect, and what a clean run is
+
+⭐ **Read the code before you read the line it points at.** Each names a different kind of
+wrongness, and `E-STALEPROSE`, `W-STALLED` and `W-DEADCITE` are about whether the entry is
+still TRUE rather than about how it is written - the kind nobody catches by looking at the page.
+
+| code | what it refuses | blocking? |
+|---|---|---|
+| `E-STALEPROSE` | an entry resting on facts that moved after it was last reviewed. The remedy is `restamp`, naming what moved - never a reword | yes |
+| `E-RUBBERSTAMP` | an attestation that says "still current", or one under 40 characters | yes |
+| `E-PLATEDRIFT` | the rendered §2 index is not what regeneration would produce, so somebody hand-edited generated content | yes |
+| `E-HIDDENENTRY` | an archived heading that no parser can reach. Almost always inside a ``` fence, which is how seventeen rulings went invisible in one commit | yes |
+| `E-DAYONLYOPENED` | an entry this landing ADDS whose `**Opened:**` carries a date and no time, so its age cannot be ordered against a sibling opened the same day | yes, at `commit` |
+| `W-NOPROV` | a CLOSED entry with an open sub-item that schedules future work and no `**Provenance:**` saying why the task outlives the ruling | yes |
+| `W-STALLED` | an OPEN `W` or `T` entry 14 or more days old that names nothing it waits on | no, advisory |
+| `W-DEADCITE` | a `**Depends:**` line that names a file and parses as no citation at all, so the entry can never restale | no, advisory |
+
+⛔ **`W-STALLED` is the one an auditor is most likely to wave through, and a review does NOT
+exempt it.** Its test is a disjunction: the entry is either MOVING (something was acted on) or
+WAITING on something it names. Re-reading an entry is the input to that decision, not an
+outcome of it - one doc restamped a single entry seventeen times in a day without touching its
+subject.
+
+⛔ **`W-DEADCITE` is a defect the tool taught.** `**Depends:** path/to/doc.md#T7` with no
+backticks parses as no citation, so the entry satisfies the has-a-dependency check on the
+strength of its text and then reads as permanently current. Backticks go round the PATH, not
+round the line: **Depends:** `path/to/doc.md#T7`.
+
+⚠️ **`check` is not the whole gate, and an auditor who only runs `check` will miss two
+classes.** Landing through `orchdoc.py commit` runs further gates over what the landing ADDS -
+gate 1b on date-only rulings, gate 1c on date-only `**Opened:**` fields, and gate 5 on bold.
+Gate 5 refuses a passage that is 80% or more bold, or that scatters bold three or more times
+without opening with it. Run a dry-run `commit` during the audit to see them.
+
+⭐ **A clean run is `BLOCKING: none` plus a count of what was examined, and the second half is
+the part to report.** `check` on a document with no entries prints `BLOCKING: none` too, and a
+run that examined nothing looks exactly like a run that found nothing wrong. The tools already
+print it - `examined 1 doc(s)` - so carry that number into the audit report.
 
 **Phase 1 - forced, one section at a time.**
 
@@ -138,6 +201,29 @@ python $SK/orchdoc_sweep.py next --doc <id> --lane     # prints a ready headless
 in from item two.** This is the founding observation turned into architecture rather than
 advice: **the deliverable is small because the WORKER is small.**
 
+## Read it the way the human reads it - the OrchDoc reader
+
+**`render_orchdoc_reader.py` serves the live docs at `http://127.0.0.1:8787/`**, and every entry
+has a stable deep link at `http://127.0.0.1:8787/#o<N>/<ID>`. That anchor is how an audit points
+at an item, in its report and in chat. An id on its own costs the reader a search every time.
+
+⛔ **The page hides two things on purpose.** An auditor who does not know which will read a
+fold as an absence and file it as a finding.
+
+- **Attestation blocks collapse on every entry, with the count left in the summary.** "17
+  attestations" still says the entry was reviewed seventeen times; only the text is behind the
+  fold. An audit that reports an entry as never reviewed after reading the page has read a fold.
+- **An acknowledged instruction collapses and an unacknowledged one stays open.** The test is
+  the ack the owning orchestrator writes at its own turn boundary through `orchdoc.py note
+  --ack`, so it is evidence a session read the instruction rather than a promise made when Send
+  was pressed.
+
+⚠️ **The ordering sentence says two different things and they are not interchangeable.** "N
+entries are waiting on it" counts declared `**Depends:**` edges; "named by N" counts mentions.
+Measured on one document: 812 mentions against 35 real edges, with a RESOLVED entry reading as
+sixteen entries waiting on it while nothing depended on it at all. An audit that cites how
+central an entry is has to say which of the two it means.
+
 ## What a good run looks like
 
 - Every section visited exactly once, in order, with a gate passed or a stated reason.
@@ -147,6 +233,81 @@ advice: **the deliverable is small because the WORKER is small.**
   evidence is worth nothing - it is indistinguishable from not having looked.
 - Anything the audit finds either fixed, or filed as an entry with an owner. **Not narrated in
   chat and left there** - that is the failure the decision doc exists to remove.
+
+## Closing the turn the audit ran in
+
+**An orchestrator's substantial turn ends in four named sections**, and
+`stop_check_unfinished.py` refuses the turn on three codes. The contract is written out once,
+in `starting-an-orchestrator` under *How every turn closes*. Read it there. A second copy of a
+rule drifts, and this file has no way to notice when its copy has.
+
+⛔ **An audit is the turn most likely to trip two of those codes, because an audit generates
+work and the reflex is to write the work down instead of doing it.** `IMMEDIATELY-NOT-EMPTY`
+refuses a turn that parks work under "Immediately" rather than doing it in that turn.
+`OTHERS-NOT-NOTIFIED` refuses one that lists another group's item without sending it - and a
+list looks exactly like routing, which is why the section demands the send and not the name.
+
+## What a 52-entry sweep found `[DERIVED - one document, one day]`
+
+⚠️ **Provenance: one orchestrator's §3, 52 open entries, audited by six fresh lanes in a single
+day.** The counts are measured. Whether they hold for another document is not established, so
+treat the shape as a hypothesis and the checklist below as the part worth carrying.
+
+**The document was attested current that morning by its own stamps.** Of its 52 open entries:
+
+| what the sweep found | count |
+|---|---|
+| actionable now, and nobody had started | **32** |
+| resting on a stated blocker that was measured false | 7 |
+| citing a figure that no longer reproduces | 8 |
+| naming a file path that does not resolve | 4 |
+| no longer true - a ruling or a change had made it moot | 3 |
+| needing the human, inside an entry marked as the orchestrator's | 2 |
+
+⭐ **The largest category is work that was startable and nobody started it.** No linter finds
+that, because a startable entry and an abandoned one are the same text. Judge a sweep against
+that number rather than against how tidy the document looks.
+
+⛔ **Two entries described work that was already finished before the entry was written.** Both
+were written from a process log instead of from the code the log described, and one of them
+quoted its own measurement out of a source comment that predated it by five hours.
+
+### The one instruction that found all of it
+
+**Open the file the entry names, every time, and do not decide from the entry's description of
+the world.** Six lanes, fresh context each, fifteen to twenty minutes apiece. The orchestrator
+that wrote an entry is the reader least able to check it, because it holds the same model of
+the world the entry encodes.
+
+### The checklist `[DERIVED]`
+
+**When you write a work entry:**
+
+- [ ] Its first sub-item is *open the artifact*, not *read the log about it*.
+- [ ] It names a path, and you opened that path today. Four of 52 named paths that do not resolve.
+- [ ] It carries a `Done-when:` a script could test, or it says plainly that it closes on judgement and whose.
+- [ ] Any blocker it names carries what the blocker is, where that lives, when it was last verified true, and by what command.
+- [ ] A blocker shared with other entries is its OWN entry, and they all `Depends:` on it. Four copies of one gate go stale one at a time.
+- [ ] If it mirrors another group's entry, one side holds the record and the other is a bare pointer carrying no state about the first.
+- [ ] It has checkboxes. Zero checkboxes means progress nobody can see without reading the body.
+- [ ] Its Owner names who holds it. If a line inside it needs the human, that line is its own §2 entry owned by the human.
+
+**When you attest one:**
+
+- [ ] Name the fact you re-derived and the command that derived it. "Re-read, unchanged" is the failing form.
+- [ ] Glob the directory of every file it names for newer siblings. One entry was attested five times against a file a sibling had superseded seventeen days earlier.
+- [ ] If it says it is blocked on something, re-verify that thing. A blocker is the likeliest fact to have moved, because nobody owns re-checking it.
+- [ ] If it cites another group's entry, open that entry. A citation's silence is not agreement.
+- [ ] A figure you quote is a location and a command, never a value. A value dies at the next change, and the attestation then proves the opposite of what it says.
+
+**When a ruling lands:**
+
+- [ ] It is not RESOLVED until it is in the artifact the workers actually read, cited as `landed at <file>:<line>`. A guard section is not an artifact a worker reads.
+- [ ] Re-check every work entry whose sub-items the ruling touches. One document held a sub-item that would have written a ruling backwards into the file it governed.
+
+**When you name a check you did not build:**
+
+- [ ] Do not. File it as an entry with a `Done-when:`, or delete the sentence. A named-and-unbuilt check reads as coverage to the next person, and the one measured case was cited as foresight after it had missed three entries.
 
 ## Reflexes
 

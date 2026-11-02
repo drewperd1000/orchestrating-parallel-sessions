@@ -1,5 +1,7 @@
 """PreToolUse gate: refuse a lane launch whose seed ASSERTS domain knowledge without citing it.
 
+<!-- subject: orchestration -->
+
 <!-- route-tags: seed lane launch hook citation propagation worker prompt -->
 
 THE FINDING THIS IMPLEMENTS (o9L10, the adversarial pass, as its single best unseen idea):

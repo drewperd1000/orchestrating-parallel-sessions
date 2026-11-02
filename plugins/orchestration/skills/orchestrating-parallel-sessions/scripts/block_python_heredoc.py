@@ -1,5 +1,7 @@
 """PreToolUse hook: refuse `python <<EOF` when the inlined source contains a backslash.
 
+<!-- subject: claude-tooling -->
+
 WHY. Over one session this pattern produced the same defect at least four times: a regex or a
 Windows path written into Python source that was inlined in a shell heredoc, where the author
 lost track of which escaping layer they were in.

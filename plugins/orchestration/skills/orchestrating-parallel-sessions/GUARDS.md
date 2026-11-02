@@ -1,6 +1,6 @@
 # The guards
 
-Ten scripts that refuse things. This page says what each one refuses, why it exists, and — the
+The scripts that refuse things. Every guard shipped in `scripts/` has a section here, and the publisher refuses to ship this page if one is missing. This page says what each one refuses, why it exists, and — the
 part that matters if you are an agent about to trip one — **what the refusal is telling you to
 do instead.**
 
@@ -159,6 +159,50 @@ Supporting machinery, each carrying one lesson worth reading in the source:
   information, it was never an index — it was a document pretending to be one.** Authored
   summaries live on the artifacts; the index is a view.
 - **`knowledge_pages.py`** — generates the subject pages the router searches.
+
+---
+
+## `block_uncited_seed.py` — refuses a headless launch whose prompt cites nothing
+
+**What it refuses.** A `claude -p` launch whose seed prompt carries no citation: no file path,
+no entry id, no commit.
+
+**The failure.** A worker launched with a seed that names no source has to reconstruct the
+context from its own guesses, and it will. The output looks confident and is built on whatever
+the model filled the gap with. The orchestrator then reviews prose rather than work.
+
+**When it fires:** put the source in the seed. A path, an entry id, a commit - anything the
+worker can open. If the task genuinely rests on nothing written down, that is worth knowing
+before a worker spends a run on it.
+
+---
+
+## `block_retired_path.py` — refuses a command that uses a path or tool you retired
+
+**What it refuses.** A command naming something the workspace has decommissioned.
+
+**The failure.** Removing a mechanism and leaving its description is how a stale note is made.
+A session reads the note, reaches for the tool, and gets a confusing error - or worse, a tool
+half of which still works. Retiring something means the next session cannot accidentally use
+it, and a vocabulary file is what makes that enforceable rather than remembered.
+
+**When it fires:** read what replaced it. The refusal names the replacement, because a refusal
+that only says "no" makes the reader guess.
+
+---
+
+## `block_browse_instead_of_route.py` — refuses reading the knowledge tree by hand
+
+**What it refuses.** Opening a knowledge document directly when you have not asked the router
+first.
+
+**The failure.** Browsing finds what you already suspected exists. The router searches the
+whole corpus, so it finds the document you did not know to look for - which is the case that
+matters, because it is the one where you would otherwise conclude nothing exists and write a
+second copy.
+
+**When it fires:** run the router with the words you would have grepped for. It answers HIT,
+PARTIAL, WEAK or VERIFIED MISS, and only the last is permission to create.
 
 ---
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Telling a guard the difference between DOING a thing and DESCRIBING it. One implementation.
 
+<!-- subject: claude-tooling -->
+
 <!-- route-tags: guard false positive description instance mention heredoc commit message
      generated template correspondence self-reference -->
 
@@ -41,7 +43,11 @@ _HEREDOC = re.compile(r"<<-?'?(\w+)'?.*?\n\1", re.S)
 # ⭐ That is the ninth time in one day a tool read a DESCRIPTION of a thing as an INSTANCE of it,
 # and the second time it happened to this very helper - whose docstring already says so. Fixing
 # it here fixes every guard at once, which is the reason the helper exists.
-_MSG_FLAGS = r"-(?:m|F)|--(?:message|comment|body|body-file|subject|title|notes|description)"
+_MSG_FLAGS = (r"-(?:m|F)|--(?:message|comment|body|body-file|subject|title|notes|description"
+              r"|ruling|because|reason)")
+# --ruling / --because / --reason added 2026-10-09 (o9L1171): `orchdoc.py resolve --ruling
+# "...; claude auth status ... claude --cloud created ..."` was refused by
+# block_visible_windows.py, because the `;` inside the prose put `claude` in command position.
 _MSG_QUOTED = re.compile(r"(?:%s)[\s=]+(['\"])(?:\\.|(?!\1).)*\1" % _MSG_FLAGS, re.S)
 _MSG_TOKEN = re.compile(r"(?:%s)[\s=]+\S+" % _MSG_FLAGS)
 # `echo`/`printf` exist to EMIT text. Their arguments are never executed, and describing a
@@ -164,9 +170,23 @@ def declares(text, marker_re, path=None):
     fence regex to be told so - measured at +55% on every router query, which is the kind of
     number that gets a correct fix reverted.
     """
+    # ⛔ EVERY BRANCH OF THE PATTERN, NOT THE FIRST WORD IN IT. This read a single
+    # `re.search(r"[a-z][a-z-]{3,}", probe)` - and `MARKER_RE` is an ALTERNATION,
+    # `(?:cornerstone|subject)`, so the probe word was always `cornerstone`. A document
+    # declaring `<!-- subject: X -->` was skipped unless it also happened to contain that
+    # unrelated word somewhere in its prose.
+    #
+    # ⛔ MEASURED 2026-09-20: **62 live artifacts** were invisible to the knowledge tree
+    # this way, `PRIVACY-TERMS-CLAIMS-LEGAL-SOT.md` among them. Nothing reported it, because
+    # a cheap reject returns the same empty string as "this file has no marker" - the
+    # skipped file and the file with nothing to say are indistinguishable downstream.
+    #
+    # ⭐ The speed argument below is real and is kept: reject only when NONE of the
+    # pattern's words appear, which is the same single pass for the overwhelming majority of
+    # artifacts that carry no marker at all.
     probe = getattr(marker_re, "pattern", "")
-    m = re.search(r"[a-z][a-z-]{3,}", probe)
-    if m and m.group(0) not in text:
+    words = re.findall(r"[a-z][a-z-]{3,}", probe)
+    if words and not any(w in text for w in words):
         return ""
     hit = marker_re.search(outside_fences(declaration_region(text, path)))
     return hit.group(1) if hit else ""

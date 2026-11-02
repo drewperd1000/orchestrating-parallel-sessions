@@ -1,5 +1,7 @@
 """Standing choices live in a CONFIG FILE, not in a forked copy of the skill.
 
+<!-- subject: orchestration -->
+
 THE PROBLEM THIS REPLACES. The shared skill said *"follow the human's standing preference"* -
 correct, because it is read by people with different ones. So one machine hand-edited its own
 copy to say *"HYBRID by default"*, and every sync from the shared version overwrote that edit

@@ -1,5 +1,7 @@
 r"""Does the shell you are typing into mangle path arguments? Run it FROM that shell.
 
+<!-- subject: claude-tooling -->
+
 WHY THIS EXISTS. An orchestrator was warned that `git show <ref>:<path>` gets mangled here.
 They tested it, saw nothing, concluded the warning was wrong - and then spent real time chasing
 16 "missing" files that were all present. Their words: *"I dismissed it because I tested it with

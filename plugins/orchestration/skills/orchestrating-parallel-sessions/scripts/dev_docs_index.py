@@ -59,6 +59,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
 from mentions import declaration_region, outside_fences  # noqa: E402 - ONE definition
+import cloud_layout  # noqa: E402 - is_generated_copy, the one rule for .shared/cloud/
+import private_folders  # noqa: E402 - the folders outsiders write, ONE definition
+import leftover_files  # noqa: E402 - untracked files origin/main deleted, ONE definition
+try:
+    from no_window import flags  # noqa: E402
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -88,7 +96,21 @@ SUMMARY = re.compile(r"<!--\s*summary:\s*(?P<s>.+?)\s*-->", re.S)
 # Directories that hold no knowledge and cost seconds to walk.
 SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", ".astro", "coverage",
              "__pycache__", ".venv", "venv", ".codesight", "out", ".turbo", ".cache",
-             "voice_notes", "research_log"}
+             "voice_notes", "research_log",
+             # ⛔ `.worktrees` IS WHERE EVERY REPO HERE KEEPS ITS WORKTREES, and nothing under it
+             # is ever the canonical copy. The two worktree checks below miss a case that
+             # happened: a lane worktree REMOVED from a NESTED repo leaves its folder behind with
+             # untracked files and no `.git` at all - so it is neither `.git`-file-shaped nor in
+             # the workspace's `git worktree list` (the PWA repo keeps its own). Measured
+             # 2026-09-23: seven `product-app/.worktrees/o10L*/todo.md` copies of one PWA
+             # backlog were about to enter the index as seven rows.
+             ".worktrees"}
+# ⛔ NEVER WALKED: the folders whose files outsiders write (the app feedback form, the email
+# briefing), matched by NAME wherever they sit, in any case - the walk below also asks
+# private_folders.is_private_name, so `App-Feedback` is pruned too. Before 2026-10-03 nothing
+# excluded them, and a marked file in one would have put an outsider's title and summary into
+# DEV-DOCS-INDEX.md on origin/main (o9:W149 review fix 2).
+SKIP_DIRS |= set(private_folders.NAMES)
 
 
 def _load():
@@ -100,6 +122,47 @@ def _load():
 
 
 DATA = _load()
+STAMP_RE = re.compile(r"^\*\*Last updated: ([^*]+)\*\*")
+STAMP_MARK = "<<LAST-UPDATED>>"
+
+
+def _stamp_line(when):
+    return ("**Last updated: %s** _(stamped when the rows last changed, never hand-written. "
+            "A run that changes nothing keeps the date it found.)_" % when)
+
+
+def _without_stamp(text):
+    """Everything except the Last-updated line - so the date is never why the date changes."""
+    return "\n".join(l for l in (text or "").split("\n") if not STAMP_RE.match(l))
+
+
+def _resolve_stamp(new_text, old_text):
+    """Today if the rows moved, otherwise the date already on disk. This is what converges.
+
+    \u26d4 THE FIRST VERSION READ `git log -1` ON THIS FILE AND NEVER CONVERGED. Every landing
+    is a commit touching it, so the next run computed a newer date than the file held, reported
+    drift, was landed, and started over. Measured on a synced tree: the file said 09-Sep while
+    the log said 18-Sep, with nothing else changed.
+
+    \u2b50 `orchdoc.py`'s render_meta NAMES THIS TRAP - "the derived value cannot include
+    itself" - and answers it with `landing_now`, because there the committing tool IS the caller.
+    This generator commits nothing, so that answer does not transfer. **I quoted that comment
+    while building the thing it warns about.**
+
+    \u2b50 Comparing bodies WITHOUT the stamp is the whole trick: a run that changes no rows
+    keeps the date it found, so a no-op run stays a no-op.
+    """
+    import datetime as _dt
+    prev = None
+    for l in (old_text or "").split("\n"):
+        m = STAMP_RE.match(l)
+        if m:
+            prev = m.group(1).strip()
+            break
+    same = _without_stamp(new_text) == _without_stamp(old_text)
+    when = prev if (same and prev) else _dt.date.today().strftime("%d-%b-%Y")
+    return new_text.replace(_stamp_line(STAMP_MARK), _stamp_line(when))
+
 SECTIONS = DATA.get("sections", [])
 SECTION_ORDER = {s["slug"]: i for i, s in enumerate(SECTIONS)}
 
@@ -125,21 +188,48 @@ def read_markers(text):
             "summary": collapse(s.group("s")) if s else None}
 
 
-def harvest():
-    """Every artifact carrying the marker, under the workspace or the memory store."""
+def harvest(base=None, skipped=None):
+    """Every artifact carrying the marker, under the workspace or the memory store, less the
+    LEFTOVERS: untracked files whose path origin/main's history deleted (leftover_files.py).
+
+    `base` is the commit the nightly land step pinned, and makes the leftover test strict (it
+    raises leftover_files.CannotCheck when it cannot run). None is a run by hand or by
+    self-heal's check: origin/main, and every artifact kept when the test cannot run, as
+    before. `skipped`, when a list, receives each leftover dropped."""
     found = []
-    for base in (WS, MEM):
-        if not base.exists():
+    for store in (WS, MEM):
+        if not store.exists():
             continue
-        for root, dirs, files in os.walk(base):
+        # ⛔ PRIVATE FOLDERS UNDER ANOTHER NAME (o9 W152, lane o9L1118). The walk below prunes a
+        # private folder by its name, but Python 3.12's os.walk follows a junction, and a
+        # junction to app-feedback reaches its files under the junction's own name. So the walk
+        # starts in no private folder (private_folders.in_private_folder, which resolves the
+        # real path), enters no junction or symbolic link to a folder, and reads no file that is
+        # a symbolic link (private_folders.is_link). Testing is_link alone is enough below the
+        # start folder: a walk that follows no link only meets real folders under their long
+        # names, which the name test sees. On 2026-10-08 the one link this walk reached was the
+        # dangling junction `.wt-pulse-journeys`, so no row of the index came through a link.
+        if private_folders.in_private_folder(store):
+            continue
+        for root, dirs, files in os.walk(store):
             # Name-set first because it is free; then the path check, which is the only one
             # that can recognise a worktree - their basenames are generated and unguessable.
+            # `.shared/cloud/memory/` and `.shared/cloud/global-rules.md` are cloud_publish.py's copies
+            # of the memory notes and the global rules, which this walk reads where they are
+            # written: harvesting both would list every marked note twice. The hand-kept
+            # BUILD-RULES.md beside them is harvested (cloud_layout.is_generated_copy).
             dirs[:] = [d for d in dirs
-                       if d not in SKIP_DIRS and not _in_other_worktree(os.path.join(root, d))]
+                       if d not in SKIP_DIRS and not private_folders.is_private_name(d)
+                       and not private_folders.is_link(os.path.join(root, d))
+                       and not _in_other_worktree(os.path.join(root, d))
+                       and not _is_gitless_lane_dir(root, d)
+                       and not cloud_layout.is_generated_copy(os.path.join(root, d))]
             for f in files:
                 if not f.endswith(".md"):
                     continue
                 p = Path(root) / f
+                if cloud_layout.is_generated_copy(p) or private_folders.is_link(p):
+                    continue
                 # ⛔ NEVER HARVEST A GENERATED VIEW, STARTING WITH THIS SCRIPT'S OWN OUTPUT.
                 # The index quotes the marker syntax in its own header prose, so the first run
                 # read the file it had just written and reported it as an artifact declaring
@@ -164,6 +254,16 @@ def harvest():
                 mk = read_markers(head)
                 if mk:
                     found.append({"path": p, **mk})
+    # ⛔ A LEFTOVER IS NOT AN ARTIFACT (o9:W149, o9's ruling of 2026-10-03 on lane o9L1027's
+    # review). deliver.py writes and never deletes, so a doc deleted or moved on origin/main
+    # stays in the main checkout untracked, and this walk listed it again: the deleted doc's
+    # row came back, and a moved doc got a second row at a path origin/main no longer has.
+    left = []
+    found = leftover_files.drop(found, WS, base, left)
+    if left:
+        print(leftover_files.note(len(left)))
+    if skipped is not None:
+        skipped.extend(left)
     return found
 
 
@@ -200,7 +300,8 @@ def _reader_ws():
     try:
         import subprocess
         r = subprocess.run(["git", "worktree", "list", "--porcelain"],
-                           capture_output=True, text=True, timeout=15, cwd=str(WS))
+                           capture_output=True, text=True, timeout=15, cwd=str(WS),
+                           creationflags=flags())
         for line in r.stdout.split("\n"):
             if line.startswith("worktree "):
                 return Path(line[len("worktree "):].strip())
@@ -237,7 +338,8 @@ def _other_worktree_roots():
     try:
         import subprocess
         r = subprocess.run(["git", "worktree", "list", "--porcelain"],
-                           capture_output=True, text=True, timeout=15, cwd=str(WS))
+                           capture_output=True, text=True, timeout=15, cwd=str(WS),
+                           creationflags=flags())
         main = None
         for line in r.stdout.split("\n"):
             if not line.startswith("worktree "):
@@ -292,6 +394,22 @@ def _is_worktree_dir(path):
         return False
 
 
+def _is_gitless_lane_dir(parent, name):
+    """True for a child of a worktree root (`worktrees`, `*-worktrees`) that has no `.git`.
+
+    A lane folder with no `.git` (file or directory) is scratch left behind after its worktree
+    was removed, not a checkout. The nightly commit c40f93ca (2026-10-06) indexed 11 rows from
+    `product-app-worktrees/o10L*/todo.md` that way; third occurrence (o9:W162).
+    """
+    root_name = os.path.basename(os.path.normpath(parent)).lower()
+    if root_name != "worktrees" and not root_name.endswith("-worktrees"):
+        return False
+    try:
+        return not (Path(parent) / name / ".git").exists()
+    except OSError:
+        return False
+
+
 def _in_other_worktree(path):
     """True when this directory IS, or sits inside, a worktree that is not the reader's."""
     if _is_worktree_dir(path):
@@ -341,9 +459,10 @@ def render_orphan(o):
             "exists; nothing was dropped.*" % (head, o["path"], o["payload"], o["why"]))
 
 
-def build():
-    """(lines, problems) - the whole file, and anything that stopped it being clean."""
-    arts = harvest()
+def build(base=None, skipped=None):
+    """(lines, problems, artifacts) - the whole file, and anything that stopped it being clean.
+    `base` and `skipped` go to harvest()."""
+    arts = harvest(base, skipped)
     problems = []
     by_section = {}
     for a in arts:
@@ -365,6 +484,7 @@ def build():
                             % o["path"])
 
     L = [BANNER, "", "# %s" % DATA.get("h1", "DEV-DOCS-INDEX"), "",
+         _stamp_line(STAMP_MARK), "",
          DATA.get("header", ""), "",
          "**How this file is built.** Membership and every path are DERIVED: a doc appears "
          "here because it carries a `<!-- dev-doc: section=... -->` marker, and its path is "
@@ -490,6 +610,9 @@ def main():
         return 1
     new = "\n".join(lines).rstrip("\n") + "\n"
     old = OUT.read_text(encoding="utf-8", errors="replace") if OUT.exists() else None
+    # The stamp is decided HERE, where both texts exist, and only from whether the
+    # rows moved - so the `old == new` test below stays a true test of convergence.
+    new = _resolve_stamp(new, old)
 
     # ⛔ THE GUARD ABOVE FIRES AT ZERO, AND A PARTIAL TREE DOES NOT PRODUCE ZERO. Found by o1,
     # 2026-09-08, from a live loss: a session's commit touched a `dev-doc:`-marked file, the
@@ -648,6 +771,24 @@ def selftest():
         ok &= bool(cond)
 
     print("dev_docs_index selftest")
+
+    # ⭐ THE STAMP, BOTH DIRECTIONS. The first version of this field read `git log -1` on
+    # the index, so every landing made the next run differ - a generator that never converged.
+    # A no-op run keeping its date is the half that was broken; a real change moving it is the
+    # half that makes the field worth having. Neither is safe to leave untested.
+    import datetime as _dt
+    _today = _dt.date.today().strftime("%d-%b-%Y")
+    _old = _stamp_line("01-Jan-2020") + "\n- **[a](x.md)** row\n"
+    _newsame = _stamp_line(STAMP_MARK) + "\n- **[a](x.md)** row\n"
+    _newdiff = _stamp_line(STAMP_MARK) + "\n- **[a](x.md)** row\n- **[b](y.md)** row\n"
+    t("stamp KEEPS its date when no row moved",
+      "01-Jan-2020" in _resolve_stamp(_newsame, _old))
+    t("stamp MOVES to today when a row changed",
+      _today in _resolve_stamp(_newdiff, _old))
+    t("a first write with no previous file stamps today",
+      _today in _resolve_stamp(_newsame, None))
+    t("the placeholder never survives into the output",
+      STAMP_MARK not in _resolve_stamp(_newsame, _old))
     t("the authored shape loaded", bool(SECTIONS))
     t("section slugs are unique", len(SECTION_ORDER) == len(SECTIONS))
     t("every section has a title", all(s.get("title") for s in SECTIONS))
@@ -702,7 +843,7 @@ def selftest():
     if OUT.exists():
         real, before = harvest, OUT.read_text(encoding="utf-8", errors="replace")
         try:
-            globals()["harvest"] = lambda: []
+            globals()["harvest"] = lambda *_a, **_k: []
             argv, sys.argv = sys.argv, ["dev_docs_index.py", "--write"]
             rc = main()
         finally:
@@ -710,6 +851,94 @@ def selftest():
         t("an empty harvest REFUSES rather than blanking the index", rc == 1)
         t("...and the file on disk is untouched",
           OUT.read_text(encoding="utf-8", errors="replace") == before)
+
+    # ⛔ A LEFTOVER LANE FOLDER IS NOT A DOC. Walk a real temporary tree: a marker in a normal
+    # folder is found; the same marker in a `.worktrees/<lane>/` folder with NO `.git` - the
+    # shape a removed worktree of a NESTED repo leaves - is not. The control proves the walk ran.
+    import tempfile as _tf
+    import shutil as _sh
+    _tmp = Path(_tf.mkdtemp(prefix="ddi-"))
+    _mark = ("<!-- dev-doc: section=x order=10 -->\n<!-- dev-doc-title: T -->\n"
+             "<!-- summary: s -->\n")
+    try:
+        for rel in ("docs/real.md", "nested-repo/.worktrees/o10L60/todo.md",
+                    "x-worktrees/withgit/todo.md", "x-worktrees/nogit/todo.md"):
+            (_tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (_tmp / rel).write_text(_mark, encoding="utf-8")
+        # o9:W162: under a `*-worktrees` root a child with a `.git` is kept, one without is not.
+        (_tmp / "x-worktrees" / "withgit" / ".git").mkdir()
+        _saved = (globals()["WS"], globals()["MEM"])
+        try:
+            globals()["WS"], globals()["MEM"] = _tmp, _tmp / "no-memory-here"
+            _got = sorted(Path(a["path"]).relative_to(_tmp).as_posix() for a in harvest())
+        finally:
+            globals()["WS"], globals()["MEM"] = _saved
+        t("CONTROL: a marker in an ordinary folder is harvested", "docs/real.md" in _got)
+        t("a marker inside a leftover `.worktrees/<lane>/` folder is NOT",
+          not any(".worktrees/" in g for g in _got))
+        t("o9:W162 a `*-worktrees/<lane>/` folder WITH a `.git` is harvested",
+          "x-worktrees/withgit/todo.md" in _got)
+        t("o9:W162 a `*-worktrees/<lane>/` folder with NO `.git` is skipped",
+          "x-worktrees/nogit/todo.md" not in _got)
+
+        # ⛔ o9 W152 (lane o9L1118): A PRIVATE FOLDER UNDER ANOTHER NAME. Made-up marked files
+        # in a folder named `app-feedback` and in a plain folder, both OUTSIDE the walked tree,
+        # each reached through a junction inside it. Each check marked "failed before" failed
+        # on the walk before this fix. A store that starts inside app-feedback is not walked.
+        _out = Path(_tf.mkdtemp(prefix="ddi-out-"))
+        _links = []
+        try:
+            for rel in ("app-feedback/secret.md", "plain/other.md"):
+                (_out / rel).parent.mkdir(parents=True, exist_ok=True)
+                (_out / rel).write_text(_mark, encoding="utf-8")
+            _ws2 = _tmp / "ws2"
+            (_ws2 / "docs").mkdir(parents=True)
+            (_ws2 / "docs" / "real.md").write_text(_mark, encoding="utf-8")
+            _made = True
+            for target, link in ((_out / "app-feedback", _ws2 / "aliases"),
+                                 (_out / "plain", _ws2 / "plain_link")):
+                try:
+                    import _winapi
+                    _winapi.CreateJunction(str(target), str(link))
+                except Exception:
+                    try:
+                        os.symlink(target, link, target_is_directory=True)
+                    except Exception:
+                        _made = False
+                        continue
+                _links.append(link)
+            _saved = (globals()["WS"], globals()["MEM"])
+            try:
+                globals()["WS"], globals()["MEM"] = _ws2, _out / "app-feedback"
+                _got2 = sorted(Path(a["path"]).relative_to(_ws2).as_posix()
+                               if str(a["path"]).startswith(str(_ws2)) else str(a["path"])
+                               for a in harvest())
+            finally:
+                globals()["WS"], globals()["MEM"] = _saved
+            t("W152 CONTROL: the marked file in an ordinary folder is harvested",
+              "docs/real.md" in _got2)
+            t("W152 a store that starts inside app-feedback is not walked (failed before)",
+              not any("secret.md" in g and not g.startswith("aliases/") for g in _got2))
+            if not _made:
+                print("  NOTE: no junction or folder link could be made here; link cases skipped")
+            else:
+                t("W152 nothing is harvested through a junction to app-feedback (failed before)",
+                  not any(g.startswith("aliases/") for g in _got2))
+                t("W152 the walk follows no junction, even to a plain folder (failed before)",
+                  not any(g.startswith("plain_link/") for g in _got2))
+                t("W152 the whole harvest is the one ordinary file", _got2 == ["docs/real.md"])
+        finally:
+            for link in reversed(_links):
+                try:
+                    os.rmdir(link)              # a junction or folder link: the link only
+                except OSError:
+                    try:
+                        os.unlink(link)
+                    except OSError:
+                        pass
+            _sh.rmtree(_out, ignore_errors=True)
+    finally:
+        _sh.rmtree(_tmp, ignore_errors=True)
 
     t("the banner names the generator and forbids hand-editing",
       "GENERATED by .shared/scripts/dev_docs_index.py" in BANNER and "do not hand-edit" in BANNER)

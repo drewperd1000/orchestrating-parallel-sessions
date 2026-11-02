@@ -1,5 +1,7 @@
 """route.py - the knowledge system / decision tree, phase 1. Enter by SUBJECT; answers carry receipts.
 
+<!-- subject: knowledge-routing -->
+
 <!-- route-tags: knowledge system decision tree route find process sop where lookup discover -->
 
 WHY THIS EXISTS (the human, 2026-08-11): *"They shouldn't be grepping for answers and latching on to
@@ -96,6 +98,11 @@ import json
 import pathlib
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 
 try:
@@ -477,10 +484,26 @@ def harvest():
                          # installed and does nothing.
                          "canonical": {stem(c) for c in canonical}}
 
+    # POINTER STUBS (o1:W27): MEMORY.md links `m/<n>.md`, a GENERATED stub whose only content is
+    # "The note is [`x.md`](../x.md)". Resolve each stub to its note so (a) the MEMORY.md hook
+    # line credits the NOTE (keyed on the stub name it credited nothing, which is why two
+    # fixtures failed) and (b) the stub is not a hit of its own beside the note it points to.
+    from memory_index import stub_target as _stub_target
+    stub_target = {}
+    stub_dir = MEM / "m"
+    if stub_dir.is_dir():
+        for sp in stub_dir.glob("*.md"):
+            tgt = _stub_target(_read(sp, 4000))
+            # fold only when the note exists; a stub to a missing note stays a hit with its hook
+            if tgt and (MEM / tgt).exists():
+                stub_target[sp.resolve()] = tgt
     hooks = {}
     for line in _read(MEM / "MEMORY.md", 300000).split("\n"):
         for m in re.finditer(r"\(([\w./-]+\.md)\)", line):
-            hooks.setdefault(m.group(1).split("/")[-1], []).append(line)
+            name = m.group(1).split("/")[-1]
+            if m.group(1).startswith("m/") and (stub_dir / name).resolve() in stub_target:
+                name = stub_target[(stub_dir / name).resolve()]
+            hooks.setdefault(name, []).append(line)
 
     # ⛔ THE STORES COME FROM corpus.py, NOT FROM HERE. Two independent enumerations is how
     # this router reached 1,326 artifacts while the knowledge map reached 198 and neither could
@@ -494,6 +517,8 @@ def harvest():
     # S1 - memory notes, RECURSIVE. memory/automation/** holds the sweep + briefing runbooks
     # and was silently unharvested in v1 while the receipt claimed the memory store was covered.
     for p in by_kind.get("memory", []):
+        if p.resolve() in stub_target:
+            continue  # folded into its note (see POINTER STUBS above)
         # ⛔ TWO NAMES, TWO JOBS. `whole` is for DECLARATIONS, `t` is the capped prose. Reading
         # the tag line out of `t` is the defect PROSE_CAP documents; it looked identical to
         # working code for as long as no file outgrew its cap.
@@ -642,6 +667,144 @@ def _row(sc, a):
     return "    %-7s %-62s %s%s" % (a["kind"], short[:62], age, warn)
 
 
+_SUBJ_CACHE = {}
+
+
+def _declared_subject(path):
+    """The cornerstone a file DECLARES, or None. Read lazily and cached.
+
+    Read at verdict time from the top hits only, rather than captured during harvest. Harvest
+    has a dozen `add(...)` call sites and every one would have needed a new argument; the
+    verdict needs at most eight files. Fewer places to keep in step is the whole reason.
+    """
+    key = str(path)
+    if key in _SUBJ_CACHE:
+        return _SUBJ_CACHE[key]
+    try:
+        m = SUBJECT_RE.search(_outside_fences(_read(path, 40000) or ""))
+    except Exception:
+        m = None
+    _SUBJ_CACHE[key] = m.group(1) if m else None
+    return _SUBJ_CACHE[key]
+
+
+def _subject_vocabulary(subj):
+    """The stemmed alias vocabulary of a cornerstone, by NAME. Cached."""
+    if subj in _SUBJ_VOCAB:
+        return _SUBJ_VOCAB[subj]
+    words = set()
+    try:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        from knowledge_pages import SUBJECTS
+        desc, aliases = SUBJECTS.get(subj, ("", []))
+        for a in list(aliases) + [subj.replace("-", " ")]:
+            for w in re.split(r"[^a-z0-9]+", str(a).lower()):
+                if w:
+                    words.add(stem(w))
+    except Exception:
+        pass
+    _SUBJ_VOCAB[subj] = words
+    return words
+
+
+_SUBJ_VOCAB = {}
+
+_OWN_WORDS = {}
+
+
+def _own_words(path):
+    """The stems a file itself CONTAINS - not what its subject lends it. Cached.
+
+    \u26d4 `a["words"]` CANNOT ANSWER THIS. It is built from signals, and one signal is
+    `_subject_aliases`, which hands every member of a cornerstone that cornerstone's whole
+    vocabulary. That expansion is the router's best feature - it is what stops false misses -
+    and it makes every member look as though it holds every subject word. A split test run
+    against it can never see a gap, which is why `partial_split` measured 0 of 7 on queries
+    built from the subjects' own aliases before this existed.
+
+    \u2b50 TWO MECHANISMS IN DIRECT TENSION, AND BOTH ARE RIGHT. Expansion must widen matching;
+    the split test must narrow it. They can only coexist by reading different sources.
+    """
+    key = str(path)
+    if key in _OWN_WORDS:
+        return _OWN_WORDS[key]
+    try:
+        text = (_read(path, 200000) or "").lower()
+    except Exception:
+        text = ""
+    _OWN_WORDS[key] = {stem(w) for w in re.split(r"[^a-z0-9]+", text) if w}
+    return _OWN_WORDS[key]
+
+def partial_split(hits, toks, df, topn=8, band=None, artifact_count=None):
+    """(subject, {term: [artifact]}, members) when one SUBJECT holds the answer in pieces.
+
+    \u26d4 NOT A SCORE BAND, AND NOT A GUESS ABOUT MEANING. Every threshold on the score is a
+    proxy for "does this document answer you", which scoring cannot observe - that was the
+    argument against building PARTIAL at all (o9:D36). The human's question is what made it
+    buildable: *"What about integrating it with the use of the knowledge tree to help decide if
+    a specific subject is already covered?"* A cornerstone with members is a fact about the
+    tree, not an inference about prose.
+
+        PARTIAL = two or more of the top hits declare the SAME cornerstone, and NO single one
+                  of them holds all the distinguishing terms they hold between them.
+
+    Which is the sprawl signal itself: the subject has a home, and the answer is spread across
+    it. The receipt then names the subject to extend rather than only saying "do not create".
+
+    \u26d4 THE FIRST VERSION REQUIRED THE TOP HIT ITSELF TO BE MARKED, AND I MEASURED IT BEFORE
+    SHIPPING: 0 of 12 real queries. **91 of 1004 artifacts declare a subject at all - 9%** - so
+    keying on row 1 made the verdict unreachable, which is precisely the F215 defect rebuilt by
+    the person who recorded it. This version asks which SUBJECTS are represented among the hits
+    and never cares which row came first.
+
+    \u26a0\ufe0f MEASURED FIRE RATE, STATED SO NOBODY HAS TO RE-DERIVE IT: **1 of 16** real
+    queries at `band=12`, 0 of 16 at `band=3`. That is sparse, and the cause is not the rule -
+    it is that the tree is 9% populated. **It rises as ownership markers are added** (the
+    knowledge-tree review's Phase 2), and it cannot rise any other way. The human ruled build it
+    anyway: *"If the algorithm isn't perfect, it will still at least reduce the amount of sprawl
+    and keep things more honest."*
+
+    \u2b50 `band` IS THE TOP TWO RARITY TIERS `rank()` ALREADY USES (df <= 12), not the rarest
+    only. At df <= 3 nothing fired at all: in a corpus this size the terms that distinguish a
+    question are usually not the very rarest ones.
+    """
+    groups = {}
+    for _s, a in hits[:topn]:
+        subj = _declared_subject(a["path"])
+        if subj:
+            groups.setdefault(subj, []).append(a)
+    if band is None:  # W234: band scales with corpus; 1631 = the corpus size the fixed 12 was tuned on
+        band = max(12, round(12 * (artifact_count or 0) / 1631))
+    keys = {stem(x) for x in toks if df.get(stem(x), 99) <= band}
+    qstems = {stem(x) for x in toks}
+    for subj, members in groups.items():
+        if len(members) < 2:
+            continue
+        # THE SUBJECT MUST BE ON-TOPIC, NOT MERELY POPULATED. Driven and caught: "voice clone
+        # liveness whisper" reported PARTIAL on `orchestration`, matching `clone` in a git-clone
+        # doc and `liveness` in a hook-liveness script. `orchestration` is one of the largest
+        # cornerstones, so two of its members land in almost any top-8 - the detector was
+        # finding a BIG subject rather than a relevant one, and sending the session to extend
+        # the wrong document. A verdict that fires only on false positives is worse than one
+        # that never fires.
+        if not (qstems & _subject_vocabulary(subj)):
+            continue
+        held = {}
+        for a in members:
+            own = _own_words(a["path"])
+            for k in keys:
+                if k in own:
+                    held.setdefault(k, []).append(a)
+        if not held:
+            continue
+        # \u2b50 IF ONE MEMBER HOLDS EVERYTHING THE GROUP HOLDS, NOTHING IS SPLIT - that is a
+        # HIT with company, and calling it PARTIAL would be the cry-wolf direction.
+        if any(all(k in _own_words(a["path"]) for k in held) for a in members):
+            continue
+        return subj, held, members
+    return None
+
+
 def cmd_ask(args):
     toks, dropped = tokenize(args.terms)
     if not toks:
@@ -673,6 +836,26 @@ def cmd_ask(args):
         print("    (dates are mtime - unreliable after a git clone/checkout; trust the")
         print("     artifact's own Verified/Reviewed fields over this column)")
         print()
+        split = partial_split(hits, toks, df, artifact_count=len(arts))
+        if split:
+            subj, holders, _members = split
+            # \u26d4 THE VERDICT THE DOCSTRING PROMISED FOR FIVE WEEKS AND THE CODE NEVER
+            # ASSIGNED. o9:F215 measured it: three assignment sites, four advertised outcomes,
+            # zero PARTIAL in 126 logged runs. The human ruled BUILD (D36), on the reasoning that an
+            # imperfect signal still reduces sprawl and keeps the contract honest.
+            print("  \u26d4 PARTIAL - the subject `%s` already has a home, and your answer is"
+                  % subj)
+            print("     SPLIT across it. The top hit does not carry every rare term you asked")
+            print("     about; these artifacts under the same cornerstone do:")
+            for s in sorted(holders):
+                for a in holders[s][:2]:
+                    print("       %-18s %s" % (s, _row(0, a).strip()[8:].strip()))
+            print()
+            print("     \u2b50 EXTEND ONE OF THESE, DO NOT CREATE A SECOND. Then make it")
+            print("     findable by the terms you actually used:")
+            print("       route.py enrich <file> --terms %s" % " ".join(toks))
+            _VERDICT["last"] = "PARTIAL"
+            return 0
         print("  ⭐ IF THE TOP HIT DOES NOT FULLY ANSWER, THAT IS A PARTIAL - NOT A MISS.")
         print("     Extend the artifact THAT HOLDS THE SUBJECT (not merely the top row),")
         print("     then make it findable by the terms you actually searched with:")
@@ -896,6 +1079,20 @@ def cmd_fixtures(args):
         hits, weak, _df = rank(arts, toks)
         top = [str(a["path"]).lower() for _s, a in (hits + weak)[:8]]
         missing = [w for w in f["must_hit"] if not any(w.lower() in t for t in top)]
+        # \u2b50 A FIXTURE CAN NOW PIN A VERDICT, WHICH o9:F215 SAID NONE COULD: *"no fixture
+        # field names an expected verdict, and none could - there is nothing to assert against,
+        # since PARTIAL is never assigned."* That was true of the schema AND a consequence of
+        # the code. PARTIAL is assignable now (D36), so the untestable half of the four-outcome
+        # contract becomes testable, and the "10/10 fixtures" claim stops covering for it.
+        want_v = f.get("must_verdict")
+        if want_v and not missing:
+            got_v = ("PARTIAL" if partial_split(hits, toks, _df, artifact_count=len(arts))
+                     else ("HIT" if hits else ("WEAK" if weak else "VERIFIED MISS")))
+            if got_v != want_v:
+                bad += 1
+                print("  [FAIL] %-38s -> verdict %s, wanted %s"
+                      % (f["query"], got_v, want_v))
+                continue
         # ⛔ RANK, NOT MERE PRESENCE. The founding-case note fell from #1 to #5 and every
         # fixture stayed green, because they only asserted the artifact was IN the results.
         # A fixture that cannot tell first from fifth will not fire until the answer falls
@@ -993,7 +1190,7 @@ def _created(path):
     try:
         p = subprocess.run(["git", "-C", str(path.parent), "log", "--diff-filter=A",
                             "--format=%ad", "--date=short", "--", str(path)],
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=20, creationflags=flags())
         lines = [ln.strip() for ln in p.stdout.splitlines() if ln.strip()]
         if p.returncode == 0 and lines:
             return lines[-1], "git"
@@ -1023,6 +1220,23 @@ def _recheck(rec, arts):
             created, src = _created(a["path"])
             if created and created < rec["date"]:
                 out.append((sc, a, created, src, tier))
+    return out
+
+
+def _older_lines(older):
+    """One printed line per older artifact a falsified receipt reaches - EVERY one of them.
+
+    ⛔ This used to print `older[:5]` under a header that gave the full count, so a receipt
+    reaching 13 artifacts showed 5 and the reader could not see the other 8 (o1, 2026-10-20,
+    on cloud-environment-setup.md). Closing a falsified miss means reading each older artifact
+    and declaring it, so a name the output hides is a name nobody can close. The full path is
+    printed, never cut to a column width: a truncated path cannot be pasted into a
+    distinct-from line.
+    """
+    out = []
+    for _sc, a, created, src, tier in older:
+        p = str(a["path"]).replace(str(WS) + "\\", "").replace(str(MEM) + "\\", "memory\\")
+        out.append("       %-5s %-52s created %s (%s)" % (tier, p, created, src))
     return out
 
 
@@ -1090,9 +1304,8 @@ def cmd_receipts(_args):
         print("  ⛔ FALSIFIED MISS: %s" % short)
         print("     recorded %s, searching: %s" % (rec["date"], rec["terms"]))
         print("     those terms now reach %d artifact(s) that ALREADY EXISTED then:" % len(older))
-        for sc, a, created, src, tier in older[:5]:
-            p = str(a["path"]).replace(str(WS) + "\\", "").replace(str(MEM) + "\\", "memory\\")
-            print("       %-5s %-52s created %s (%s)" % (tier, p[:52], created, src))
+        for line in _older_lines(older):
+            print(line)
         print()
     print("  A NEWER artifact appearing here would be normal growth and is ignored. An OLDER")
     print("  one is not: it was sitting in the corpus while the miss was being declared, so")
@@ -1242,7 +1455,14 @@ def main():
     return rc
 
 
-USAGE_LOG = pathlib.Path.home() / ".claude" / "state" / "route-usage.jsonl"
+# ~/.claude/state/route-usage.jsonl. `$CLAUDE_HOME_STATE_DIR` moves it, and every test that
+# drives the ask path sets it: a timing run appended rows to the real log on 2026-09-25.
+try:
+    from shared_state import home_state_dir as _home_state_dir
+except ImportError:  # a published copy without shared_state.py keeps the historical path
+    def _home_state_dir():
+        return pathlib.Path.home() / ".claude" / "state"
+USAGE_LOG = _home_state_dir() / "route-usage.jsonl"
 _VERDICT = {"last": None}
 
 

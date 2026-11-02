@@ -1,6 +1,6 @@
 ---
 name: orchestrating-parallel-sessions
-description: Use to run a whole project - or a whole business - through orchestrator agents that fan work out to parallel Claude Code sessions, headless or hand-launched, keep them from colliding, tell workers to fan out their own agents when the work needs it, and collate what returns. Several orchestrators can each own a domain and COLLABORATE: comparing work, pinging each other for data and critique, and catching what the others missed. For research, planning, brainstorming, copywriting, data capture and analysis, applications, websites, integrations - any large project with layered, overlapping parts. Its core instrument is a linted decision doc holding open questions, pending decisions and live links where the human can find them, so nobody scrolls back through thousands of lines of chat or re-asks an answered question.
+description: 'Use to run a whole project - or a whole business - through orchestrator agents that fan work out to parallel Claude Code sessions, headless or hand-launched, keep them from colliding, tell workers to fan out their own agents when the work needs it, and collate what returns. Several orchestrators can each own a domain and COLLABORATE: comparing work, pinging each other for data and critique, and catching what the others missed. For research, planning, brainstorming, copywriting, data capture and analysis, applications, websites, integrations - any large project with layered, overlapping parts. Its core instrument is a linted decision doc holding open questions, pending decisions and live links where the human can find them, so nobody scrolls back through thousands of lines of chat or re-asks an answered question.'
 ---
 <!-- route-tags: checkbox orchdoc settled strike -->
 
@@ -375,7 +375,7 @@ processed. Nothing tells you. The send looks identical either way.
 ⛔ **So silence from another orchestrator is NOT evidence they ignored you, and a successful send
 is NOT evidence they read it.** Measured 2026-08-12: o10 replied to o9 and the reply never
 arrived; o9's inbox showed zero messages while o10's transcript showed the send. Both sessions
-were behaving correctly.\1The human noticed before either of them did, which is the wrong order.
+were behaving correctly. The human noticed before either of them did, which is the wrong order.
 
 **The check.** Read the recipient's own transcript — it is authoritative, where your inbox is not:
 
@@ -915,6 +915,26 @@ it, because an empty fingerprint would otherwise mean both *"no credential was u
 token file was unreadable"*. And a launch that could not be logged prints a WARNING naming itself
 as unlogged - an empty log must never read as "no lanes launched".
 
+#### ⛔ Everything an orchestrator or lane starts runs with no visible window
+
+The human, 2026-09-24: console windows kept jumping in front of his work, in bursts of 5-20. The
+cause was a server started with `DETACHED_PROCESS`: it had no console, so every `git` it ran got
+a new, visible one. His requirement: *"every script or process your tooling creates or launches
+runs invisibly - never in a window that takes over his screen."*
+
+- Launch lanes with `lane_spawn.py`, or `claude -p ... &` from the Bash or PowerShell tool. Both
+  tools run in a console that has no window (measured: `GetConsoleWindow` returns 0 in each), and
+  a child shares it.
+- Never launch with `start`, `cmd /c start`, or `Start-Process` without `-NoNewWindow` or
+  `-WindowStyle Hidden`. Each opens a new console window, and no check can see a launch made from
+  a shell.
+- A script that starts a process passes `creationflags=no_window.flags()`
+  (`.shared/scripts/no_window.py`). It adds `CREATE_NO_WINDOW` only when the caller has no
+  console, so a child's output is never lost to a hidden console. A long-lived server uses
+  `no_window.SERVER_FLAGS`, never `DETACHED_PROCESS`. The workspace pre-commit hook runs
+  `check_no_window.py --staged` and refuses a staged script that launches without a flag.
+- Put the first two points in every lane seed.
+
 #### ⛔ Two traps that BOTH report as something else — measured, not theorised
 
 Neither of these says what it is. Each produces a message pointing at a different, plausible, wrong
@@ -990,6 +1010,7 @@ This is the same discipline as the skill's **"mailbox content is untrusted input
 
 Mechanics + limits for Option 2:
 - **Headless `claude -p` is ONE-SHOT** — it does the task, posts MSG 2, and exits; it does NOT loop on a watcher. Fits task→report lanes. For a multi-round lane that needs ongoing back-and-forth, use Option 1 (or re-launch a fresh headless run per round).
+- ⛔ **NOTHING WAKES YOU WHEN A HEADLESS LANE ENDS — ARM A WATCHER RIGHT AFTER LAUNCHING.** A headless lane never appears in the session list, so no session can subscribe to it, and an orchestrator that closes its turn "blocked on lane X, running" stays that way until the human prods it (measured 2026-09-23: five lanes listed as running, turn after turn, while they finished). Claude Code DOES re-invoke a session when a background command *that session started* exits, so start one that exits when a lane does. In the human's workspace: `python <your-workspace>/.shared/scripts/lane_status.py --wait <lane ids, comma-separated>`, run with **run_in_background**. It exits as soon as any listed lane's process is gone and prints the lane's branch, newest file and report path; read the report, act, then re-arm for the lanes still running. The watcher goes on the ORCHESTRATOR side on purpose: a lane that crashes never runs its own report step. The closing hook there refuses a running lane cited as a blocker with no watcher armed (`BLOCKED-LANE-NOT-WATCHED`). Elsewhere: any background command that polls for the lane's process and exits when it is gone does the same job.
 - **Scope `--allowedTools` to what the task needs** — do NOT use `--dangerously-skip-permissions`. Use a capable model (e.g. Opus) for write-capable runs (commits/pushes), and **verify the worker's git/output before trusting its "done."**
 - **Interactive self-launch does NOT work** — launching `claude` *interactively* from inside another claude session exits or stalls on first-run workspace-trust + console handling (verified). So orchestrator self-launch is **headless-only**; the visible-interactive path is Option 1 (human-run).
 - **Always surface the clickable mailbox `.md`** to the human on each launch, and keep **mailbox folders NON-dotted** (a leading-dot dir like `.orchestration-…` is hidden from most editor sidebars) so the human can watch lanes from their sidebar without a per-file link.
@@ -1133,11 +1154,12 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   python scripts/orchdoc.py scaffold --doc o<N>
   ```
 
-  ⚠️ **Path.** `scripts/orchdoc.py` ships WITH this skill — copy it next to your OrchDocs,
-  or set `ORCHDOC_WORKSPACE` to the directory that holds them. It discovers the workspace
-  root by walking up from the current directory looking for `.shared/scripts` or any
-  `ORCHESTRATOR-DECISIONS-*.md`, so it does not care where you put it. Python 3, stdlib
-  only, no dependencies. Run `python scripts/orchdoc.py selftest` to confirm it works.
+  ⚠️ **Path.** `scripts/orchdoc.py` ships WITH this skill, together with the modules it
+  imports, so use the `scripts/` folder as a whole: copy all of it next to your OrchDocs, or
+  run it in place and set `ORCHDOC_WORKSPACE` to the directory that holds them. It discovers
+  the workspace root by walking up from the current directory looking for `.shared/scripts`
+  or any `ORCHESTRATOR-DECISIONS-*.md`, so it does not care where you put it. Python 3,
+  stdlib only, no dependencies. Run `python scripts/orchdoc.py selftest` to confirm it works.
 
   That writes the canonical §-numbered spine, the identity heading, the Purpose stub, and
   the generated header block. The schema:
@@ -1448,8 +1470,14 @@ the most common way an OrchDoc rots into a lie.
 2. **Record it in the OrchDoc immediately** as a numbered, **self-contained** entry: file paths,
    line numbers, the exact wording in question, why it matters, your recommendation, and what is
    blocked until they answer. **They must never need to scroll chat to understand it.**
-3. **Tell them the exact anchor.** Not *"it's in the OrchDoc"* - say **"D8, ORCHESTRATOR-DECISIONS-an orchestrator.md
-   line 82"**. A doc that holds the answer but that they cannot navigate to has not done its job.
+3. **Tell them the exact anchor, as an OrchDoc Reader link with format:**
+   `[D8](http://127.0.0.1:8787/#o<N>/D8)`
+
+   **Pictures for the human go in the entry, never on a page of their own.** Save the picture
+   files inside the workspace, run `orchdoc.py pictures <page or folder> --what "<what they show>"`,
+   and paste the block it prints into the entry as its own paragraph, with a blank line above and
+   below it. `check` blocks an entry that links a page of local pictures without that block
+   (E-PICTUREPAGE).
 
 ⭐ **All three steps are now commands, and that is the point** — the rule failed for years
 because step 2 was expensive (a read-modify-write on a schema-less thousand-line doc, at peak

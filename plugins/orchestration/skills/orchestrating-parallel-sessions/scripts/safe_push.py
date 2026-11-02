@@ -1,5 +1,7 @@
 """Refuse to push if it would DROP lines that are already on the remote.
 
+<!-- subject: infrastructure -->
+
 WHY. `orchdoc.py commit` has carried this gate for OrchDocs since the day a session nearly
 overwrote another orchestrator's work:
 
@@ -39,6 +41,11 @@ import os
 import pathlib
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 
 try:
@@ -49,7 +56,8 @@ except Exception:
 
 
 def git(args, cwd=None):
-    r = subprocess.run(["git"] + args, capture_output=True, text=True, cwd=cwd)
+    r = subprocess.run(["git"] + args, capture_output=True, text=True, cwd=cwd,
+                       creationflags=flags())
     return r.returncode, r.stdout, r.stderr
 
 
@@ -141,7 +149,7 @@ def main():
 
     branch = a.branch or subprocess.run(
         ["git", "-C", a.cwd, "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True).stdout.strip()
+        capture_output=True, text=True, creationflags=flags()).stdout.strip()
     if not branch or branch == "HEAD":
         print("  [CANNOT CHECK] no branch checked out (detached HEAD?). Pass --branch.")
         print("  This is NOT a statement that the push is safe. Nothing was pushed.")

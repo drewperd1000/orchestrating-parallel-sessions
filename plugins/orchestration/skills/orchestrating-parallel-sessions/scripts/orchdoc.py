@@ -35,11 +35,29 @@ INVARIANTS - each one traces to an observed failure, not a preference
   E-SELFCLAIM A section heading asserts a property of its own contents ("none open",
              "ACTIVE only"). Unmaintainable by construction: other sessions write to the
              section. This is the literal "None open while items are open" failure.
+  W-PRODUCTSTALE A `repo/path#needle` citation into a product repo, whose needle moved on
+             that repo's deploy branch after the review. (advisory; PRODUCT_STALE_BLOCKS)
+  W-PRODUCTNONEEDLE An entry citing product-repo files with no `#needle`, which can never go
+             stale. One per entry; `restamp` and `commit` print the suggestion.
+  W-PRODUCTGONE A cited product-repo file the deploy branch deleted or renamed. (advisory)
+  W-ORCHNOTE A `**NOTE from o<N>**` line. Notes are the human's channel to the orchestrators
+             (o9:W258); `note` and `instruct` refuse an orchestrator caller. (advisory)
   E-LINECITE A citation targets a line number. Rots on any insertion above it.
   E-SHACITE  A citation targets a bare commit SHA. Rots on rebase, and answers the wrong
              question after a squash-merge. Cite the commit SUBJECT instead.
   E-NOSTATUS A decision entry has no machine-readable Status field.
   E-STALE    The working-tree doc differs from the canonical ref. `freshness` only.
+  E-PRELABEL A line the landing ADDS names a script by a bare pre-label (SC-1, AT-3). The human,
+             2026-10-13 (o9:W210): scripts are named to him by library id with a Reader link;
+             "It's fine to keep them for your own inner processes, but I don't want to see
+             them." Inline code is exempt, old lines never trip it, and `add` refuses a title
+             that carries one. Pattern: orchdoc_ids.PRE_LABEL.
+  E-BURIEDASK An unchecked `- [ ]` sub-item this landing ADDS or REWORDS, inside an open entry
+             that is not a Q, D or T, asks the human to act ("the human rules on whether ...", "does he
+             want it changed?"). The human, 2026-10-15 (o9:W219): the plate lists entries, so a
+             question inside a W entry is buried. Move it to its own entry
+             (`add --kind question`), state it in full, and point the sub-item at it.
+             A pointer to a Q, D or T id, a checked box and old sub-items never trip it.
 
 EXIT CODES
 ----------
@@ -59,16 +77,101 @@ import time
 import datetime as _dt
 import shutil
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import tempfile
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+# ⭐ ONE definition of where cross-session logs live, in the module that already owns the
+# subject of shared mutable state. A second copy of that rule here is how the two drift.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import shared_state as _shared_state  # noqa: E402
+try:  # advisory W-upkeep checks (o8's W57 lessons), kept in their own module - see its docstring
+    import orchdoc_upkeep as _upkeep  # noqa: E402
+except ImportError:  # a partial delivery must not take the tool down
+    _upkeep = None
+try:  # how `selftest` deletes the temp folders it makes
+    from sandbox_env import _remove_tree  # noqa: E402
+except ImportError:  # publish_public_skill.py ships this file without sandbox_env.py
+    def _remove_tree(root):
+        """Delete the folder at `root`, never raising. git writes its object files read-only
+        and Windows refuses to delete a read-only file, so each delete that fails is retried
+        once with the file made writable - `shutil.rmtree(..., ignore_errors=True)` left every
+        such folder behind."""
+        def _retry(func, path, _exc):
+            try:
+                # 0o700 includes the write bit, which is the only bit os.chmod reads on Windows
+                os.chmod(path, 0o700)
+                func(path)
+            except Exception:
+                pass
+        try:
+            shutil.rmtree(root, **{("onexc" if sys.version_info >= (3, 12)
+                                    else "onerror"): _retry})
+        except Exception:
+            pass
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
+# ---------------------------------------------------------------------------------------------
+# W136: THIS FILE IS BEING SPLIT INTO PARTS, and a part runs in THIS module's namespace at the
+# place its lines had (orch-work-summaries/w136-split-plan/PLAN.md section 2). A part is
+# `orchdoc_parts/<name>.py` beside this file, and a line `_include("<name>")` at column 0 runs
+# it. Its names land in this module's globals, so a test that replaces `orchdoc.git` still
+# reaches every caller, and `__file__` and `__name__` stay this file's.
+#
+# ⛔ A COPY OF THIS TOOL IS THIS FILE AND ITS PARTS FOLDER. A copy without its parts fails at
+# import, and a stale part runs old code under a current orchdoc.py. So everything that compares
+# or carries a copy covers the folder too: _refuse_if_tool_is_stale below, check_tool_copies.py,
+# tool_drift.py (the plugin cache), deliver.py (when to resync the cache), orchdoc_publish.py
+# and publish_public_skill.py (the public skill). A check that reads this tool's own text reads
+# tool_source(), which adds the parts in include order.
+# ---------------------------------------------------------------------------------------------
+PARTS_DIR_NAME = "orchdoc_parts"
+#: An `_include` call. It starts at column 0, so a part's place in the file is plain to see.
+_INCLUDE_RE = re.compile(r'^_include\("([A-Za-z0-9_]+)"\)', re.M)
+
+
+def _include(name):
+    """Run the part `name` in this module's namespace, where the call stands.
+
+    The code object comes from SourceFileLoader, which reads and writes the part's normal
+    __pycache__ file, so an ordinary run does not recompile it."""
+    import importlib.machinery
+    path = Path(__file__).resolve().parent / PARTS_DIR_NAME / (name + ".py")
+    if not path.is_file():
+        # o9 W136 (o9L986): a copy of this tool without its parts used to stop every hook with
+        # a bare FileNotFoundError. Name the file and the command that brings the folder back.
+        _tree = Path(__file__).resolve().parents[2].as_posix()
+        raise FileNotFoundError(
+            "[orchdoc] the part %s/%s.py is not on disk (%s). A copy of this tool is "
+            "the file AND its parts folder. Restore them with:  git -C %s checkout "
+            "origin/main -- .shared/scripts/orchdoc.py .shared/scripts/%s"
+            % (PARTS_DIR_NAME, name, path, _tree, PARTS_DIR_NAME))
+    loader = importlib.machinery.SourceFileLoader("%s.%s" % (PARTS_DIR_NAME, name), str(path))
+    exec(loader.get_code(loader.name), globals())
+
+
+def tool_source(path=None):
+    """This tool's text: the file at `path` (default: this one), then the text of each part it
+    includes, in include order. A check that reads the tool's own source reads this, so lines
+    moved into a part stay in what the check sees."""
+    path = Path(path or __file__).resolve()
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return "\n".join([text] + [
+        (path.parent / PARTS_DIR_NAME / (name + ".py")).read_text(encoding="utf-8",
+                                                                  errors="replace")
+        for name in _INCLUDE_RE.findall(text)])
+
 
 def _find_workspace():
     """The workspace root, DISCOVERED. A hardcoded root is not portable to its own author.
@@ -116,16 +219,54 @@ def _find_workspace():
     # ⭐ A fallback that fires when discovery FAILS is a convenience. A fallback that
     # redirects a WRITE to an unrelated real directory is a hazard, because the caller
     # believes they are working somewhere else. Only honour it from inside its own tree.
-    legacy = Path(r"<your-workspace>")
+    #
+    # ⭐ DERIVED FROM THE HOME DIRECTORY, not spelled out. As a literal `<your-home>\...`
+    # this line was a second copy of "whose laptop is this", and it is the reason a Linux
+    # checkout could never take this branch even when the same layout existed. `Path.home()`
+    # produces the identical path on the human's machine and something honest everywhere else -
+    # and the `is_dir()` test below already makes a wrong guess a no-op.
+    legacy = Path.home() / "<your-workspace>"
     try:
         if legacy.is_dir() and Path.cwd().resolve().is_relative_to(legacy.resolve()):
             return legacy
     except (AttributeError, OSError):
         pass
+    # \u26d4 DISCOVERY FAILED AND THIS IS A GUESS, SO IT SAYS SO. Returning cwd silently is
+    # how a check that cannot resolve ANY cited path reports the same result as a check that
+    # resolved them all and found nothing wrong.
+    #
+    # o8 isolated a selftest cell to exactly this: the published orchdoc.py run from the plugin
+    # cache. Neither walk finds a marker, the legacy default is correctly gated on cwd, and the
+    # function handed back the cache scripts directory as THE WORKSPACE - a directory with no
+    # `.shared/scripts` and no `ORCHESTRATOR-DECISIONS-*.md`, satisfying neither of the two
+    # markers this docstring calls definitional. E-NEEDLESPACE then skipped every path it was
+    # meant to check and looked clean.
+    #
+    # \u2b50 The argument against this line is already in this function. The comment above the
+    # legacy default says a fallback that redirects a WRITE is a hazard "because the caller
+    # believes they are working somewhere else", and records two surgical recoveries from it.
+    # That reasoning was applied to the gated fallback and not to the ungated one below it.
+    #
+    # \u26a0\ufe0f It still RETURNS rather than raising - callers legitimately run from scratch
+    # directories and a hard failure would break them for a usually-harmless condition. What
+    # changes is that the guess is announced once and is queryable, so a check that needs real
+    # paths can report "I could not look" rather than "I looked and it was fine".
+    global WORKSPACE_IS_GUESS
+    WORKSPACE_IS_GUESS = True
     return Path.cwd()
 
 
+#: True when _find_workspace fell through to cwd - no marker was found anywhere.
+WORKSPACE_IS_GUESS = False
+
 PROJECTS = _find_workspace()
+if WORKSPACE_IS_GUESS and os.environ.get("ORCHDOC_QUIET_GUESS") != "1":
+    sys.stderr.write(
+        "\n[orchdoc] NO WORKSPACE MARKER FOUND - falling back to the current directory:\n"
+        "          %s\n"
+        "          It has no .shared/scripts and no ORCHESTRATOR-DECISIONS-*.md, so any check\n"
+        "          that resolves a cited path against it will find NOTHING and report clean.\n"
+        "          Run from inside the workspace, or set ORCHDOC_WORKSPACE.\n\n" % PROJECTS)
 # The ref that IS the truth. Overridable, because "origin/main" is an assumption, not a
 # fact: a repo whose default branch is `master` (this tool's own published repo, as it
 # happens) gets wrong answers from every freshness and verify oracle, and it was the
@@ -137,7 +278,7 @@ def _canonical_ref():
     try:
         p = subprocess.run(["git", "symbolic-ref", "--quiet", "--short",
                             "refs/remotes/origin/HEAD"],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=10, creationflags=flags())
         if p.returncode == 0 and p.stdout.strip():
             return p.stdout.strip()          # e.g. "origin/master"
     except Exception:
@@ -155,10 +296,29 @@ CANONICAL_REF = _canonical_ref()
 # ("<private-repo> b516cc2"). A checker that cries wolf is worse than no checker -
 # it teaches everyone to ignore it, which is how the previous mechanism died.
 # Repos that live outside the workspace tree and cannot be discovered by walking it.
-_EXTERNAL_REPOS = [
-    Path(r"~/.claude/plugins/marketplaces/<your-marketplace>"),
-    Path(r"~/.claude/projects/<project>/memory"),
-]
+#
+# ⭐ READ FROM `workspace_paths`, the one module that knows where these folders are (D64
+# Phase 1). Both entries were once literal home-folder strings, then a derivation here from
+# `Path.home()` and the slug of `PROJECTS`. That derivation named the memory repo from
+# whichever worktree called, so from a worktree it pointed at a folder that does not exist
+# and every memory citation read as dead. workspace_paths names MEM from the MAIN checkout,
+# honours $CLAUDE_MEMORY_DIR, $CLAUDE_HOME and $CLAUDE_CONFIG_DIR, and handles Claude Code's
+# 200-character slug limit. A path that does not apply on this machine is still a no-op:
+# `citable_repos` keeps only entries with a `.git`.
+#
+# Imported when orchdoc.py loads, although importing workspace_paths starts a git process
+# and ten hooks import orchdoc.py. Measured 2026-10-02 (o9 W140, lane o9L997), median of 5
+# fresh interpreters run alternately: `import orchdoc` took 242 ms with the derivation this
+# replaced and 272 ms with this import, so it adds about 30 ms, under the 50 ms at which the
+# plan said to import it on first use instead.
+try:
+    import workspace_paths as _wp  # noqa: E402
+    _EXTERNAL_REPOS = [
+        _wp.CLAUDE_HOME / "plugins" / "marketplaces" / "<private-repo>",
+        _wp.MEM,
+    ]
+except ImportError:  # a partial delivery must not take the tool down
+    _EXTERNAL_REPOS = []
 
 
 def _main_worktree():
@@ -170,7 +330,7 @@ def _main_worktree():
     """
     try:
         p = subprocess.run(["git", "worktree", "list", "--porcelain"],
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15, creationflags=flags())
         for line in p.stdout.split("\n"):
             if line.startswith("worktree "):
                 return Path(line[len("worktree "):].strip())
@@ -226,6 +386,58 @@ def citable_repos():
             seen.add(str(r))
             out.append(r)
     return out
+
+
+def cloud_mode():
+    """True inside a Claude Code cloud session.
+
+    Read from the environment on EVERY call, never cached into a module constant, so a
+    test can set it and clear it around one check - which is the only way to assert that
+    the laptop answer did not move.
+    """
+    return os.environ.get("CLAUDE_CODE_REMOTE", "").strip().lower() == "true"
+
+
+def _is_shallow(repo):
+    rc, out, _ = git(["rev-parse", "--is-shallow-repository"], cwd=repo)
+    return rc == 0 and out.strip() == "true"
+
+
+def ref_settle_limits(repos=None):
+    """Why a commit that resolves in NO repo here may still be perfectly alive elsewhere.
+
+    Returns a short reason, or "" when this environment can settle a citation as
+    completely as the laptop can.
+
+    ⛔ THE CLOUD CLONE IS SHALLOW, AND THAT ALONE MANUFACTURED 205 DEAD POINTERS.
+    Measured 2026-09-26 on a fresh cloud session: `check --doc o9` reported E-DEADREF=263.
+    `git fetch --unshallow` took the clone from 110 commits to 3671 and the same command
+    reported 58 - without a single character of the document changing. Every one of those
+    205 citations was correct, and the tool called all of them dead.
+
+    ⭐ AND THE REMAINING 58 ARE THE SECOND LIMIT, NOT A RESIDUE OF THE FIRST. They cite
+    <private-repo>, the memory repo, the PWA, the marketing site and
+    orchestrating-parallel-sessions - the sibling repos `citable_repos()` discovers beside
+    the main checkout on the laptop and which a cloud session is not permitted to clone.
+    `97dada6` is the specimen this file's own comments already name as real.
+
+    ⭐ THE RULE THIS ENCODES: a checker may report what it VERIFIED, never what it could
+    not look at. "Resolves nowhere I can see" and "does not exist" are two different facts,
+    and E-DEADREF is only entitled to the second. This function is how the caller tells
+    them apart, so the demotion is conditioned on a measured incapacity rather than on the
+    environment's name.
+    """
+    repos = [r for r in (citable_repos() if repos is None else repos)
+             if (r / ".git").exists()]
+    bits = []
+    shallow = sorted({r.name for r in repos if _is_shallow(r)})
+    if shallow:
+        bits.append("shallow history in %s (run: git fetch --unshallow)"
+                    % ", ".join(shallow[:3]))
+    if len(repos) <= 1:
+        bits.append("no sibling repo is present, so a cross-repo citation cannot be "
+                    "settled from here")
+    return "; ".join(bits)
 
 # An entry ID: D1, D21, DA12, F1, S1, W1, Q1, A1, D-PAUSE, D-SC1, B2.
 ID_RE = re.compile(r"^([A-Z]{1,3}(?:\d+[a-z]?|-[A-Z][A-Z0-9]*\d*))\b")
@@ -319,6 +531,13 @@ VALID_STATUS = {
     # the human's D5 ruling, 2026-08-07: settled, but the authorised work is unfinished. All three
     # spellings, because he wrote the spaced form and that is what everyone will type.
     "IN PROGRESS", "IN-PROGRESS", "INPROGRESS",
+    # \u2b50 SEQUENCED - the human, 2026-09-18, after W25 read IN PROGRESS while blocked by his own
+    # ruling with zero motion for two weeks. It is not BLOCKED (nothing broke) and not DEFERRED
+    # (it will happen); it is deliberately ORDERED behind named work. There was no word for that
+    # state, so the entry wore the nearest live-sounding one and reported progress that had
+    # stopped. A vocabulary with no word for a real state does not prevent the state - it
+    # mislabels it.
+    "SEQUENCED",
     # closed out
     "RESOLVED", "ANSWERED", "DONE", "SUPERSEDED", "ARCHIVED",
     # ⭐ RETRACTED IS NOT SUPERSEDED, AND AN EVIDENCE INSTRUMENT NEEDS THE DIFFERENCE.
@@ -343,8 +562,66 @@ def owner_text(body):
     return m.group(1).replace("*", "").strip() if m else ""
 
 
+# THE HUMAN'S NAME IS DATA, NOT CODE. The plate is the entries whose Owner field names the person
+# who reads it. That name used to be one fixed word written into `owner_is_drew`, so a copy of this
+# tool used by anyone else found an empty plate: every entry they filed for themselves counted as
+# somebody else's. The name is now the one the plate heading already uses (`human_name()`: the
+# `human_name` key of the workspace's `.orchdoc-config.json`, else the first name on the Claude
+# Code account), plus any `human_owner_aliases` in `facets_vocabulary.json` beside this file. In
+# the author's workspace the config names the author, so the test accepts what it accepted before.
+# The heading and the test read the same source, so they cannot name different people.
+_HUMAN_OWNER_CACHE = {}
+
+
+def _vocabulary_human_aliases():
+    """Lower-case aliases the vocabulary file gives the human; [] when the file is absent."""
+    try:
+        voc = Path(__file__).resolve().parent / "facets_vocabulary.json"
+        return [str(n).lower() for n in
+                json.loads(voc.read_text(encoding="utf-8")).get("human_owner_aliases", [])]
+    except Exception:
+        return []            # no vocabulary: the name from human_name() is enough
+
+
+def human_owner_names():
+    """The lower-case names an Owner field may use for the human who reads the plate."""
+    names = {human_name().lower()} | set(_vocabulary_human_aliases())
+    return {n for n in names if n}
+
+
+def _human_owner_re():
+    """`human_owner_names()` as one compiled pattern, kept until the workspace or config changes.
+
+    Cached because the plate asks once per entry and `human_name()` reads two files each time.
+    The key holds the config file's size and modified time, so an edited name is used on the next
+    call and a long-running Reader does not need a restart for it.
+    """
+    try:
+        st = (Path(PROJECTS) / ".orchdoc-config.json").stat()
+        sig = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        sig = None
+    key = (str(PROJECTS), sig)
+    rx = _HUMAN_OWNER_CACHE.get(key)
+    if rx is None:
+        names = sorted(human_owner_names(), key=len, reverse=True)
+        if names:
+            # (?<!\w) and (?!\w) are what \b means at the ends of a name made of word characters.
+            rx = re.compile(r"(?<!\w)(?:%s)(?!\w)" % "|".join(re.escape(n) for n in names), re.I)
+        else:
+            rx = re.compile(r"(?!)")     # no name known: nothing is the human's
+        _HUMAN_OWNER_CACHE.clear()       # one entry only, so a changing workspace cannot grow it
+        _HUMAN_OWNER_CACHE[key] = rx
+    return rx
+
+
 def owner_is_drew(body):
     r"""True when an entry's Owner field MENTIONS the human - the one test for "this is his".
+
+    "the human" is the human this workspace is for, as `human_owner_names()` says: the name in
+    `.orchdoc-config.json` or on the Claude Code account, plus the vocabulary file's aliases.
+    In the author's workspace that is the author, and in anyone else's it is the user's own name,
+    so a copy of this tool that is not the author's still puts that user's entries on their plate.
 
     ⛔ ONE DEFINITION, because two readers disagreeing is how a checker reports a doc wrong that
     the generator just wrote correctly. `check_plate_fresh.py` had its own copy using an EXACT
@@ -371,7 +648,7 @@ def owner_is_drew(body):
     such cases - so the class is live but unpopulated, the same shape as the bolded owner above.
     Write who will act; put where it came from in the body.
     """
-    return bool(re.search(r"\bdrew\b", owner_text(body), re.I))
+    return bool(_human_owner_re().search(owner_text(body)))
 
 
 # the human's ruling on D5, 2026-08-07. Four orchestrators asked for a status meaning "settled, but
@@ -380,7 +657,7 @@ def owner_is_drew(body):
 # are done. No new vocabulary - IN PROGRESS and ~~strikethrough~~ already meant this - and the
 # struck sub-items STAY VISIBLE, because seeing where the finished work sits is what lets him
 # rule on the rest. We were all solving the writer's labelling problem; he answered the reader's.
-LIVE_STATUS = PLATE_STATUS | {"IN PROGRESS", "IN-PROGRESS", "INPROGRESS"}
+LIVE_STATUS = PLATE_STATUS | {"IN PROGRESS", "IN-PROGRESS", "INPROGRESS", "SEQUENCED"}
 
 
 def follows_stopsign_convention(entries):
@@ -397,7 +674,8 @@ def follows_stopsign_convention(entries):
     diluted in the first place.
     """
     for e in entries:
-        if status_of(e["body"]) in TERMINAL_STATUS and "\u26d4" in e["body"]:
+        # o9 W126: a stop sign inside pasted (fenced) text is the source's, not the doc's.
+        if status_of(e["body"]) in TERMINAL_STATUS and "\u26d4" in prose_only(e["body"]):
             return False
     return True
 
@@ -408,8 +686,29 @@ def has_open_subitems(body, stopsign_means_open=False):
     Deliberately reuses the same two marker regexes as W-STRIKEDONE and E-MIXEDSTATE. A third
     private definition of "done" would be a third thing to drift - the marker-format-is-a-
     contract lesson, applied inside one file.
+
+    A thin wrapper over `first_open_subitem` for the same reason: WHICH bullet is open and
+    WHETHER one is are the same question, and two loops answering it would drift.
     """
-    for raw in body.splitlines():
+    return first_open_subitem(body, stopsign_means_open) is not None
+
+
+def first_open_subitem(body, stopsign_means_open=False):
+    """(offset-in-body, the raw line) of the first sub-item that is NOT done, or None.
+
+    ⛔ THE OFFSET IS WHY THIS EXISTS. `E-CLOSEDWITHOPENSUBS` reported the ENTRY'S HEADING
+    line, so the author was told an entry had open work and left to find which bullet - o1
+    hit that three times in one evening on a single entry, on a different word each time.
+    And the refusal log built beside this recorded the heading too, which made it useless
+    for the one question it exists to answer: a code and a count say the gate fired, only
+    the SENTENCE says whether it should have.
+
+    Caught by `test_gate_refusal_log.py` asserting on the text rather than on the row.
+    """
+    # o9 W126: a bullet inside pasted (fenced) text is the source's, not a sub-item. The
+    # fenced rows are blanked, so every offset stays true.
+    body = prose_only(body)
+    for off, raw in enumerate(body.splitlines()):
         # Strip code spans AND strikethrough. o7 found that striking a sub-item did not clear
         # the very finding that prescribes striking it: `~~Copy is UNCHANGED pending your
         # call~~` still matched on "pending". Every sub-item worth striking contains exactly
@@ -422,11 +721,15 @@ def has_open_subitems(body, stopsign_means_open=False):
         txt = re.sub(r"~~.*?~~", "", re.sub(r"`[^`]*`", "", raw))
         if not re.match(r"\s*(?:[-*+]|\d+[.)])\s", txt):
             continue                      # only sub-items, not the entry's own fields
+        # o9 W166-B (o1 F58): a TICKED box is done whatever words follow it ("- [x] ... still
+        # pending the human" is a record of what was done, not open work).
+        if re.match(r"\s*(?:[-*+]|\d+[.)])\s+\[[xX]\]", txt):
+            continue
         if _OPEN_SUBITEM_RE.search(txt):
-            return True
+            return off, raw
         if stopsign_means_open and "\u26d4" in txt:
-            return True
-    return False
+            return off, raw
+    return None
 
 
 # NARROWER than NOTDONE_MARK_RE on purpose. That one includes the stop sign, which across these
@@ -442,9 +745,23 @@ def has_open_subitems(body, stopsign_means_open=False):
 # should have caught that reported "0 hits" for all seven docs, because the counting grep read
 # a crashed run as a clean one. Two silent surfaces agreeing on a false picture, again: this
 # time the check was dead and the measurement said it was quiet.
+# ⛔ THE BOUNDARY REJECTS A WORD THAT CONTINUES INTO AN IDENTIFIER, and `-`/`_` are why.
+# Found by o1, 2026-09-18: `TODO-backlog` is the NAME of a row in MEMORY.md, and this
+# matched it inside a `- [x]` DONE sub-item, refusing the entry for having open work while
+# its own checkbox said finished. **A word standing in for a role** - o9's 6d, committed
+# inside the guard 6d is about, and the sharpest instance yet: the entry was correctly
+# marked done in the very form this gate reads, and the gate preferred the prose.
+#
+# ⚠️ WHY NOT "A CHECKED BOX WINS", which o1 also proposed and then argued against
+# themselves: it would swallow the real case where somebody ticks a box and writes "still
+# pending" underneath. That is E-MIXEDSTATE's job. This gives up none of it.
+#
+# ⚠️ AND A FIX THAT NEEDS AUTHORS TO QUOTE THEIR NOUNS IS NOT A FIX. o1 cleared
+# their own case with a code span, which this function strips - and flagged it as exactly
+# the "reword to dodge the regex" escape the docstring warns against.
 _OPEN_SUBITEM_RE = re.compile(
-    r"⏳|(?<![A-Za-z])(?:NOT DONE|NOT YET|NOT STARTED|OUTSTANDING|STILL NEED"
-    r"|STILL TO|TODO|PENDING|UNBUILT|AWAITING)(?![A-Za-z])", re.I)
+    r"⏳|(?<![A-Za-z_-])(?:NOT DONE|NOT YET|NOT STARTED|OUTSTANDING|STILL NEED"
+    r"|STILL TO|TODO|PENDING|UNBUILT|AWAITING)(?![A-Za-z_-])", re.I)
 
 
 
@@ -587,7 +904,7 @@ def render_stamp(date, who, why):
 # ==========================================================================================
 # A NOTE THE HUMAN WROTE ON AN ENTRY
 #
-# ⛔ IT LIVES IN THE ORCHDOC, NOT IN A SIDECAR AND NOT IN THE BROWSER.\1The human asked whether he
+# ⛔ IT LIVES IN THE ORCHDOC, NOT IN A SIDECAR AND NOT IN THE BROWSER. The human asked whether he
 # could add his own notes in the OrchDoc reader and have them be DURABLE. `localStorage` dies
 # with a browser profile, so it is not durable; a sidecar file is durable and useless, because
 # **a note he writes on an entry is FOR the orchestrator who owns that entry**, and a file
@@ -660,9 +977,46 @@ NOTE_LINE_RE = re.compile(
     r"^\s*>\s*(?:" + SEEN_MARK + r"\s*)?"
     r"\*\*(?P<kind>NOTE|INSTRUCTION) from (?P<who>[^*<>\n]{1,40})\*\*\s*"
     r"\((?P<when>[^)<>\n]{1,40})\)\s*:\s*"
-    r"(?P<text>.*?)\s*<!--\s*" + NOTE_MARK + r"\s+(?P<nid>n\d{1,4})"
+    r"(?P<text>.*?)\s*<!--\s*" + NOTE_MARK + r"\s+"
+    # \u2b50 AN ID NAMES ITS ENTRY: `D38.n2`, not `n13`. The human, 2026-09-18: *"n13 tells me
+    # nothing about what item you\'re referencing"*. A bare id is a position in a file; a
+    # scoped one is an address - the same argument as citing an entry id over a line number.
+    #
+    # \u26d4 THE PREFIX IS OPTIONAL BECAUSE THIRTEEN BARE IDS ALREADY EXIST, several of them
+    # acknowledged. A format change that orphans them is data loss wearing a rename.
+    r"(?P<nid>(?:[A-Z]{1,3}\d{1,4}[a-z]?\.)?n\d{1,4})"
+    # o9L1437 (the human, 2026-10-21, paragraphs in notes): `ESC` after the id says the text is stored
+    # backslash-escaped (see `encode_note_breaks`). A note without it is read exactly as before,
+    # so a pre-existing note that happens to hold a backslash is not reinterpreted.
+    r"(?P<enc>\s+ESC)?"
     r"(?:\s+ACK\s+(?P<ack>[A-Za-z0-9][A-Za-z0-9:_.\- ]{0,38}[A-Za-z0-9]))?"
     r"\s*-->\s*$")
+
+
+# ⛔ LINE BREAKS IN A NOTE (o9L1437, the human 2026-10-21: *"after I submit the text, the paragraph
+# structure is lost. When I'm trying to leave copy for the website, those are important"*).
+# A note is ONE file line, so the breaks are stored as an escape that cannot collide with typed
+# text: `\` is stored as `\\` and a line break as `\n`. A literal `<br>` is therefore ordinary
+# text. The marker carries `ESC` so only notes written this way are decoded.
+def encode_note_breaks(lines):
+    """Join already-sanitized lines into the one-line escaped form."""
+    return "\\n".join(l.replace("\\", "\\\\") for l in lines)
+
+
+_NOTE_ESC_RE = re.compile(r"\\([\\n])")
+
+
+def decode_note_text(text, enc):
+    """The text a person typed, from the stored text. Only an `ESC` note is decoded."""
+    if not enc or not text:
+        return text or ""
+    return _NOTE_ESC_RE.sub(lambda m: "\n" if m.group(1) == "n" else "\\", text)
+
+
+def note_display(n):
+    """A parsed note's real text, with real line breaks."""
+    return decode_note_text(n.get("text"), n.get("enc"))
+
 
 # ⛔ THE ACK IS RECORDED IN THE MACHINE HALF AND FLAGGED IN THE VISIBLE ONE - BOTH, AND
 # THE HUMAN RULED THAT ON 2026-09-16.
@@ -696,17 +1050,69 @@ def ack_token(who, when):
 # `n1`, `n2`, ... allocated per DOCUMENT rather than per entry, so `--note n7` is unambiguous
 # without also naming the entry, and so a note cannot collide with one on a neighbouring entry
 # if an entry is ever split.
-NOTE_ID_RE = re.compile(r"^n\d{1,4}$")
+# \u26d4 THE THIRD PLACE THE NOTE-ID SHAPE IS WRITTEN DOWN, and the one that had no tie to the
+# others. `NOTE_LINE_RE` exists twice - here and in orchdoc_stop_check.py - with a test asserting
+# those two agree. This one was left out of that tie, so widening the line pattern made the parser
+# accept `D2.n1` while THIS still refused it at the argument. A format half-landed is a format
+# that lies about itself.
+#
+# \u2b50 It must accept exactly what NOTE_LINE_RE's `nid` group accepts. `test_reader_notes.py`
+# now drives both forms through the CLI, which is what makes that agreement checkable rather than
+# asserted here in a comment.
+NOTE_ID_RE = re.compile(r"^(?:[A-Z]{1,3}\d{1,4}[a-z]?\.)?n\d{1,4}$")
 
 
 # ⛔ THE DURABLE LIMIT, NAMED, BECAUSE A CALLER HAS TO REFUSE AT THE SAME NUMBER.
 # `sanitize_note` TRUNCATES past this and appends "..." - so a server that accepted more
 # would RECORD LESS THAN IT DELIVERED, and nobody would be told which half survived.
 # `render_orchdoc_reader.py` imports this rather than carrying its own figure.
-NOTE_TEXT_LIMIT = 2000
+# o9:W147 (the human, 2026-10-03): raised from 2000 to 7500. The Reader and its Do-today form read it.
+NOTE_TEXT_LIMIT = 7500
 
 
-def sanitize_note(text, limit=NOTE_TEXT_LIMIT):
+def _sanitize_note_line(t):
+    # Leading spaces are the indentation of a sub-bullet or an indented line: kept as typed
+    # (a tab becomes four spaces). The marker (`- `, `* `, `1. `, `2) `) is kept too.
+    t = t.replace("\t", "    ") if t[:1] in " \t" else t
+    lead = re.match(r" *", t).group(0)
+    rest = sanitize_field(t[len(lead):], None, strip_lead=False)
+    t = (lead + rest) if rest else ""
+    t = t.replace("```", "(fence)")
+    t = re.sub(r"<\s*/?\s*span", "(span", t, flags=re.IGNORECASE)
+    return t.replace(NOTE_MARK, "ORCHDOC_NOTE")
+
+
+def sanitize_note(text, limit=NOTE_TEXT_LIMIT, enc=True):
+    """`enc=True` (a note being written): line breaks are kept, as the escaped one-line form.
+    `enc=False` (a stored legacy note, or an item title): the old one-line narrowing."""
+    if enc:
+        if limit is not None:
+            text = refuse_if_too_long(text, limit, "note text")
+        # Each line is narrowed on its own, WITHOUT the leading `-*#>` strip (the line is not
+        # at the start of a file line once stored) and without joining lines. splitlines()
+        # (o9L1439): \r\n, \r, U+2028 and the other separators are each a typed break.
+        rows = [_sanitize_note_line(r) for r in (text or "").splitlines()]
+        while rows and not rows[0]:
+            rows.pop(0)
+        while rows and not rows[-1]:
+            rows.pop()
+        if rows:
+            # The text sits after `): ` on a `> **NOTE` line, so a leading marker cannot make
+            # a heading or a list; it is kept. The reader of the line skips leading blanks.
+            rows[0] = rows[0].lstrip()
+        return encode_note_breaks(rows)
+    return _sanitize_note_legacy(text, limit)
+
+
+def _sanitize_note_legacy(text, limit=NOTE_TEXT_LIMIT):
+    # ⛔ REFUSE RATHER THAN CUT. A note is what a human typed; the cap exists
+    # because the text arrives from a browser, not because the words are
+    # unwelcome. Silently shortening it is the defect the human ruled out.
+    # o9:W147 review: the limit is for what a person TYPED. Text already stored (an ack, a
+    # delete re-render) passes limit=None: sanitizing lengthens it ("```" -> "(fence)"), so
+    # re-checking it would refuse a note that was accepted, and the Stop hook would block forever.
+    if limit is not None:
+        text = refuse_if_too_long(text, limit, "note text")
     """Narrow a note's text so it cannot impersonate structure. See `sanitize_field`.
 
     ⛔ THE INPUT ARRIVES FROM A BROWSER. `sanitize_field` already removes the dangerous
@@ -723,14 +1129,17 @@ def sanitize_note(text, limit=NOTE_TEXT_LIMIT):
     The limit is generous but finite: an unbounded note is its own denial of service on a
     document meant to be read, and one line is one line.
     """
-    t = sanitize_field(text or "", limit)
+    # o9:W147: no second cut. `refuse_if_too_long` above already refused anything over the limit;
+    # sanitizing can lengthen a text a little ("```" becomes "(fence)"), and a cut here would
+    # store less than the 7500 characters the Reader accepted.
+    t = sanitize_field(text or "", None)
     t = t.replace("```", "(fence)")
     t = re.sub(r"<\s*/?\s*span", "(span", t, flags=re.IGNORECASE)
     t = t.replace(NOTE_MARK, "ORCHDOC_NOTE")
     return t.strip()
 
 
-def render_note(nid, who, when, text, kind="NOTE", ack=None):
+def render_note(nid, who, when, text, kind="NOTE", ack=None, stored=False, enc=None):
     """The ONE writer of the form NOTE_LINE_RE reads. Both halves, always.
 
     ⛔ `kind` IS CHECKED AGAINST THE ALLOWLIST HERE rather than trusted from the caller. It
@@ -752,9 +1161,20 @@ def render_note(nid, who, when, text, kind="NOTE", ack=None):
     # prose; a status glyph ahead of `**NOTE from the human**` is the document's own furniture and
     # leaves his sentence byte-identical. Greppable as `\U0001f440` and as "SEEN_MARK".
     seen = (SEEN_MARK + " ") if ack else ""
-    return "> %s**%s from %s** (%s): %s <!-- %s %s%s -->" % (
-        seen, k, sanitize_field(who, 40), sanitize_field(when, 40), sanitize_note(text),
-        NOTE_MARK, nid, tail)
+    # o9L1437: `stored` text is already in its final form (a re-render for an ack or a delete,
+    # or text `sanitize_note` encoded earlier); `enc` says whether that form is the escaped one.
+    # Text not yet stored is encoded here and always carries the flag.
+    if stored:
+        is_enc = bool(enc)
+        # An escaped text was narrowed when it was encoded, and narrowing it again would
+        # collapse the indentation after a break. It is kept as it is.
+        body = (text or "").strip() if is_enc else sanitize_note(text, None, enc=False)
+    else:
+        is_enc = True
+        body = sanitize_note(text, NOTE_TEXT_LIMIT, enc=True)
+    return "> %s**%s from %s** (%s): %s <!-- %s %s%s%s -->" % (
+        seen, k, sanitize_field(who, 40), sanitize_field(when, 40), body,
+        NOTE_MARK, nid, " ESC" if is_enc else "", tail)
 
 
 def parse_notes(text):
@@ -764,13 +1184,15 @@ def parse_notes(text):
     that QUOTES this form inside a fence (this file's own OrchDoc will) must not register the
     explanation as an instance. Same rule as `without_attestations`: if a reader would not act
     on it, the parser must not either.
+
+    ⛔ FENCES COME FROM `fence_states`, the scan `note_slot` places a new note by. This loop
+    kept its own copy of the rule while the writer used none, and five of the human's sends to
+    o5:T4 went into a fence this skipped (o9:W153, 2026-10-05).
     """
-    out, in_fence = [], False
-    for n, raw in enumerate(text.split("\n"), start=1):
-        if raw.lstrip().startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
+    out = []
+    rows = text.split("\n")
+    for n, (raw, (fenced, _open)) in enumerate(zip(rows, fence_states(rows)), start=1):
+        if fenced:
             continue
         m = NOTE_LINE_RE.match(raw)
         if m:
@@ -778,6 +1200,7 @@ def parse_notes(text):
                         "when": m.group("when").strip(),
                         "kind": m.group("kind"),
                         "ack": (m.group("ack") or "").strip(),
+                        "enc": bool(m.group("enc")),
                         "text": m.group("text").strip(), "line": n})
     return out
 
@@ -794,9 +1217,29 @@ def strip_notes(text):
     return "\n".join(kept), notes
 
 
-def next_note_id(lines):
-    """The next free `n<N>` in a WHOLE DOCUMENT - never reused, like every other id here."""
-    used = [int(n["nid"][1:]) for n in parse_notes("\n".join(lines))]
+def next_note_id(lines, entry=None):
+    """The next free note id. With `entry`, it NAMES that entry: `D38.n2`.
+
+    \u2b50 THE HUMAN ASKED FOR THIS AND THE REASON IS THE WHOLE POINT OF AN ANCHOR: *"n13 tells me
+    nothing about what item you're referencing."* A bare `n13` is a position in a file; `D38.n2`
+    is an address. Same argument as citing an entry id rather than a line number.
+
+    \u26d4 BARE `nN` IDS ARE STILL VALID AND ARE NOT RENAMED. Thirteen exist today, several
+    already acknowledged, and rewriting them would break every reference anyone has written down.
+    New notes get the scoped form; old ones keep theirs and keep working.
+
+    Numbering is PER ENTRY, so the second note on D38 is `D38.n2` however many notes the document
+    holds elsewhere - which is what makes the id readable at a glance.
+    """
+    notes = parse_notes("\n".join(lines))
+    if entry:
+        pref = "%s." % entry
+        used = [int(n["nid"].split(".", 1)[1][1:])
+                for n in notes if n["nid"].startswith(pref)]
+        return "%sn%d" % (pref, (max(used) + 1) if used else 1)
+    # No entry named: the legacy whole-document sequence, so nothing that calls this the old
+    # way changes behaviour.
+    used = [int(n["nid"][1:]) for n in notes if "." not in n["nid"]]
     return "n%d" % ((max(used) + 1) if used else 1)
 
 
@@ -889,9 +1332,57 @@ def reviewed_of(body):
 def last_moved(entry):
     """
     When this entry last MOVED, from the dates it carries. Coarse by construction.
+
+    ⛔ A DATE STILL TO COME IS NOT A MOVE (o9, 2026-10-01). W94 names the weekly reset on
+    2026-10-08, so every entry depending on it read as stale until that day and no restamp
+    could clear it. Dates after today (the local date, the clock E-FUTUREDATE reads) are left
+    out. See `_selftest_last_moved`.
     """
-    dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", entry["body"])
+    today = _dt.date.today().isoformat()
+    dates = [d for d in re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", entry["body"]) if d <= today]
     return max(dates) if dates else None
+
+
+def _selftest_last_moved():
+    """E-STALEPROSE through a `Depends:` edge, against an entry that names a date to come.
+
+    o9, 2026-10-01: W94 names the weekly reset on 2026-10-08, and `check --doc o9` reported
+    "W128 ... -> W94 moved 2026-10-08" on 2026-10-01. A date still to come is not a move, so
+    it must not make a dependent stale; a past date after the dependent's review still must.
+    The third case is a dependent never reviewed whose dependency's newest past date is the
+    day the dependent was written: it must neither raise nor fire.
+    """
+    import tempfile
+    today = _dt.date.today()
+    soon = (today + _dt.timedelta(days=7)).isoformat()
+    ok = True
+    d = Path(tempfile.mkdtemp(prefix="orchdoc-lastmoved-"))
+    try:
+        for label, dep_text, review, want in (
+                ("future date ignored", "The weekly reset is on %s." % soon,
+                 " - **Reviewed:** 2026-09-20", False),
+                ("past date still stale", "It changed on 2026-09-25.",
+                 " - **Reviewed:** 2026-09-20", True),
+                ("same day, never reviewed", "It changed on %s; the reset is on %s."
+                 % (today.isoformat(), soon), "", False)):
+            p = d / "ORCHESTRATOR-DECISIONS-o99.md"
+            p.write_text(canonical_title("o99", "a role") + "\n\n## §3 ON CLAUDE'S PLATE\n\n"
+                         "### W2 - the dependent\n**Status:** OPEN - **Owner:** o99%s\n"
+                         "**Depends:** W1\n\nIt rests on W1.\n\n"
+                         "### W1 - the dependency\n**Status:** OPEN - **Owner:** o99 - "
+                         "**Opened:** 2026-09-01\n\n%s\n" % (review, dep_text), encoding="utf-8")
+            try:
+                fired = any(f.code == "E-STALEPROSE" and "'W2'" in f.msg for f in check_doc(p))
+                got = "fired" if fired else "silent"
+            except Exception as ex:
+                fired, got = None, "raised %s: %s" % (type(ex).__name__, str(ex)[:60])
+            good = fired is want
+            ok &= good
+            print("  [%s] %-12s -> %s: %s" % ("OK" if good else "FAIL", "E-STALEPROSE",
+                                              label, got))
+    finally:
+        _remove_tree(str(d))
+    return ok
 
 
 # ---- THE PUSH MODEL: work declares what it touches ----
@@ -964,6 +1455,11 @@ TOUCH_TOKEN_RE = re.compile(r"^(?:(o\d+)[:/])?([A-Z]{1,3}(?:\d+[a-z]?|-[A-Z][A-Z
 # nothing is worse than one that fails loudly.
 _CITED_EXT = r"[A-Za-z0-9_.\-/]+\.(?:md|ts|tsx|js|mjs|py|json|astro|yml|yaml|sql)"
 _CITED_NEEDLE = r"(?:#[A-Za-z0-9_.\-]+)?"
+# A `**Depends:**` line, and a file-shaped token with NO backtick requirement. The pair
+# exists to find what CITED_PATH_RE deliberately does not match: a citation an author
+# believes they wrote. Same extension list, so the two can only disagree about backticks.
+DEPENDS_LINE_RE = re.compile(r"^\*\*Depends:\*\*\s*(.+)$", re.M)
+BARE_FILEISH_RE = re.compile(_CITED_EXT)
 CITED_PATH_RE = re.compile(
     r"`(%s%s)`" % (_CITED_EXT, _CITED_NEEDLE)
     + r"|\]\((%s%s)\)" % (_CITED_EXT, _CITED_NEEDLE))
@@ -987,6 +1483,53 @@ OPENED_RE = re.compile(r"\*\*Opened:\*\*\s*(\d{4}-\d{2}-\d{2})")
 # Deliberately strict about the bold markers: this decides where a note is PLACED, and a
 # loose match here would walk into prose and bury the note.
 FIELD_LINE_RE = re.compile(r"^\s*\*\*[A-Za-z-]+:\*\*")
+
+# ⛔ THE RULING MARKER, DEFINED ONCE BECAUSE TWO TOOLS READ IT. This was
+# `\*\*Resolved[^:]*:\*\*` inline at one call site, which stops at the FIRST COLON - fine for
+# `**Resolved 2026-09-17:**` and broken the moment the stamp carries a time. Matching up to the
+# closing `**` instead accepts BOTH shapes, so every ruling already in the fleet keeps parsing.
+#
+# ⭐ WHY THE STAMP GAINED A TIME (o1's F50, 2026-09-17). `cmd_resolve` wrote the ruling with a
+# DATE and its own attestation with a full ISO timestamp - in the same function, from the same
+# clock. The ruling is the field every "which ruling is current?" question turns on, and it was
+# the one losing precision: on a day the human ruled at 17:15, 19:10 and 19:16, a date-only stamp
+# cannot order them, and o1's sweep handed back the oldest while calling it current.
+#
+# ⚠️ o1's `ruling_sweep.py` ALSO reads this line, with `Resolved 20\d\d-\d\d-\d\d`. That
+# still matches, because an ISO stamp opens with exactly that - so the change is additive for
+# them rather than breaking. They were told the new shape rather than left to discover it.
+RESOLVED_LINE_RE = re.compile(r"\*\*Resolved[^*]*:\*\*")
+
+# A ruling stamped only to the day. `T` is what separates the two shapes.
+# ⛔ BOTH SPELLINGS OF THE FIELD. The first version matched only `**Resolved <date>:**` -
+# the shape `resolve` writes - and a hand-written `**RULED <date>:**` walked straight past it.
+# Ten of those exist in the fleet. **A gate whose membership list is one spelling of a field is
+# a membership list standing in for a property**, which is the defect this workspace keeps
+# rediscovering. Prose narration ("the human ruled 2026-09-16: ...") is deliberately NOT gated: it is
+# narrative inside an entry body, not the field a reader takes the answer from.
+# An ENTRY stamped only to the day. Same argument as the ruling stamp one line below, applied to
+# the item itself: two entries opened on one day cannot be ordered, and an item with no age cannot
+# be triaged by age. The human ruled it 2026-09-17, for every §2 and §3 item going forward.
+# ⭐ A SUB-ITEM THAT STATES A MEASUREMENT CARRIES WHEN IT WAS TAKEN. The entry header dates
+# the ENTRY; a figure inside a checklist line has its own age and nothing recorded it. o1
+# measured one that sat five weeks, read as current, and was wrong in BOTH directions when re-run
+# - a backlog count that had grown 41 to 60 beside one that had fallen 80 to 34.
+#
+# ⛔ NOT ENFORCED ON EVERY SUB-ITEM, ON PURPOSE. Stamping "ask the human" and "wire the check"
+# teaches a reader to skip the marker, and a marker that is skipped cannot warn about the one
+# line that needed it. And requiring it only where a line "states a measurement" needs a detector
+# for what a measurement is, which is a pattern standing in for a property.
+MEASURED_RE = re.compile(r"<!--\s*measured:\s*(\S+?)\s*-->")
+
+
+def measured_marker(when=None):
+    """The stamp a sub-item carries, in the ONE shape every reader imports."""
+    return "<!-- measured: %s -->" % (when or _now_iso())
+
+
+OPENED_DAY_ONLY_RE = re.compile(r"\*\*Opened:\*\*\s+(\d{4}-\d{2}-\d{2})(?!T)")
+
+RESOLVED_DAY_ONLY_RE = re.compile(r"\*\*(?:Resolved|RULED)\s+(\d{4}-\d{2}-\d{2})\s*:\*\*", re.I)
 
 
 def opened_of(body):
@@ -1035,7 +1578,7 @@ def done_when_satisfied(cond, opened_iso, root):
         cmd = cond.split(":", 1)[1].strip()
         try:
             p = subprocess.run(cmd, shell=True, cwd=str(root), capture_output=True,
-                               text=True, timeout=90)
+                               text=True, timeout=90, creationflags=flags())
         except Exception as ex:
             return False, "could not run: %s" % str(ex)[:60]
         if p.returncode == 0:
@@ -1072,6 +1615,69 @@ def _strip_dot_slash(p):
     return p[2:] if p.startswith("./") else p
 
 
+def without_attested_by(body):
+    """`body` with `**Attested-by:**` fields blanked - line count preserved.
+
+    ⛔ NOT `without_attestations`, AND ITS DOCSTRING SAYS SO: that one matches
+    `OVERRIDE_RE`, blanks `<!-- ORCHDOC:OVERRIDE -->` stamps, and **never touches an
+    `**Attested-by:**` line**. Two different fields, two different readers.
+
+    ⭐ WHY THIS EXISTS. `E-STALEPROSE` requires an attestation on every restale, and an
+    honest attestation names the file that moved. **So writing the record the gate demands
+    re-arms the citation that produced it** - a loop in which an entry restales, the author
+    explains why the mover was irrelevant, and that explanation guarantees the next restale.
+    `cited_paths`' own docstring names the shape - *"quoting the finding re-arms the
+    finding"* - and o9 walked into it three times on `F3` in one night while reading that
+    very function.
+
+    Blanks rather than deletes so anything downstream keeping line numbers stays true.
+    """
+    out, in_att = [], False
+    for ln in body.splitlines():
+        s = ln.strip()
+        if s.startswith("**Attested-by:**"):
+            in_att = True
+        elif not s or (s.startswith("**") and ":**" in s[:24]):
+            in_att = False
+        out.append("" if in_att else ln)
+    return "\n".join(out)
+
+
+# ⚠️ 14 DAYS, DELIBERATELY GENEROUS. The fleet count is not zero - 4 on o9 alone the
+# day this landed - and a gate landed blocking against an inherited backlog gets switched off.
+STALLED_DAYS = 14
+
+# ---- W-NOPROV (W20) ---------------------------------------------------------------------
+# A CLOSED entry whose unticked sub-item is itself deferred work, carrying no provenance.
+CLOSED_STATES = {"RESOLVED", "ANSWERED", "DONE", "SUPERSEDED", "DEFERRED", "PARKED"}
+SCHEDULES_RE = re.compile(
+    r"(?i)\b(?:revisit|re-?open|later|post-?launch|once .{0,40}(?:ships|lands|exists)|"
+    r"when .{0,40}(?:ships|lands|is done)|defer(?:red)? (?:to|until)|"
+    r"come back to|follow[- ]up|next (?:week|month|quarter)|in a week|after the)\b")
+OPEN_SUB_RE = re.compile(r"(?m)^\s*-\s*\[ \]\s+(.+)$")
+PROVENANCE_RE = re.compile(r"(?i)\*\*Provenance:?\*\*")
+# a sub-item explicitly belonging to somebody else is not this entry's deferred work
+FOREIGN_SUB_RE = re.compile(r"(?i)\bnot mine\b|\brouted to\b|\bnot my\b|\byours\b")
+
+
+def _days_since_opened(body):
+    """Days since the entry's **Opened:** date, or None if it has none.
+
+    #: failure-value: None   # an entry with no Opened date is not old, it is UNDATED, and
+    #                          W-STALLED must not fire on one - that would be a different
+    #                          finding wearing this one's name.
+    """
+    m = re.search(r"\*\*Opened:?\*\*[^\n]*?(\d{4}-\d{2}-\d{2})", body)
+    if not m:
+        return None
+    try:
+        import datetime as _dt
+        d = _dt.datetime.strptime(m.group(1), "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc)
+        return (_dt.datetime.now(_dt.timezone.utc) - d).days
+    except Exception:
+        return None
+
+
 def cited_paths(body):
     """Repo-relative artifacts an entry cites. Each is a dependency it already declared.
 
@@ -1086,6 +1692,30 @@ def cited_paths(body):
     level. **The documentation of the fix re-armed the thing it documented.** They nearly
     reported the feature broken. When narrowing appears not to work, grep the WHOLE body for
     the bare path - prose, tables and asides all count.
+
+    ⛔ **AND THE BOUNDARY THAT WARNING WAS MISSING, WITHOUT WHICH IT MISREADS: ALL OF THAT
+    IS TRUE ONLY WHILE THE PATH CARRIES NO NEEDLE.** `cited_regions` is keyed by PATH, not by
+    occurrence, so **ONE `path#needle` anywhere in the body narrows the WHOLE path edge** and
+    every further bare mention of that path is harmless.
+
+    ⭐ **WHICH MEANS THE PARAGRAPH ABOVE DESCRIBES AN UN-NARROWED CITATION AND READS AS
+    THOUGH IT DESCRIBES A NARROWED ONE - the worst possible direction.** An author who narrowed
+    correctly, then wrote the `**Attested-by:**` line the gate REQUIRES on a restale, comes
+    here to find out why it did not work and is told they re-armed it. They did not.
+
+    Measured 2026-09-19 on `o1:F41`, four ways, with a control proving the test can fail:
+
+      | body                                   | a commit missing the needle |
+      |----------------------------------------|-----------------------------|
+      | needle on `Depends:`, nothing else     | NOT counted                 |
+      | needle PLUS a bare prose mention       | NOT counted                 |
+      | bare prose mention, NO needle          | **counted** (the control)   |
+      | `o1:F41` as it stands live             | NOT counted                 |
+
+    ⚠️ The near-miss is worth keeping: F41's attestation names this path in prose,
+    which looks exactly like the trap above - the gate's own required record defeating the
+    remedy the gate recommends. That story is false, and it was one sentence from being sent
+    to o1 as a finding. `test_needle_discriminates.py` now pins the row that kills it.
 
     ⛔ **ATTESTATION TEXT IS *NOT* EXCLUDED HERE, AND THIS COMMENT USED TO CLAIM IT WAS.**
     Two things are true and the second is the trap:
@@ -1118,6 +1748,22 @@ def cited_paths(body):
     read as OUTPUT. **Quoting the finding re-arms the finding** - which is the trap documented
     three lines below, and which nobody connected to it.
     """
+    # ⛔ ATTESTATION TEXT DOES NOT CREATE AN EDGE - added 2026-09-20 after measuring.
+    # An attestation is the record of a PREVIOUS restale, and an honest one names the file
+    # that moved, so the field the gate REQUIRES on every restale guarantees the next one.
+    # `F3` carried three such records naming `ORCHESTRATOR-DECISIONS-o7.md` and nothing else
+    # declaring it.
+    #
+    # ⭐ PER-PATH, and the measurement says that matters: fleet-wide **12 edges dropped,
+    # 30 KEPT** because the body names them too. Wholesale "ignore attestations" would have
+    # taken all 42.
+    #
+    # ⚠️ `cited_regions` is NOT given this treatment, deliberately. A needle written
+    # only inside an attestation would be lost, which WIDENS the edge - the wrong direction.
+    #
+    # o9 W126: a path inside pasted (fenced) text is the source's, not a citation the entry
+    # makes. Blanked first, while the body still starts outside a fence.
+    body = without_attested_by(prose_only(body))
     out = set()
     for m in CITED_PATH_RE.finditer(body):
         p = m.group(1) or m.group(2)
@@ -1148,10 +1794,30 @@ def cited_regions(body):
     return out
 
 
-def paths_changed_since(paths, since_iso):
-    """{path: (iso, subject)} for cited artifacts whose last commit postdates the review."""
+def paths_changed_since(paths, since_iso, regions=None):
+    """{path: (iso, subject, sha[, why])} for cited artifacts that moved after the review.
+
+    A BARE path reports its newest commit since `since_iso`, as it always has.
+
+    ⛔ A NARROWED path (`path#needle`, passed in through `regions`) used to report the same
+    newest commit, and the caller then asked whether THAT commit touched a needle. So only one
+    commit was ever examined: an earlier commit that changed the needle, followed by a later
+    commit that changed something else in the file, left the entry quiet. That is the check
+    failing open; it was found alongside o9's ruling on what a needle means (2026-09-24).
+    A narrowed path now reports the newest commit since the review that DID touch a needle -
+    see `first_needle_mover` - with a fourth element saying how, and is left out when none did.
+
+    Callers indexing [0], [1] and [2] still work.
+    """
     out = {}
+    regions = regions or {}
     for p in paths:
+        needles = regions.get(str(p)) or []
+        if needles:
+            hit = first_needle_mover(str(p), since_iso, needles)
+            if hit:
+                out[p] = hit
+            continue
         args = ["log", "-1", "--format=%cI%x1f%s%x1f%H"]
         if since_iso:
             args.append("--since=%s" % since_iso)
@@ -1167,9 +1833,499 @@ def paths_changed_since(paths, since_iso):
     return out
 
 
+# ---- WHAT A COMMIT DID TO A NEEDLE -------------------------------------------------------
+#
+# ⛔ THE DIFF WAS THE WRONG INSTRUMENT. `commit_touched_region` used to read
+# `git show --unified=0` with git's DEFAULT diff algorithm and count any +/- line containing
+# the needle. A commit that REORDERS entries makes that algorithm report whole blocks as
+# deleted and re-added, so every moved line naming the needle counted as changed.
+#
+# Measured by o1 on bba80134 (o10's the human rulings, which also reordered o10's doc): the default
+# diff reported 20,412 added and 20,226 removed lines against 742 / 556 with
+# `--diff-algorithm=histogram`. Lines naming D40 that "changed": 43 against 1. F89: 112
+# against 0. It re-staled five o1 entries (W2, F23, F51, T9, T10) whose cited o10 entries were
+# identical before and after with line endings normalised. The one real change to a cited id:
+# the line holding the human's note D42.n2, which names D40, was taken out of D42.
+#
+# ⭐ THE RULING (o9, owner, 2026-09-24). A commit touches `path#needle` when EITHER
+#   (b) the multiset of lines naming the needle differs between `sha^` and `sha` - a move
+#       leaves it identical whatever a diff algorithm reports, and a NEW line naming the id
+#       anywhere counts, because the human writing about D40 is a change about D40; or
+#   (a) the needle is an entry id, the path is an OrchDoc, and that entry's own text differs -
+#       which closes a false negative the line test alone has: an edit to D40's body that
+#       does not literally contain "D40" never woke anything that depends on D40.
+# Bookkeeping lines are dropped on both sides, because a restamp of D40 must not wake the
+# entries resting on D40 - otherwise restamps cascade from entry to entry.
+#
+# ⚠️ (b) DROPS BOOKKEEPING TOO, which the ruling states for (a) only. Measured 2026-09-24:
+# 657 of the fleet's 1,972 stamp lines name their own entry's id, so without it a restamp of
+# D40 would wake D40's dependents about a third of the time through (b) - the cascade the
+# ruling exists to prevent, arriving by the other rule.
+#
+# Fails CLOSED like every helper here: no parent, a file the commit created, an unreadable
+# commit or a diff that does not parse all count as touched.
+
+# The id shape an entry heading carries - one definition for the span scanner and for
+# deciding whether a needle names an entry at all.
+ENTRY_ID_SHAPE = r"[A-Z]{1,3}\d+[a-z]?"
+ENTRY_ID_RE = re.compile(r"^%s$" % ENTRY_ID_SHAPE)
+# An id-shaped NEEDLE: an entry id, or a note on one (`D42.n2`). Matched as a whole token.
+ID_NEEDLE_RE = re.compile(r"^%s(?:\.n\d+)?$" % ENTRY_ID_SHAPE)
+ENTRY_HEAD_RE = re.compile(r"^#{1,6}\s*\S*\s*(%s)\b" % ENTRY_ID_SHAPE)
+
+# Rows the tool generates that name ids: the plate and index table rows, and the findings
+# index bullets ("- `F1` - . title"). They change when the generator runs, not when anyone
+# writes about the entry.
+_GENERATED_ROW_RE = re.compile(r"^\s*\|\s*\*\*\[|^- `%s` - " % ENTRY_ID_SHAPE)
+# ⛔ ANCHORED TO THE COMMENT AT THE START OF A LINE. Unanchored, prose that NAMES a marker
+# (o9's doc does, three times) opened a "generated region" that never closed, and every line
+# after it was skipped as bookkeeping - which hid o9's W69 write-up from E-WAKESOTHERS in the
+# replay that was meant to show it. The real markers are whole-line HTML comments.
+_GENERATED_BEGIN_RE = re.compile(r"^\s*<!--\s*ORCHDOC:(?:PLATE|INDEX|FINDEX):BEGIN\b")
+_GENERATED_END_RE = re.compile(r"^\s*<!--\s*ORCHDOC:(?:PLATE|INDEX|FINDEX):END\b")
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_ZERO_OID_RE = re.compile(r"^0+$")
+
+# ⚠️ HOW MANY COMMITS ONE NARROWED CITATION MAY READ. o10's doc takes about 40 commits a day,
+# so an entry reviewed ten days ago has 400 to read. Past this the scan stops and the citation
+# counts as touched - an unread commit is not evidence that nothing moved.
+NEEDLE_SCAN_LIMIT = 400
+
+# The diff options every reader of changed lines uses. `histogram` keeps a moved block from
+# being reported as deleted and re-added; `--text` stops a stray byte from turning the diff
+# into "Binary files differ", which has no lines at all and would read as "nothing changed".
+_DIFF_OPTS = ["--unified=0", "--diff-algorithm=histogram", "--text", "--no-color",
+              "--no-ext-diff", "--no-textconv", "--no-renames"]
+
+_NEEDLE_CACHE = {}      # (sha, path, needle) -> why it counts as touched, or "" when it does not
+
+
+def entry_spans(lines):
+    """[(first_line, last_line, eid), ...] - 1-based inclusive, one per entry heading.
+
+    Factored out of `entries_touched` so the needle test reads entries exactly the way that
+    function does, rather than through a second private copy of the scanner.
+    """
+    spans, cur, cur_line = [], None, 0
+    fenced = False
+    for i, ln in enumerate(lines, 1):
+        # ⛔ A `#` INSIDE A FENCED BLOCK IS NOT A HEADING. An entry quoting a doc's markdown -
+        # which OrchDoc entries do constantly - would otherwise open a bogus span, and every
+        # changed line after it gets credited to the wrong id. `_reorder_slots` had the same
+        # bug and got the same fix earlier today; this scanner was written before that.
+        if ln.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        m = ENTRY_HEAD_RE.match(ln)
+        if not m and ln.startswith("#"):
+            # ⛔ AN ARCHIVED HEADING CARRIES ITS ID MID-LINE, and missing it credits that
+            # entry's whole body to the entry ABOVE it. Measured against o1's independent
+            # run: a hunk inside a demoted W32 entry came back as W9. `parse_entries` already
+            # reads this form; this scanner had its own private regex and did not - one fact,
+            # two readers, which is the defect this file has spent the week removing.
+            #
+            # ⭐ o1's version matched an id ANYWHERE in the heading and returned DA18 - o8's
+            # entry, merely NAMED in the title. Neither of us had it right, and only running
+            # both showed that.
+            m = ARCHIVED_ID_RE.search(ln)
+        if m:
+            if cur:
+                spans.append((cur_line, i - 1, cur))
+            cur, cur_line = m.group(1), i
+    if cur:
+        spans.append((cur_line, len(lines), cur))
+    return spans
+
+
+# o9:W153 (o9's ruling, 2026-10-05): a `**Priority:**` line, the human's bare `NOW` or the
+# `(proposed by oN)` form, says only where an entry sits on the plate. `PLATE_ONLY_RE` admits it
+# on the push edge; `_needle_line` drops it on the pull edge. Same class on both edges.
+PRIORITY_LINE_RE = re.compile(r"^\s*\*\*Priority:\*\*")
+
+
+def _needle_line(ln, orch):
+    """`ln` as the needle test compares it, or None when it is bookkeeping.
+
+    `\\r` and trailing whitespace are stripped everywhere. In an OrchDoc a review stamp, an
+    override stamp, a priority line, a blank line and a generated row are bookkeeping, and a
+    Status line keeps its plate fields with the review stamps cut out - `restamp` rewrites
+    exactly that clause. A note line keeps everything except its acknowledgement - see
+    `note_without_ack`.
+
+    ⭐ THE PRIORITY LINE (o9:W153, ruled by o9 2026-10-05). The human sets priorities in the Reader,
+    and each one changed the entry's own text, so every entry in another doc citing it as
+    `doc#ID` restaled and blocked its doc's commits until someone restamped it. The line is
+    dropped, not the commit: a fact line changed in the same commit still moves the entry. A
+    citation of the bare file stays file-level - see `paths_changed_since`.
+
+    ⚠️ Line-local on purpose: the verdict for (b) is computed from a commit's diff, which
+    shows a line without its neighbours, so the filter may only look at the line itself.
+    """
+    s = ln.rstrip()
+    if not orch:
+        return s
+    if not s.strip():
+        return None
+    if (STAMP_LINE_RE.match(s) or OVERRIDE_RE.match(s) or _GENERATED_ROW_RE.match(s)
+            or PRIORITY_LINE_RE.match(s)):
+        return None
+    if NOTE_LINE_RE.match(s):
+        return note_without_ack(s)
+    if "**Status:**" in s:
+        s = split_stamps(s)[0]
+    return s
+
+
+def note_without_ack(ln):
+    """A note line with its acknowledgement taken out; any other line unchanged.
+
+    ⛔ AN ACK IS NOT A CHANGE TO THE ENTRY (o7:F26, ruled by o9 2026-09-24). `note --ack`
+    rewrites the human's note line in two places - the seen glyph goes in front of
+    `**NOTE from the human**` and `ACK <who> <when>` goes inside the `<!-- ORCHDOC:NOTE -->` marker.
+    Neither is his words. But the line starts `> 👀 **INSTRUCTION from the human**`, which
+    `PLATE_ONLY_RE` does not treat as bookkeeping, so an ack alone woke every entry citing the
+    acked one - through rule (a), and through rule (b) whenever the line names the id, which a
+    scoped note id (`D30.n2`) always does.
+
+    ⚠️ THE ACK IS REMOVED, THE LINE IS NOT DROPPED. A new note is the human writing about the entry
+    and must still count, so an exemption for the whole line - the alternative of widening
+    `PLATE_ONLY_RE` - would have silenced exactly the change that matters. Rebuilt from
+    `NOTE_LINE_RE`'s own groups, so the line compares equal to how `render_note` writes it
+    unacknowledged; a change to the kind, author, time, text or id still shows.
+    """
+    m = NOTE_LINE_RE.match(ln)
+    if not m:
+        return ln
+    return "> **%s from %s** (%s): %s <!-- %s %s%s -->" % (
+        m.group("kind"), m.group("who").strip(), m.group("when").strip(),
+        m.group("text").strip(), NOTE_MARK, m.group("nid"),
+        " ESC" if m.group("enc") else "")
+
+
+def _ack_only_hunk(removed, added):
+    """True when a diff hunk does nothing but acknowledge notes: every line on both sides is a
+    note line, and the two sides are the same notes once `note_without_ack` is applied."""
+    if not removed or len(removed) != len(added):
+        return False
+    if not all(NOTE_LINE_RE.match(x.rstrip()) for x in removed + added):
+        return False
+    return (sorted(note_without_ack(x.rstrip()) for x in removed)
+            == sorted(note_without_ack(x.rstrip()) for x in added))
+
+
+def _names(needle, slug=None):
+    """A test `line -> bool` for whether a line names `needle`. Case-insensitive.
+
+    ⛔ AN ID-SHAPED NEEDLE MATCHES THE WHOLE ID ONLY (o9's ruling, 2026-09-24). As a plain
+    substring, `W4` matched `W44`, `W6` matched `W63`, `D7` matched the sha `185346d7` and `T1`
+    matched every ISO time from 10:00 to 19:59 (`...T16:34`) - all found in the fleet run of
+    the move-proof test, where T9 and T10 in o1's doc at bba80134 woke on a `W44` line.
+    Letters and digits on either side mean a different token; anything else - `W6.n2`,
+    `` `W6` ``, and `o10:W6` inside o10's own doc - still names W6.
+
+    Any other needle (`cited_paths`, `E-DAYONLYRULING`, `additions`) stays a substring match.
+
+    With `slug` (this doc's `oN`), an id qualified with a DIFFERENT doc - `o10:D31` inside o9's
+    doc - is not a mention of this doc's D31 (o9's ruling, 2026-09-24). See `_name_hits`.
+    """
+    hits = _name_hits(needle, slug)
+    return lambda ln: bool(hits(ln))
+
+
+# `o10:` or `o10/` directly before an id - the qualified form the Touches trailer also reads.
+_QUALIFIER_RE = re.compile(r"(?<![A-Za-z0-9])(o\d+)[:/]$", re.I)
+
+
+def _name_hits(needle, slug=None):
+    """A function `line -> [offsets]`: where in the line `needle` is really mentioned.
+
+    ⛔ A QUALIFIED ID BELONGS TO THE DOC IT NAMES (o9's ruling, 2026-09-24). o9's F256 wrote
+    `o10:D31` - o10's entry - and it woke o1's F51, which cites o9's own D31. So when `slug` is
+    given, an occurrence written `oN:ID` or `oN/ID` with a different `oN` is skipped; one
+    qualified with this doc's own slug, or not qualified at all, counts.
+    """
+    low = needle.lower()
+    if not ID_NEEDLE_RE.match(needle):
+        def plain(ln):
+            i = ln.lower().find(low)
+            return [i] if i >= 0 else []
+        return plain
+    # ⛔ NOT RIGHT AFTER TWO CAPITAL LETTERS AND A HYPHEN (o9 F266). There the id is the tail of
+    # a script id, so S5 inside "AT-S5" is not a mention of S5; a line quoting the script was
+    # refused by E-WAKESOTHERS. The same rule as gate 4 and orchdoc_ids._is_real_reference.
+    # This pattern ignores case, so `(?-i:...)` matches the two capitals with case on: without
+    # it the "re-" of pre-S5 would count as two capitals and a real mention would be dropped.
+    rx = re.compile(r"(?<![A-Za-z0-9])(?<!(?-i:[A-Z][A-Z])-)%s(?![A-Za-z0-9])"
+                    % re.escape(needle), re.I)
+    own = (slug or "").lower()
+
+    def whole(ln):
+        # the substring test first: it is cheap and rules out almost every line
+        if low not in ln.lower():
+            return []
+        out = []
+        for m in rx.finditer(ln):
+            q = _QUALIFIER_RE.search(ln, 0, m.start())
+            if q and own and q.group(1).lower() != own:
+                continue
+            out.append(m.start())
+        return out
+    return whole
+
+
+def _orchdoc_slug_or_none(path):
+    """`o9` for `.../ORCHESTRATOR-DECISIONS-o9.md`, else None.
+
+    The wake path wants None for a file that is not an OrchDoc: with no slug, `_names` counts
+    every `oN:ID` in it as naming ID. `_doc_slug` gives such a file its stem, and read with
+    the stem, `o9:W9999` is another doc's id. Until o9L986's review of W126 both were named
+    `_doc_slug`; Python kept the later one, so the wake path ran with the stem.
+    """
+    m = re.search(r"ORCHESTRATOR-DECISIONS-(o\d+)\.md$", str(path).replace("\\", "/"))
+    return m.group(1) if m else None
+
+
+def _lines_naming(lines, needle, orch, slug=None):
+    """The multiset (as a sorted list) of compared lines in `lines` that name `needle`."""
+    names = _names(needle, slug)
+    out = []
+    for ln in lines:
+        if names(ln):
+            s = _needle_line(ln, orch)
+            # Checked again AFTER the stamp is cut: a Status line that named the id only
+            # inside its review stamp does not name it at all.
+            if s is not None and names(s):
+                out.append(s)
+    out.sort()
+    return out
+
+
+def _entry_block(lines, eid, spans=None):
+    """The compared lines of entry `eid` in `lines` as a sorted list, or None when absent.
+
+    Bookkeeping is dropped with `_needle_line`, plus anything inside a generated region the
+    span happens to run over (o10's findings index sits after an entry heading). Compared as a
+    multiset, the same as (b): a tool rewrite that only moves lines inside the entry - `restamp`
+    re-emits its field block - is not a change to what the entry says.
+    """
+    if spans is None:
+        spans = entry_spans(lines)
+    mine = [(lo, hi) for lo, hi, x in spans if x == eid]
+    if not mine:
+        return None
+    out = []
+    for lo, hi in mine:
+        inside = False
+        for ln in lines[lo - 1:hi]:
+            if _GENERATED_BEGIN_RE.search(ln):
+                inside = True
+                continue
+            if _GENERATED_END_RE.search(ln):
+                inside = False
+                continue
+            if inside:
+                continue
+            s = _needle_line(ln, True)
+            if s is not None:
+                out.append(s)
+    out.sort()
+    return out
+
+
+def _parse_hunks(text):
+    """[(old_start, old_count, new_start, new_count, removed, added), ...] from a
+    `--unified=0` diff, read by the COUNTS in each `@@` header - so a changed line that itself
+    begins with `--` or `++` is not mistaken for a file header. None when the text does not
+    parse, which the caller treats as touched."""
+    hunks = []
+    lines = text.split("\n")
+    n, i = len(lines), 0
+    while i < n:
+        m = _HUNK_RE.match(lines[i])
+        i += 1
+        if not m:
+            continue
+        a = int(m.group(1))
+        b = int(m.group(2)) if m.group(2) is not None else 1
+        c = int(m.group(3))
+        d = int(m.group(4)) if m.group(4) is not None else 1
+        rem, add = [], []
+        while len(rem) < b or len(add) < d:
+            if i >= n:
+                return None
+            ln = lines[i]
+            i += 1
+            if ln.startswith("\\"):             # "\ No newline at end of file"
+                continue
+            if ln.startswith("-") and len(rem) < b and not add:
+                rem.append(ln[1:])
+            elif ln.startswith("+") and len(add) < d:
+                add.append(ln[1:])
+            else:
+                return None
+        hunks.append((a, b, c, d, rem, add))
+    return hunks
+
+
+def _reverse_patch(new_lines, hunks):
+    """The file BEFORE a commit, rebuilt from the file after it and the commit's hunks.
+
+    None when the hunks do not fit: every hunk's added side must equal what `new_lines` holds
+    at that position, and its removed side must land where the header says. A version that
+    cannot be verified this way is read from git instead.
+    """
+    out, pos = [], 0
+    for a, b, c, d, rem, add in hunks:
+        start = c - 1 if d else c
+        if start < pos or start + d > len(new_lines):
+            return None
+        out.extend(new_lines[pos:start])
+        if [x.rstrip() for x in new_lines[start:start + d]] != [x.rstrip() for x in add]:
+            return None
+        if len(out) != (a - 1 if b else a):
+            return None
+        out.extend(rem)
+        pos = start + d
+    out.extend(new_lines[pos:])
+    return out
+
+
+def _read_lines(oid, cwd=None):
+    """A blob's lines by object id, or None when git cannot produce it. `cwd` is the repo that
+    holds it - the workspace when None, a product repo for a product citation (o9:W88)."""
+    if not oid or _ZERO_OID_RE.match(oid):
+        return None
+    rc, blob, _ = git(["cat-file", "blob", oid], cwd=cwd)
+    if rc != 0:
+        return None
+    return blob.split("\n")
+
+
+def _parse_log_records(blob):
+    """Records from a `--format=%x1e%H%x1f%cI%x1f%s --raw -p` listing, newest first.
+
+    ⛔ NOT `blob.split("\\x1e")[1:]`. Python counts \\x1c-\\x1f as whitespace, so the
+    `.strip()` inside `git()` removes the leading separator and `[1:]` then drops the NEWEST
+    commit - the one most likely to be the mover. Empty chunks are skipped instead.
+    """
+    recs = []
+    for chunk in blob.split("\x1e"):
+        if not chunk.strip():
+            continue
+        head, _, rest = chunk.partition("\n")
+        parts = head.split("\x1f")
+        if len(parts) < 3:
+            recs.append(None)                   # cannot tell what this was - touched
+            continue
+        old = new = status = None
+        for ln in rest.split("\n"):
+            if ln.startswith(":"):
+                f = ln.split()
+                if len(f) >= 5:
+                    old, new, status = f[2], f[3], f[4]
+                break
+        recs.append({"sha": parts[0].strip(), "iso": parts[1].strip(), "subject": parts[2],
+                     "old": old, "new": new, "status": status,
+                     "hunks": _parse_hunks(rest)})
+    return recs
+
+
+def _whys_for(rec, path, needles, versions, cwd=None):
+    """{needle: why} for one commit record - "" for a needle it did not touch.
+
+    `versions` carries the file as it stood AFTER this commit ({"oid", "lines"}) between
+    calls, so a newest-first walk rebuilds each older version from the one after it instead
+    of reading a 2 MB blob per commit. It is updated to the version BEFORE this commit.
+    `cwd` is the repo the commit is in: the workspace when None.
+    """
+    orch = bool(re.search(r"ORCHESTRATOR-DECISIONS-[^/\\]*\.md$", path))
+    if rec is not None and rec.get("old") is None and rec.get("hunks") == []:
+        # ⛔ A MERGE THAT CHANGED NOTHING HERE, NOT A COMMIT GIT COULD NOT READ. With
+        # `--diff-merges=first-parent`, `git log -- path` also lists a merge whose OTHER parent
+        # held an older copy of the file, and prints no change against the first parent. The
+        # first version of this read that as "could not read" and woke 27 more entries than
+        # the old code did, fleet-wide, each on a merge ("Merge o6L13 ...") that left the
+        # cited file exactly as the first-parent line already had it.
+        return {n: "" for n in needles}
+    if rec is None or rec.get("hunks") is None or not rec.get("new") or not rec.get("old"):
+        versions.clear()
+        return {n: "could not read what this commit did" for n in needles}
+    if _ZERO_OID_RE.match(rec["old"]):
+        versions.clear()
+        return {n: "the file did not exist before this commit" for n in needles}
+
+    out = {}
+    removed = [x for h in rec["hunks"] for x in h[4]]
+    added = [x for h in rec["hunks"] for x in h[5]]
+    ids = []
+    for n in needles:
+        # (b) - the lines naming it. Common lines are identical on both sides, so the
+        # multiset differs exactly when what was removed and what was added differ.
+        if (_lines_naming(removed, n, orch, _orchdoc_slug_or_none(path))
+                != _lines_naming(added, n, orch, _orchdoc_slug_or_none(path))):
+            out[n] = "lines naming %s changed" % n
+        elif orch and ENTRY_ID_RE.match(n):
+            ids.append(n)
+        else:
+            out[n] = ""
+
+    carried = versions.get("oid") == rec["new"]
+    new_lines = versions.get("lines") if carried else None
+    new_spans = versions.get("spans") if carried else None
+    old_lines = old_spans = None
+    if new_lines is not None:
+        # Keep the walk's copy of the file current even when this commit needs no entry
+        # text, so the next commit that does is not left reading a blob from git.
+        old_lines = _reverse_patch(new_lines, rec["hunks"])
+    if ids:
+        # (a) - the entry's own text. Needs both versions of the file.
+        if new_lines is None:
+            new_lines = ([] if _ZERO_OID_RE.match(rec["new"])
+                         else _read_lines(rec["new"], cwd))
+            if new_lines is not None:
+                old_lines = _reverse_patch(new_lines, rec["hunks"])
+        if new_lines is not None and old_lines is None:
+            old_lines = _read_lines(rec["old"], cwd)
+        if new_lines is None or old_lines is None:
+            versions.clear()
+            for n in ids:
+                out[n] = "could not read the file at this commit"
+            return out
+        if new_spans is None:
+            new_spans = entry_spans(new_lines)
+        old_spans = entry_spans(old_lines)
+        for n in ids:
+            out[n] = ("%s's own text changed" % n
+                      if _entry_block(old_lines, n, old_spans)
+                      != _entry_block(new_lines, n, new_spans) else "")
+    if old_lines is not None:
+        versions["oid"], versions["lines"], versions["spans"] = rec["old"], old_lines, old_spans
+    else:
+        versions.clear()
+    return out
+
+
+def _needle_whys(rec, path, needles, versions, cwd=None):
+    """`_whys_for` through the cache, keyed on the commit so every entry citing the same
+    path and needle shares one reading of it."""
+    sha = (rec or {}).get("sha") or ""
+    want = [n for n in needles if (sha, path, n) not in _NEEDLE_CACHE] if sha else list(needles)
+    if want:
+        got = _whys_for(rec, path, want, versions, cwd)
+        if sha:
+            for n in want:
+                _NEEDLE_CACHE[(sha, path, n)] = got[n]
+        else:
+            return got
+    return {n: _NEEDLE_CACHE[(sha, path, n)] for n in needles}
+
+
 #: failure-value: True   # what it returns when it CANNOT TELL - o8's rule, o9:F148
 def commit_touched_region(sha, path, needle):
-    """Did commit `sha` change any line of `path` containing `needle`?
+    """Did commit `sha` touch `path#needle`? True/False - see WHAT A COMMIT DID TO A NEEDLE.
 
     ⛔ THE TREADMILL THIS EXISTS TO END. E-STALEPROSE's cited-artifact edge is FILE-level:
     ANY commit touching a cited file restales the entry, whatever it changed. Measured
@@ -1185,25 +2341,1293 @@ def commit_touched_region(sha, path, needle):
 
     ⚠️ OPT-IN, AND DELIBERATELY SO. Nothing changes for a plain `path` citation - it stays
     file-level and stays loud. An entry narrows its own claim by writing `path#needle`, and
-    then only commits that touch a line containing `needle` count. An entry that over-narrows
-    is silencing its OWN alarm, visibly, in its own text.
+    then only commits that touch the needle count. An entry that over-narrows is silencing
+    its OWN alarm, visibly, in its own text.
 
-    Returns True when it cannot tell - an unreadable diff must not silence the check.
+    Case-insensitive. An id-shaped needle (`W6`, `D42.n2`) matches the whole id only, so a
+    `W65` line does not name `W6`; any other needle is a substring match. See `_names`.
+
+    Returns True when it cannot tell - an unreadable commit must not silence the check. A
+    commit that did not change `path` at all returns False: git answered, and the answer was
+    that nothing there moved.
     """
-    rc, diff, _ = git(["show", "--format=", "--unified=0", sha, "--", path])
-    if rc != 0 or not diff:
+    rc, blob, _ = git(["show", "--format=%x1e%H%x1f%cI%x1f%s", "--raw", "--no-abbrev", "-p",
+                       "--diff-merges=first-parent"] + _DIFF_OPTS + [sha, "--", path])
+    if rc != 0:
         return True
-    low = needle.lower()
-    for ln in diff.split("\n"):
-        if ln.startswith(("+++", "---", "@@")):
+    recs = _parse_log_records(blob)
+    # git prints NOTHING for a commit that left the path alone - a demonstrated negative,
+    # unlike a non-zero exit. Anything else that is not exactly one record is unexplained.
+    if not recs and not blob.strip():
+        return False
+    if len(recs) != 1:
+        return True
+    if recs[0] is not None and recs[0]["old"] is None and recs[0]["hunks"] == []:
+        return False
+    return bool(_needle_whys(recs[0], path, [needle], {})[needle])
+
+
+def first_needle_mover(path, since_iso, needles, limit=NEEDLE_SCAN_LIMIT):
+    """(iso, subject, sha, why) for the NEWEST commit on CANONICAL_REF since `since_iso` that
+    touched any of `needles` in `path`, or None when none did.
+
+    Every commit since the review is read, newest first, with ONE `git log -p` call; the
+    older versions of the file are rebuilt from its diffs rather than read one by one.
+
+    ⚠️ More than `limit` commits since the review returns the first unread one, marked as
+    such - the check cannot vouch for what it did not read.
+
+    ⚠️ THIS ONE CASE DOES NOT FAIL CLOSED: a listing git refuses (no such ref, say) returns
+    None, so the entry is not woken. That matches a bare citation, which is also left out when
+    its `git log` fails, and it keeps a clone without the canonical ref from refusing every
+    narrowed entry over something the author cannot act on. Accepted by o9, 2026-09-24.
+    """
+    args = ["log", "-n", str(limit + 1), "--format=%x1e%H%x1f%cI%x1f%s", "--raw",
+            "--no-abbrev", "-p", "--diff-merges=first-parent"] + _DIFF_OPTS
+    if since_iso:
+        args.append("--since=%s" % since_iso)
+    args += [CANONICAL_REF, "--", path]
+    rc, blob, _ = git(args)
+    if rc != 0 or not blob.strip():
+        return None
+    listed = _parse_log_records(blob)
+    unread = listed[limit] if len(listed) > limit else None
+    # The same test the caller applies to a bare citation: `when > since`, as strings.
+    recs = [r for r in listed[:limit]
+            if r is None or not since_iso or r["iso"] > since_iso]
+    versions = {}
+    for rec in recs:
+        whys = _needle_whys(rec, path, needles, versions)
+        hit = next((whys[n] for n in needles if whys[n]), "")
+        if hit:
+            if rec is None:
+                return (since_iso or "", "(unparseable commit record)", "", hit)
+            return (rec["iso"], rec["subject"], rec["sha"], hit)
+    if unread is not None and (not since_iso or unread["iso"] > since_iso):
+        return (unread["iso"], unread["subject"], unread["sha"],
+                "over %d commits since the review; older ones not read" % limit)
+    if len(listed) > limit and unread is None:
+        return (since_iso or "", "(unparseable commit record)", "",
+                "over %d commits since the review; older ones not read" % limit)
+    return None
+
+
+# ---- PRODUCT-REPO CITATIONS (o9:W88) -----------------------------------------------------
+#
+# A cited path that is not in the workspace repo used to be looked up in the workspace repo
+# anyway. It was never found there, so a citation into `product-app` or
+# `product-website` could never make its entry stale. o10 has 195 such citations and
+# o7 has 79 (o9's measurement, 2026-09-25). The human ruled on o9:D23 that the check should reach
+# the product repos, with the trigger left to o9. This is that trigger:
+#
+#   1. A cited path the workspace repo holds at CANONICAL_REF is checked exactly as before and
+#      nothing below touches it. Any other path is matched to a product repo: `<repo>/<path>`
+#      names the repo, and a path with no repo prefix belongs to the one product repo whose
+#      deploy branch holds it. A bare file name with no directory is not matched.
+#   2. A product citation WITH a `#needle` is stale when a commit on that repo's deploy branch,
+#      after the review, changed a line naming the needle - the same test a workspace
+#      citation gets (`_needle_whys`) - and the commit's subject is not a release or a
+#      codesight publish (PRODUCT_SKIP_SUBJECT_RE). Deleting or renaming the file removes the
+#      needle's lines, so it counts.
+#   3. A product citation WITHOUT a needle never makes the entry stale. The entry gets ONE
+#      advisory W-PRODUCTNONEEDLE listing those paths, and `restamp` and `commit` print the
+#      suggestion for the entry being edited. Over 14 days a file-level trigger would have
+#      made 75-100% of the entries citing product files stale, up to three times a week each,
+#      and filtering commit subjects alone removed only about 2% of that. Needles halve it.
+#   4. A cited file that is not on the deploy branch but has history there was deleted or
+#      renamed. It stays a product citation: with a needle the deletion is a needle change
+#      (rule 2); without one, or when the deletion came before the review, it gets
+#      W-PRODUCTGONE, naming the commit and, if git can follow it, the new path.
+#   5. Staleness is reported as the advisory W-PRODUCTSTALE, not E-STALEPROSE, so nothing is
+#      refused until PRODUCT_STALE_BLOCKS is set to True.
+#   6. A path that no repo holds and no repo ever held is not reported here. A repo git cannot
+#      read, a repo with no fetched deploy branch, and a path two product repos both hold are
+#      skipped, and `check` prints each skip once as a note (PRODUCT_NOTES). None of them is an
+#      error.
+#
+# The deploy branch is the repo's own `origin/HEAD`, found the way CANONICAL_REF is found for
+# the workspace. On 2026-09-25 that was origin/production for repo_1 and origin/main
+# for product-app, product-website, the marketing website and the memory repo.
+#
+# ⭐ THE LOG FOLLOWS THE DEPLOY BRANCH'S FIRST PARENTS, SO A COMMIT IS DATED WHEN IT LANDED.
+# A branch merged after the review is seen as its merge commit, whose diff against the first
+# parent is exactly what landed, whenever the branch's own commits were made. The first version
+# walked every parent and skipped merges by subject instead, and the o9 review measured three
+# defects in that: a branch change made before the review and merged after it was missed, a
+# back-merge with a custom subject (production merged into a branch, then the branch merged
+# back) reported the production change a second time, and an ordinary commit whose subject
+# began "Merge the ..." was skipped.
+#
+# ⚠️ STILL MISSED: a commit made locally before the review and pushed (fast-forward) after it.
+# A fast-forward writes no commit of its own, so the first-parent line carries the commit's
+# original date, which is before the review.
+
+#: ⛔ THE SWITCH THAT MAKES PRODUCT-REPO STALENESS BLOCK. While False, a product-repo citation
+#: whose needle moved is reported as the advisory W-PRODUCTSTALE and no landing is refused.
+#: Set to True, the same finding is added to the entry's E-STALEPROSE, which refuses the landing
+#: until the entry is re-reviewed. Change it only after the firing rate on live docs has been
+#: measured and found low (o9:W88, third box). Not flipped as of 2026-09-25.
+PRODUCT_STALE_BLOCKS = False
+
+# Commits that cannot be what an entry rests on: a release or a codesight publish is generated.
+# Merges are NOT listed: the log follows first parents, so a merge is how a branch lands.
+PRODUCT_SKIP_SUBJECT_RE = re.compile(r"^(chore\(release\)|chore\(codesight\))")
+
+# How many W-PRODUCTNONEEDLE entries `check --strict` lists before "and N more".
+PRODUCT_NONEEDLE_STRICT_CAP = 10
+
+# Tried in order when a repo has no origin/HEAD.
+_PRODUCT_REF_FALLBACKS = ("refs/remotes/origin/main", "refs/remotes/origin/master")
+
+_PRODUCT_REPOS = None   # [(prefix, root or None, label)], built once per run
+_PRODUCT_STATE = {}     # root -> (ref or None, why-not); the deploy branch, looked up once
+_PRODUCT_HOLDS = {}     # (root, ref, path) -> bool: is `path` a file on `ref`
+_WS_HOLDS = {}          # path -> bool: is `path` a file on CANONICAL_REF in the workspace
+_PRODUCT_LOG = {}       # (root, ref, path) -> (since, limit, records)
+_PRODUCT_GONE = {}      # (root, ref, path) -> (sha, iso, subject) of its last deletion, or None
+_PRODUCT_RENAME = {}    # (root, sha, path) -> the path it was renamed to, or ""
+
+#: {(doc name, repo label, reason): number of cited paths} - the skips `check` prints once.
+PRODUCT_NOTES = defaultdict(int)
+
+
+def _repo_main_root(r):
+    """The main checkout that discovered repo `r` belongs to: `r` itself, or for a linked
+    worktree the checkout its `.git` file points into. None when that pointer leads nowhere,
+    which is a repo whose git data is missing."""
+    g = Path(r) / ".git"
+    try:
+        if g.is_dir():
+            return Path(r)
+        txt = g.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not txt.lower().startswith("gitdir:"):
+        return None
+    gd = Path(txt[len("gitdir:"):].strip())
+    if not gd.is_absolute():
+        gd = Path(r) / gd
+    if not gd.exists():
+        return None
+    low = [x.lower() for x in gd.parts]
+    if "worktrees" in low:
+        i = len(low) - 1 - low[::-1].index("worktrees")
+        common = Path(*gd.parts[:i])
+        if common.name.lower() == ".git" and common.is_dir():
+            return common.parent
+    return Path(r)
+
+
+def product_repos():
+    """[(prefix, root, label)] for every discovered repo that is not the workspace repo.
+
+    `prefix` is how a citation names the repo: its path under the workspace, or its directory
+    name for a repo outside it (the memory repo is `memory`). A linked worktree maps to the
+    checkout it belongs to, so `pwa-orchestration-o10/base-wt/x.ts` reads the product-app
+    history. `root` is None when the repo's git data is missing. Built once per run.
+    """
+    global _PRODUCT_REPOS
+    if _PRODUCT_REPOS is not None:
+        return _PRODUCT_REPOS
+    main = _main_worktree()
+    anchors = [PROJECTS] + ([main] if main is not None and main != PROJECTS else [])
+    ws = {str(a).lower() for a in anchors}
+    own = _repo_main_root(PROJECTS)
+    if own is not None:
+        ws.add(str(own).lower())
+    out, seen = [], set()
+    for r in citable_repos():
+        r = Path(r)
+        root = _repo_main_root(r)
+        if str(r).lower() in ws or (root is not None and str(root).lower() in ws):
             continue
-        if ln.startswith(("+", "-")) and low in ln[1:].lower():
+        prefix = None
+        for a in anchors:
+            try:
+                prefix = r.relative_to(a).as_posix()
+                break
+            except ValueError:
+                continue
+        prefix = (prefix or r.name).strip("/")
+        if not prefix or prefix == "." or prefix.lower() in seen:
+            continue
+        seen.add(prefix.lower())
+        out.append((prefix, root, (root or r).name))
+    _PRODUCT_REPOS = out
+    return out
+
+
+def _batch_check(root, lines):
+    """One `git cat-file --batch-check` in `root`: [(type or None)] per input line, or None
+    when git could not answer at all."""
+    try:
+        p = subprocess.run(["git", "-C", str(root), "cat-file", "--batch-check"],
+                           input="\n".join(lines) + "\n", capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60,
+                           creationflags=flags())
+    except Exception:
+        return None
+    if p.returncode != 0:
+        return None
+    rows = p.stdout.split("\n")
+    if len(rows) < len(lines):
+        return None
+    out = []
+    for row in rows[:len(lines)]:
+        f = row.split()
+        out.append(f[1] if len(f) == 3 and f[1] in ("blob", "tree", "commit", "tag") else None)
+    return out
+
+
+def _origin_head(root):
+    """What `git symbolic-ref refs/remotes/origin/HEAD` answers in `root`, as a full ref name,
+    or None. Read from the loose ref file when there is one - a symbolic ref is never packed -
+    so the usual case costs no process; anything else asks git."""
+    f = Path(root) / ".git" / "refs" / "remotes" / "origin" / "HEAD"
+    try:
+        txt = f.read_text(encoding="utf-8", errors="replace").strip()
+        if txt.startswith("ref: refs/"):
+            return txt[len("ref: "):].strip()
+    except OSError:
+        pass
+    rc, name, _ = git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd=root)
+    return name if rc == 0 and name.startswith("refs/") else None
+
+
+def _deploy_ref_and_holds(root, paths):
+    """(ref, why, {path: bool}) for the repo at `root`: its deploy branch - origin/HEAD, as
+    CANONICAL_REF is found for the workspace, then the fallbacks - and which of `paths` are
+    files on it. `ref` is None, with `why`, when there is no branch to read. The branch and the
+    paths are asked of git in ONE call in the usual case, and both are cached for the run."""
+    if root in _PRODUCT_STATE and _PRODUCT_STATE[root][0] is None:
+        return _PRODUCT_STATE[root] + (None,)
+    if root in _PRODUCT_STATE:
+        ref = _PRODUCT_STATE[root][0]
+        held = _holds(root, ref, paths)
+        return (ref, "", held) if held is not None else (None, "git could not read it", None)
+    head = _origin_head(root)
+    tried = ([head] if head else []) + [r for r in _PRODUCT_REF_FALLBACKS if r != head]
+    first = tried[0]
+    want = sorted(set(paths))
+    got = _batch_check(root, tried + ["%s:%s" % (first, p) for p in want])
+    if got is None:
+        _PRODUCT_STATE[root] = (None, "git could not read it")
+        return None, "git could not read it", None
+    ref = next((t for t, kind in zip(tried, got) if kind == "commit"), None)
+    if ref is None:
+        why = "it has no fetched deploy branch (origin/HEAD, origin/main)"
+        _PRODUCT_STATE[root] = (None, why)
+        return None, why, None
+    short = ref[len("refs/remotes/"):] if ref.startswith("refs/remotes/") else ref
+    _PRODUCT_STATE[root] = (short, "")
+    if ref == first:
+        for p, kind in zip(want, got[len(tried):]):
+            _PRODUCT_HOLDS[(root, short, p)] = kind == "blob"
+    held = _holds(root, short, want)
+    return (short, "", held) if held is not None else (None, "git could not read it", None)
+
+
+def _holds(root, ref, paths):
+    """{path: bool} for which of `paths` are files on `ref` in `root`, from one batched git call
+    for whatever is not cached yet. None when git could not answer."""
+    want = [p for p in paths if (root, ref, p) not in _PRODUCT_HOLDS]
+    if want:
+        got = _batch_check(root, ["%s:%s" % (ref, p) for p in want])
+        if got is None:
+            return None
+        for p, kind in zip(want, got):
+            _PRODUCT_HOLDS[(root, ref, p)] = kind == "blob"
+    return {p: _PRODUCT_HOLDS[(root, ref, p)] for p in paths}
+
+
+def _workspace_holds(paths):
+    """{path: bool} for which of `paths` are files on CANONICAL_REF in the workspace repo, or
+    None when git could not answer - and then no path is treated as a product citation."""
+    want = [p for p in paths if p not in _WS_HOLDS]
+    if want:
+        # The ref itself first: with no CANONICAL_REF every path would read as "not here", and
+        # workspace files would then be looked for in the product repos.
+        got = _batch_check(PROJECTS, [CANONICAL_REF] + ["%s:%s" % (CANONICAL_REF, p)
+                                                        for p in want])
+        if got is None or got[0] != "commit":
+            return None
+        for p, kind in zip(want, got[1:]):
+            _WS_HOLDS[p] = kind == "blob"
+    return {p: _WS_HOLDS[p] for p in paths}
+
+
+def _plain_rel_path(p):
+    """True for a path `cat-file` can look up as `ref:path`. A `./` or `../` path is read
+    relative to the process directory, and `...` is an ellipsis, not a directory."""
+    if not p or p.startswith("/") or "\\" in p or ":" in p:
+        return False
+    return not any(seg in ("", ".", "..", "...") for seg in p.split("/"))
+
+
+def resolve_product_citations(paths, doc_name=""):
+    """{path: cite} for the cited `paths` that live in a product repo rather than the workspace.
+
+    A checkable cite is {"label", "root", "ref", "rel"}; one that cannot be checked is
+    {"label", "skip": why}, and each skip is counted in PRODUCT_NOTES under `doc_name`. A path
+    the workspace repo holds, and a path no repo holds, are left out. See PRODUCT-REPO
+    CITATIONS. Git is asked once per repo for all the paths, and repos are asked in parallel.
+    """
+    try:
+        return _resolve_product_citations(paths, doc_name)
+    except Exception as e:                  # a bug here must not take `check` down
+        PRODUCT_NOTES[(doc_name, "(all)", "lookup failed: %s" % type(e).__name__)] += 1
+        return {}
+
+
+def _gone(root, ref, paths):
+    """{path: (sha, iso, subject)} for those of `paths` that `ref` in `root` once held and
+    deleted - the newest such commit on the first-parent line - from ONE `git log` for whatever
+    is not cached yet. A path `ref` never held is absent. None when git refuses."""
+    want = [p for p in paths if (root, ref, p) not in _PRODUCT_GONE]
+    if want:
+        rc, blob, _ = git(["log", "--first-parent", "--diff-merges=first-parent",
+                           "--diff-filter=D", "--no-renames", "--name-only",
+                           "--format=%x1e%H%x1f%cI%x1f%s", ref, "--"] + want, cwd=root)
+        if rc != 0:
+            return None
+        found = {}
+        for chunk in blob.split("\x1e"):
+            if not chunk.strip():
+                continue
+            head, _, rest = chunk.partition("\n")
+            parts = head.split("\x1f")
+            if len(parts) < 3:
+                continue
+            for name in rest.split("\n"):
+                name = name.strip()
+                if name and name not in found:
+                    found[name] = (parts[0].strip(), parts[1].strip(), parts[2])
+        for p in want:
+            _PRODUCT_GONE[(root, ref, p)] = found.get(p)
+    return {p: _PRODUCT_GONE[(root, ref, p)] for p in paths
+            if _PRODUCT_GONE[(root, ref, p)] is not None}
+
+
+def _renamed_to(root, sha, path):
+    """The path `path` became in commit `sha` when git sees a rename there, else ""."""
+    key = (root, sha, path)
+    if key not in _PRODUCT_RENAME:
+        new = ""
+        rc, out, _ = git(["show", "--format=", "-M", "--name-status",
+                          "--diff-merges=first-parent", sha], cwd=root)
+        if rc == 0:
+            for ln in out.split("\n"):
+                f = ln.split("\t")
+                if len(f) == 3 and f[0].startswith("R") and f[1] == path:
+                    new = f[2].strip()
+                    break
+        _PRODUCT_RENAME[key] = new
+    return _PRODUCT_RENAME[key]
+
+
+def _parallel(fn, jobs):
+    """{job: fn(job)} with the jobs run on threads - each is a git process. A job that raises
+    maps to None instead of taking the rest down with it."""
+    def safe(j):
+        try:
+            return j, fn(j)
+        except Exception:
+            return j, None
+    if len(jobs) <= 1:
+        return dict(safe(j) for j in jobs)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(16, len(jobs))) as pool:
+        return dict(pool.map(safe, jobs))
+
+
+def _resolve_product_citations(paths, doc_name):
+    paths = sorted({p for p in paths if _plain_rel_path(p)})
+    if not paths:
+        return {}
+    ws = _workspace_holds(paths)
+    if ws is None:
+        return {}
+    rest = [p for p in paths if not ws.get(p)]
+    if not rest:
+        return {}
+    repos = product_repos()
+    # Several prefixes can name one repo (a checkout and its worktrees), so git is asked once
+    # per REPO, keyed by its root - or by its label when its git data is missing.
+    key_of = [str(root).lower() if root is not None else "missing:" + label.lower()
+              for _prefix, root, label in repos]
+    home = {}
+    for i, k in enumerate(key_of):
+        home.setdefault(k, i)
+    prefixed, bare, want = {}, [], defaultdict(set)
+    for p in rest:
+        low = p.lower()
+        best = None
+        for i, (prefix, _root, _label) in enumerate(repos):
+            if low.startswith(prefix.lower() + "/") and (
+                    best is None or len(prefix) > len(repos[best][0])):
+                best = i
+        if best is not None:
+            rel = p[len(repos[best][0]) + 1:]
+            if _plain_rel_path(rel):
+                prefixed[p] = (key_of[best], rel)
+                want[key_of[best]].add(rel)
+        elif "/" in p:
+            bare.append(p)
+            for k in home:
+                want[k].add(p)
+        # A bare file name (`AUDIT.md`, `LEDGER.md`) is left out: it says nothing about which
+        # directory it means, and a repo that happens to hold one at its root is not evidence
+        # that it is the one cited. o9 counted these as citations that do not resolve.
+
+    def repo(k):
+        return repos[home[k]][1], repos[home[k]][2]
+
+    def ask(k):
+        root = repo(k)[0]
+        if root is None:
+            return None, "its git data is missing", None
+        return _deploy_ref_and_holds(root, want[k])
+
+    answers = {}
+    for k, got in _parallel(ask, sorted(want)).items():
+        answers[k] = got if got is not None else (None, "git could not read it", None)
+
+    # Paths the deploy branch does not hold now: did it hold them once? A prefixed path is asked
+    # of its own repo; a bare path held by no repo is asked of every readable one.
+    held_bare = {p for p in bare
+                 if any(answers[k][0] is not None and answers[k][2].get(p) for k in answers)}
+    lost = defaultdict(list)
+    for p, (k, rel) in prefixed.items():
+        if answers[k][0] is not None and not answers[k][2].get(rel):
+            lost[k].append(rel)
+    for p in bare:
+        if p not in held_bare:
+            for k in answers:
+                if answers[k][0] is not None:
+                    lost[k].append(p)
+    gone = {}
+    for k, got in _parallel(lambda k: _gone(repo(k)[0], answers[k][0], lost[k]),
+                            sorted(lost)).items():
+        gone[k] = got or {}
+
+    def cite(k, rel, gone_rec=None):
+        root, label = repo(k)
+        c = {"label": label, "root": root, "ref": answers[k][0], "rel": rel}
+        if gone_rec:
+            c["gone"] = gone_rec
+        return c
+
+    out = {}
+    for p, (k, rel) in prefixed.items():
+        ref, why, held = answers[k]
+        label = repo(k)[1]
+        if ref is None:
+            out[p] = {"label": label, "skip": why}
+            PRODUCT_NOTES[(doc_name, label, why)] += 1
+        elif held.get(rel):
+            out[p] = cite(k, rel)
+        elif gone.get(k, {}).get(rel):
+            out[p] = cite(k, rel, gone[k][rel])
+    for p in bare:
+        holders = [k for k in sorted(answers)
+                   if answers[k][0] is not None and answers[k][2].get(p)]
+        if not holders:
+            holders = [k for k in sorted(gone) if gone[k].get(p)]
+        if len(holders) == 1:
+            k = holders[0]
+            out[p] = cite(k, p, gone.get(k, {}).get(p) if p not in held_bare else None)
+        elif len(holders) > 1:
+            names = ", ".join(repo(k)[1] for k in holders)
+            why = "held by more than one repo (%s); name the repo first to check it" % names
+            out[p] = {"label": names, "skip": why}
+            PRODUCT_NOTES[(doc_name, names, why)] += 1
+        else:
+            # No readable deploy branch holds it or held it. A repo that could not be read, but
+            # has the file on disk, is the likely home - say that rather than stay silent.
+            for k in sorted(answers):
+                ref, why, _held = answers[k]
+                root, label = repo(k)
+                if ref is None and root is not None and (root / p).is_file():
+                    out[p] = {"label": label, "skip": why}
+                    PRODUCT_NOTES[(doc_name, label, why)] += 1
+                    break
+    return out
+
+
+def product_nonneedle_paths(body, product):
+    """The paths entry `body` cites into a product repo with no `#needle`, in citation order.
+
+    ONE definition, read by the W-PRODUCTNONEEDLE finding and by the suggestion `restamp` and
+    `commit` print, so the three can never disagree about which paths lack a needle. A gone
+    file is left out: it gets W-PRODUCTGONE, and a needle would not bring it back.
+    """
+    regions = cited_regions(body)
+    return [p for p in cited_paths(body)
+            if product.get(p) and not product[p].get("skip") and not product[p].get("gone")
+            and not regions.get(p)]
+
+
+def entries_changed_since(doc, rel, ref):
+    """Ids of the live entries whose text in `doc` on disk differs from `rel` on `ref` - the
+    entries a landing of `doc` changes. Compared with `_entry_block`, so a restamp alone is not
+    a change. [] when the ref copy cannot be read; a new doc counts every entry."""
+    try:
+        new = pathlib.Path(doc).read_text(encoding="utf-8", errors="replace").split("\n")
+        rc, old_txt, _ = git(["show", "%s:%s" % (ref, rel)])
+        old = old_txt.split("\n") if rc == 0 else []
+        entries, _ = parse_entries(new)
+        new_spans, old_spans = entry_spans(new), entry_spans(old)
+        return [e["id"] for e in entries if not e.get("archived")
+                and _entry_block(new, e["id"], new_spans) != _entry_block(old, e["id"], old_spans)]
+    except Exception:
+        return []
+
+
+def print_needle_hints(doc, eids, lead="  "):
+    """Print the W-PRODUCTNONEEDLE suggestion for each of `eids` in `doc` that has one.
+
+    Called by `restamp` and `commit`, the two moments someone is editing the entry and can
+    add a needle while they are there. `check` only counts these, because 99 per-citation
+    lines on o10 made each one invisible. Never raises: this is advice, not a gate.
+    """
+    try:
+        lines = pathlib.Path(doc).read_text(encoding="utf-8", errors="replace").split("\n")
+        entries, _ = parse_entries(lines)
+        mine = [e for e in entries if e["id"] in set(eids) and not e.get("archived")]
+        if not mine:
+            return 0
+        product = resolve_product_citations(
+            [p for e in mine for p in cited_paths(e["body"])], pathlib.Path(doc).name)
+        shown = 0
+        for e in mine:
+            paths = product_nonneedle_paths(e["body"], product)
+            if not paths:
+                continue
+            shown += 1
+            print("%s[note] %s cites product file(s) with no #needle, so no commit there can"
+                  " make it stale:" % (lead, e["id"]))
+            for p in paths:
+                print("%s         %s  (%s)" % (lead, p, product[p]["label"]))
+            print("%s       Add #<a word from the line it rests on> inside the backticks, e.g."
+                  " `%s#<word>`." % (lead, paths[0]))
+        return shown
+    except Exception:
+        return 0
+
+
+def _iso_dt(s):
+    try:
+        d = _dt.datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
+
+
+def _product_listing(root, ref, rel, since_iso, limit):
+    """Commit records for `rel` on `ref` in `root` since `since_iso`, newest first, or None
+    when git refuses. One `git log -p` per repo and path per run: a listing taken from an
+    earlier `since` is reused for a later one when it was not cut off at `limit`."""
+    want = _iso_dt(since_iso) if since_iso else None
+    hit = _PRODUCT_LOG.get((root, ref, rel))
+    if hit is not None:
+        since0, limit0, recs = hit
+        have = _iso_dt(since0) if since0 else None
+        covers = have is None or (want is not None and have <= want)
+        if covers and limit0 >= limit and len(recs) <= limit0:
+            return recs
+    # `--first-parent`: the deploy branch's own line, so a merge carries what landed and is
+    # dated when it landed. See THE LOG FOLLOWS THE DEPLOY BRANCH'S FIRST PARENTS.
+    args = ["log", "--first-parent", "-n", str(limit + 1), "--format=%x1e%H%x1f%cI%x1f%s",
+            "--raw", "--no-abbrev", "-p", "--diff-merges=first-parent"] + _DIFF_OPTS
+    if since_iso:
+        args.append("--since=%s" % since_iso)
+    args += [ref, "--", rel]
+    rc, blob, _ = git(args, cwd=root)
+    if rc != 0:
+        return None
+    recs = _parse_log_records(blob) if blob.strip() else []
+    _PRODUCT_LOG[(root, ref, rel)] = (since_iso, limit, recs)
+    return recs
+
+
+def product_needle_mover(root, ref, rel, since_iso, needles, skip_subject=PRODUCT_SKIP_SUBJECT_RE,
+                         limit=NEEDLE_SCAN_LIMIT):
+    """(iso, subject, sha, why) for the newest commit on `ref` in the product repo at `root`,
+    after `since_iso`, that changed a line of `rel` naming one of `needles` and whose subject
+    `skip_subject` does not match. None when there is none.
+
+    The walk follows the deploy branch's first parents (see THE LOG FOLLOWS THE DEPLOY BRANCH'S
+    FIRST PARENTS): a merge counts as what it landed, dated when it landed. Still missed: a
+    commit made before the review and fast-forwarded onto the branch after it.
+
+    The needle test is the workspace one, `_needle_whys`, reading blobs from `root`. A commit
+    that deletes or renames `rel` removes every line naming the needle, so it counts. Times are
+    compared as instants, not as strings, because product commits carry their committer's UTC
+    offset. Like `first_needle_mover`, a listing git refuses returns None, and more than
+    `limit` commits since the review returns the first one not read.
+    """
+    listed = _product_listing(root, ref, rel, since_iso, limit)
+    if not listed:
+        return None
+    unread = listed[limit] if len(listed) > limit else None
+    since = _iso_dt(since_iso) if since_iso else None
+
+    def after(rec):
+        if since is None:
+            return True
+        t = _iso_dt(rec["iso"])
+        return t is None or t > since
+
+    versions = {}
+    for rec in listed[:limit]:
+        if rec is not None and not after(rec):
+            continue
+        whys = _needle_whys(rec, rel, needles, versions, root)
+        hit = next((whys[n] for n in needles if whys[n]), "")
+        if not hit:
+            continue
+        if rec is None:
+            return (since_iso or "", "(unparseable commit record)", "", hit)
+        if skip_subject is not None and skip_subject.match(rec["subject"] or ""):
+            continue
+        return (rec["iso"], rec["subject"], rec["sha"], hit)
+    if len(listed) > limit:
+        if unread is None:
+            return (since_iso or "", "(unparseable commit record)", "",
+                    "over %d commits since the review; older ones not read" % limit)
+        if after(unread):
+            return (unread["iso"], unread["subject"], unread["sha"],
+                    "over %d commits since the review; older ones not read" % limit)
+    return None
+
+
+# ---- WHO A LANDING WILL WAKE -------------------------------------------------------------
+#
+# ⛔ THE LANDER FOUND OUT AFTERWARDS (o9's W69 write-up, measured by o1, 2026-09-24). The
+# write-up used real entry ids as examples. Under the whole-id rule those added lines named
+# entries that o1 cites with `path#needle`, and the landing woke three of o1's entries. The
+# check that fired is correct; what was missing is that the person landing could not see it
+# coming. `commit` now prints, before it lands, which entries in OTHER docs the landing will
+# flag - worked out with the same rules the pull edge uses, on the same diff.
+#
+# ⚠️ A NOTICE, NEVER A GATE. Waking a citer is often exactly right; the point is that the
+# lander knows, and can tell the owner or reword an example id (use ones like `W9999`).
+
+def citations_of(doc_path, ref=None, cwd=None):
+    """[(other_doc_name, entry_id, [needles])] - every live entry in another OrchDoc on `ref`
+    whose `path#needle` citation names `doc_path`, read the way E-STALEPROSE reads it.
+
+    One `git grep` finds the docs that cite it at all, so only those are read and parsed.
+    Measured on the fleet 2026-09-24: parsing all eleven docs takes 0.24 s; this reads fewer.
+    """
+    ref = ref or CANONICAL_REF
+    name = pathlib.Path(str(doc_path)).name
+    rc, out, _ = git(["grep", "-l", "-F", name + "#", ref, "--", "ORCHESTRATOR-DECISIONS-*.md"],
+                     cwd=cwd)
+    if rc != 0 or not out.strip():
+        return []                      # 1 is git grep's "no match"; anything else, nothing
+    rows = []
+    for hit in out.splitlines():
+        other = hit.split(":", 1)[1] if hit.startswith(ref + ":") else hit.split(":", 1)[-1]
+        if pathlib.Path(other).name == name:
+            continue                   # a document is not its own dependency
+        rc2, text, _ = git(["show", "%s:%s" % (ref, other)], cwd=cwd)
+        if rc2 != 0:
+            continue
+        entries, _ = parse_entries(text.splitlines())
+        for e in entries:
+            if e.get("archived"):
+                continue
+            regs = cited_regions(e["body"])
+            if not regs:
+                continue
+            # The same pairing the check makes: the path must be a live citation, not one that
+            # appears only inside an attestation, and the needles come from the whole body.
+            live = set(cited_paths(e["body"]))
+            for pth, needles in regs.items():
+                if pth in live and pathlib.Path(pth).name == name:
+                    rows.append((pathlib.Path(other).name, e["id"], needles))
+    return rows
+
+
+def landing_wakes(doc_path, base=None, head="HEAD"):
+    """[(other_doc_name, entry_id, needle, why)] for entries in other docs that moving
+    `doc_path` from `base` to `head` would flag through a `path#needle` citation.
+
+    Rules (a) and (b) exactly as the pull edge applies them to one commit - see
+    `_whys_for` - on the diff from `base` to `head`. Bare citations are not listed: any
+    landing flags those, so naming them tells the lander nothing.
+    """
+    base = base or CANONICAL_REF
+    cites = citations_of(doc_path, base)
+    if not cites:
+        return []
+    rc, oids, _ = git(["rev-parse", "%s:%s" % (base, doc_path), "%s:%s" % (head, doc_path)])
+    ids = oids.split()
+    if rc != 0 or len(ids) != 2:
+        return []                      # not on the ref yet: nothing landed can depend on it
+    if ids[0] == ids[1]:
+        return []
+    rc, diff, _ = git(["diff"] + _DIFF_OPTS + [base, head, "--", doc_path])
+    rec = {"sha": "", "iso": "", "subject": "", "old": ids[0], "new": ids[1],
+           "status": "M", "hunks": _parse_hunks(diff) if rc == 0 else None}
+    needles = sorted({n for _, _, ns in cites for n in ns})
+    whys = _whys_for(rec, str(doc_path), needles, {})
+    out = []
+    for other, eid, ns in cites:
+        hit = next((n for n in ns if whys.get(n)), None)
+        if hit:
+            out.append((other, eid, hit, whys[hit]))
+    return out
+
+
+def print_landing_wakes(wakes, seconds):
+    """The notice `commit` prints. `wakes` from `landing_wakes`."""
+    if not wakes:
+        print("  [ok] notice - no entry in another doc has a needle this landing touches"
+              " (%.1fs)" % seconds)
+        return
+    print("  [note] this landing will flag %d entr%s in other docs (not a refusal; %.1fs):"
+          % (len(wakes), "y" if len(wakes) == 1 else "ies", seconds))
+    for other, eid, needle, why in wakes:
+        slug = re.sub(r"^ORCHESTRATOR-DECISIONS-|\.md$", "", other)
+        print("           %s %s (%s)" % (slug, eid, why))
+    print("           Each owner will have to re-read and restamp. If a line only uses an id")
+    print("           as an example, an id that does not exist (W9999) wakes nobody.")
+
+
+# ---- E-WAKESOTHERS: a new mention of a cited id, from outside that id's entry ------------
+#
+# ⛔ the human asked for the notice above to be ENFORCED (via o9, 2026-09-24), in two tiers:
+#   * a change to a cited entry's OWN text (rule a) is what its citers should hear about -
+#     a notice, and the landing goes ahead;
+#   * a NEW line naming a cited id, written OUTSIDE that id's entry (rule b), is the
+#     example-id case - o9's W69 write-up named two real ids as examples and flagged three of
+#     o1's entries. That refuses, and a real mention lands with an override naming the
+#     entries it flags.
+#
+# ⚠️ WHAT COUNTS AS NEW. Only lines this landing ADDS, and only when the number of lines naming
+# the id outside its own entry goes UP. Removing an old example is the cure, so it never
+# refuses; rewording a line that already named the id leaves the count where it was, so it
+# gets the notice and not the refusal. Only ids cited from OTHER docs - the author can see
+# citations in their own. Review stamps, override stamps, generated rows and the human's notes
+# are not the author's mention and are skipped (notes land through `land_note`, ungated).
+#
+# ⛔ AND ONLY A MENTION IN DOUBLE QUOTES REFUSES - A HEURISTIC, SAID AS ONE (o9's ruling,
+# 2026-09-24). Replayed over the last 30 landings of every doc (304), the unquoted version
+# refused 7: five real mentions (`**Depends:** D40`, "your D29 and D30 privacy wording"), one
+# example and one `o10:D31` that named another doc's entry. All four lines of the one example,
+# o9's W69 write-up, quote the id (`"W4" matches inside "W44"`); none of the five real
+# mentions do. So a quoted mention - straight or curly quotes - refuses, and a BARE one gets
+# the landing notice instead. An example written bare gets through this check; the notice,
+# which lists every entry the landing flags, is the backstop for that.
+
+WAKES_GUIDANCE = [
+    "E-WAKESOTHERS: a line this landing adds names, in double quotes, an entry id that",
+    "entries in other docs cite, so landing it flags those entries for their owners to",
+    "re-read. Quoting is how an example looks, so that is what this refuses - a heuristic;",
+    "a bare mention lands with a notice instead.",
+    "  - if the id is only an example, use one that does not exist, such as W9999",
+    "  - if the mention is real, land with",
+    "      --override E-WAKESOTHERS --because \"<name the entries and why they should be"
+    " re-checked>\"",
+]
+
+
+def _quoted_at(ln, i):
+    """True when offset `i` of `ln` sits inside double quotes, straight or curly."""
+    if ln.count('"', 0, i) % 2 == 1:
+        return True
+    return ln.rfind("“", 0, i) > ln.rfind("”", 0, i)
+
+
+def _generated_indices(lines):
+    """0-based indices of lines inside a generated region (plate, index, findings index)."""
+    out, inside = set(), False
+    for i, ln in enumerate(lines):
+        if _GENERATED_BEGIN_RE.search(ln):
+            inside = True
+            out.add(i)
+            continue
+        if _GENERATED_END_RE.search(ln):
+            inside = False
+            out.add(i)
+            continue
+        if inside:
+            out.add(i)
+    return out
+
+
+def wake_violations(old_lines, new_lines, hunks, cites, slug=None):
+    """[(id, [(line_no, holder_id, text)], [(other_doc_name, citer_id)])] - ids cited from
+    other docs that this change mentions in MORE lines outside their own entry than before,
+    where at least one added mention is in double quotes. The lines listed are the quoted ones.
+
+    Pure: `hunks` is `_parse_hunks` output for old -> new, `cites` is `citations_of` output,
+    `slug` is this doc's `oN` (so `o10:D31` in o9's doc is not o9's D31). Line numbers are
+    1-based in `new_lines`. See E-WAKESOTHERS above for what is skipped and why.
+    """
+    citers = {}
+    for other, eid, needles in cites:
+        for n in needles:
+            if ID_NEEDLE_RE.match(n):
+                citers.setdefault(n, []).append((other, eid))
+    if not citers or not hunks:
+        return []
+    old_spans, new_spans = entry_spans(old_lines), entry_spans(new_lines)
+    old_gen, new_gen = _generated_indices(old_lines), _generated_indices(new_lines)
+
+    def holder(spans, pos):
+        return next((eid for lo, hi, eid in spans if lo <= pos <= hi), None)
+
+    def mentions(side_lines, positions, spans, gen, needle):
+        own = needle.split(".", 1)[0]          # D42.n2 lives in D42's entry
+        hits = _name_hits(needle, slug)
+        found = []
+        for pos, raw in zip(positions, side_lines):
+            if pos - 1 in gen or NOTE_LINE_RE.match(raw.rstrip()):
+                continue
+            s = _needle_line(raw, True)
+            where = hits(s) if s is not None else []
+            if not where:
+                continue
+            h = holder(spans, pos)
+            if h != own:
+                found.append((pos, h, s, any(_quoted_at(s, i) for i in where)))
+        return found
+
+    out = []
+    for needle in sorted(citers):
+        added, removed = [], []
+        for a, b, c, d, rem, add in hunks:
+            removed += mentions(rem, range(a, a + b), old_spans, old_gen, needle)
+            added += mentions(add, range(c, c + d), new_spans, new_gen, needle)
+        quoted = [(p, h, s) for p, h, s, q in added if q]
+        if len(added) > len(removed) and quoted:
+            out.append((needle, quoted, sorted(set(citers[needle]))))
+    return out
+
+
+def _selftest_wakes():
+    """The selftest fixture for E-WAKESOTHERS: True when a new line naming a cited id fires
+    and a new line naming an id nobody cites does not. Ids are ones no real doc uses."""
+    d = Path(tempfile.mkdtemp())
+    try:
+        git(["init", "-q", "-b", "main", "."], cwd=d)
+        who = ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "core.autocrlf=false"]
+        dep = d / "ORCHESTRATOR-DECISIONS-o98.md"
+        doc = d / "ORCHESTRATOR-DECISIONS-o99.md"
+        dep.write_text("# Orchestrator Decision Doc - o98\n\n## FINDINGS\n\n"
+                       "### F9999 - rests on o99's W9999\n**Status:** OPEN - **Owner:** o98\n"
+                       "**Depends:** `ORCHESTRATOR-DECISIONS-o99.md#W9999`\n\nbody\n",
+                       encoding="utf-8", newline="\n")
+        base = ("# Orchestrator Decision Doc - o99\n\n## ON CLAUDE'S PLATE\n\n"
+                "### W9998 - the entry being written\n**Status:** OPEN - **Owner:** o99\n\n"
+                "body\n\n### W9999 - the entry o98 cites\n**Status:** OPEN - **Owner:** o99\n\n"
+                "body\n")
+        doc.write_text(base, encoding="utf-8", newline="\n")
+        git(who + ["add", "."], cwd=d)
+        git(who + ["commit", "-qm", "base"], cwd=d)
+        doc.write_text(base.replace("body\n\n### W9999", 'as "W9997" shows\n\n### W9999'),
+                       encoding="utf-8", newline="\n")
+        quiet = not wake_findings(doc, "main")
+        doc.write_text(base.replace("body\n\n### W9999", 'as "W9999" shows\n\n### W9999'),
+                       encoding="utf-8", newline="\n")
+        fired = [f for f in wake_findings(doc, "main") if f.code == "E-WAKESOTHERS"]
+        return quiet and len(fired) == 1 and "F9999" in fired[0].msg
+    except Exception:
+        return False
+    finally:
+        _remove_tree(str(d))           # the repo's object files are read-only
+
+
+def print_wakes_refusal(wakes):
+    """The full E-WAKESOTHERS explanation: each line, its id, what it flags, and the two ways
+    out. Printed once and untruncated - a finding's detail is cut at 100 characters."""
+    if not wakes:
+        return
+    print()
+    for f in wakes:
+        print("          %s" % f.msg)
+        print("            the line: %s" % (f.detail or ""))
+    print()
+    for ln in WAKES_GUIDANCE:
+        print("          %s" % ln)
+
+
+# ---- E-PRELABEL: a bare script pre-label (SC-1, AT-3) in text this landing ADDS ------------
+#
+# the human, 2026-10-13 (o9:W210): scripts are named to him by library id with a Reader link, never
+# by a pre-label such as SC-1 or AT-3: "It's fine to keep them for your own inner processes, but
+# I don't want to see them." the human reads OrchDocs in the Reader. The pattern and the code-blanking
+# are orchdoc_ids.PRE_LABEL / bare_pre_labels, shared with the Stop hook for replies.
+#
+# ⚠️ ONLY NEW TEXT. Other groups' docs hold many old pre-labels and a landing must never be
+# refused over a line it did not write. A hit counts only when BOTH hold: (1) its line is not
+# a line text already present in the parent (multiset of line texts, so a moved line is not
+# new), and (2) the entry holding it carries more of that label than the parent's same entry
+# did (so a restamped heading or a re-worded line that keeps its old label is not new).
+
+PRELABEL_MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pre_label_map.json")
+
+
+def prelabel_advice(label):
+    """What to write instead of `label`: the library id from pre_label_map.json when mapped."""
+    try:
+        with open(PRELABEL_MAP, encoding="utf-8") as fh:
+            data = json.load(fh)
+        lib_id = data.get(label) if isinstance(data, dict) else None
+    except Exception:
+        lib_id = None
+    if lib_id:
+        return "%s is %s; write %s with its Reader link" % (label, lib_id, lib_id)
+    return ("name the script by its library id with its Reader link, or by its working title "
+            "if it is not filed yet; keep pre-labels inside inline code for internal notes")
+
+
+def prelabel_text_findings(old_lines, new_lines):
+    """[(line_no, entry_id, label)] for each bare pre-label `new_lines` ADDS over `old_lines`."""
+    import collections
+    import orchdoc_ids
+    new_text = "\n".join(new_lines)
+    hits = orchdoc_ids.bare_pre_labels(new_text)
+    if not hits:
+        return []
+    starts, pos = [], 0
+    for ln in new_lines:
+        starts.append(pos)
+        pos += len(ln) + 1
+
+    def line_of(off):
+        lo, hi = 0, len(starts) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if starts[mid] <= off:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo + 1
+
+    def holder_of(entries, ln):
+        cur = None
+        for e in entries:
+            if e["line"] <= ln:
+                cur = e["id"]
+            else:
+                break
+        return cur or ""
+
+    new_entries, _s = parse_entries(new_lines)
+    old_entries, _s = parse_entries(old_lines)
+    seen_old = collections.Counter(old_lines)
+    old_count = collections.Counter()
+    old_hits = orchdoc_ids.bare_pre_labels("\n".join(old_lines))
+    if old_hits:
+        import bisect
+        ostarts, p = [], 0
+        for ln in old_lines:
+            ostarts.append(p)
+            p += len(ln) + 1
+        for lab, off in old_hits:
+            old_count[(holder_of(old_entries, bisect.bisect_right(ostarts, off)), lab)] += 1
+    new_count = collections.Counter()
+    avail = collections.Counter(seen_old)
+    is_new = {}
+    for i, ln in enumerate(new_lines, start=1):
+        if avail[ln] > 0:
+            avail[ln] -= 1
+            is_new[i] = False
+        else:
+            is_new[i] = True
+    flagged = []
+    for lab, off in hits:
+        ln = line_of(off)
+        who = holder_of(new_entries, ln)
+        new_count[(who, lab)] += 1
+        if is_new.get(ln):
+            flagged.append((ln, who, lab))
+    return [(ln, who, lab) for ln, who, lab in flagged
+            if new_count[(who, lab)] > old_count[(who, lab)]]
+
+
+def prelabel_findings(path, ref=None):
+    """E-PRELABEL findings for the working copy of `path` against `ref` (the parent the landing
+    verifies against). Says nothing when git cannot answer or the doc is not on the ref yet."""
+    ref = ref or CANONICAL_REF
+    p = pathlib.Path(str(path)).resolve()
+    rc, top, _ = git(["rev-parse", "--show-toplevel"], cwd=p.parent)
+    if rc != 0 or not top.strip():
+        return []
+    top = pathlib.Path(top.strip())
+    try:
+        rel = p.relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return []
+    rc, old, _ = git(["show", "%s:%s" % (ref, rel)], cwd=top)
+    if rc != 0:
+        return []
+    try:
+        new_lines = p.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return []
+    out = []
+    for ln, who, lab in prelabel_text_findings(old.split("\n"), new_lines):
+        out.append(Finding(
+            "E-PRELABEL", ln,
+            "%s: a line this landing adds names the script by pre-label %s" % (who or "doc", lab),
+            "%s: %s" % (lab, prelabel_advice(lab))))
+    return out
+
+
+def print_prelabel_refusal(found):
+    """Per hit: the entry id, the label, the replacement advice. Prints nothing when empty."""
+    if not found:
+        return
+    print()
+    print("  E-PRELABEL: %d bare pre-label%s on lines this landing adds. The human reads OrchDocs in"
+          % (len(found), "" if len(found) == 1 else "s"))
+    print("  the Reader and cannot tell which script `SC-1` or `AT-3` means. Name the script by")
+    print("  its library id with its Reader link; a label inside inline code is fine. Old lines")
+    print("  are never checked.")
+    for f in found:
+        label, _, advice = f.detail.partition(": ")
+        who = f.msg.split(":", 1)[0]
+        print("    %s L%d  %s -> %s" % (who, f.line, label, advice))
+
+
+def _selftest_prelabel():
+    """The selftest fixture for E-PRELABEL: an added bare label fires; the same label already in
+    the parent, or in inline code, does not."""
+    head = "# Doc\n\n## PLATE\n\n### W9998 - entry\n**Status:** OPEN - **Owner:** o99\n\n"
+    base = (head + "old line AT-3 here\n").split("\n")
+    fire = (head + "old line AT-3 here\nnew AT-1 line\n").split("\n")
+    same = (head + "old line AT-3 here\n").split("\n")
+    code = (head + "old line AT-3 here\nnew `AT-1` line\n").split("\n")
+    return (len(prelabel_text_findings(base, fire)) == 1
+            and not prelabel_text_findings(base, same)
+            and not prelabel_text_findings(base, code))
+
+
+# ---- E-BURIEDASK: a question for the human buried as an unchecked sub-item of a work entry ---------
+#
+# the human, 2026-10-15 (o9:W219, relayed by o3): "Stop hiding questions for me in W sections that are
+# wallllllls of text. ... I'm tired of needing to constantly ask Orchs to untangle hidden and
+# buried questions for me." The plate lists ENTRIES, never sub-items, so `- [ ] the human rules on
+# whether ...` inside a W or F entry never shows as a question. A question to the human is its own
+# Q, D or T entry (`orchdoc.py add --kind question`), stated in full, and the sub-item points to it.
+#
+# PHASE-IN (same mechanism as E-PRELABEL, no grandfather list): only a sub-item this landing ADDS
+# or REWORDS is checked. Its whole text is compared with the parent's multiset of sub-item texts,
+# so no doc fails to land over a sub-item it did not write, and a moved sub-item is not new.
+#
+# NOT A HIT: a checked box; an entry that is Q, D or T, or is resolved or archived; a sub-item
+# that names a Q, D or T entry by id (a pointer, in prose or as a Reader link); a sub-item where
+# the human is not the actor ("o9 tells the human", "after the human's ruling", "When the human rules on ...").
+
+BURIEDASK_KINDS_OK = ("Q", "D", "T")
+_BA_VERBS = (r"rules?|reads?|confirms?|judges?|answers?|decides?|says?|chooses?|approves?|picks?|"
+             r"re-?reviews?|reviews?|gives?|replies|names?|signs? off|marks?|tells?|sends?|"
+             r"listens?|looks?|checks?|opens?|rejects?|accepts?|settles?|weighs?|selects?|"
+             r"okays?|specif(?:y|ies)|states?|rates?|keeps?")
+_BA_ACTOR_RE = re.compile(r"\b(?:the human|he)\s+(?:(?:then|also|still|next|first|now)\s+)?(?:%s)\b"
+                          % _BA_VERBS, re.I)
+_BA_WHETHER_RE = re.compile(r"\bDrew\s+(?:[\w'-]+\s+){0,3}whether\b", re.I)
+_BA_COND_RE = re.compile(r"\b(?:when|after|once|if|until|before|since|because|while|unless)\b", re.I)
+# A POINTER names a Q, D or T entry as the place the question now lives: a Reader link, or an id
+# after "entry", "see", "answer to", "waits on", "tracked in". A bare "his D3 ruling" is not one.
+_BA_POINTER_RE = re.compile(
+    r"#o\d+/[QDT]\d+\b|"
+    r"\b(?:entry|entries|see|answers?(?:\s+(?:to|in))?|waits?\s+on|tracked\s+(?:in|as)|"
+    r"asked\s+in|recorded\s+(?:in|as))\W{0,4}(?:o\d+:)?[QDT]\d+\b", re.I)
+# Quoted script text, code spans and parentheses are blanked before the actor and question-mark
+# tests, so a "?" inside a quoted line of a script is not read as a question to the human.
+_BA_QUOTE_RE = re.compile("`[^`]*`|\\*\"[^\"]*\"\\*|\"[^\"]*\"|\u201c[^\u201d]*\u201d")
+
+
+def buried_ask_in(text):
+    """True when the sub-item `text` (one unchecked box, continuation lines joined) asks the human
+    to act and does not point at a Q, D or T entry."""
+    if _BA_POINTER_RE.search(text):
+        return False
+    bare = _BA_QUOTE_RE.sub(" ", text)
+    if not re.search(r"\bDrew\b", bare, re.I):
+        return False
+    for m in _BA_ACTOR_RE.finditer(bare):
+        clause = re.split(r"[.;:\n]", bare[:m.start()])[-1]
+        if _BA_COND_RE.search(clause):
+            continue          # "When the human rules on D74: dispatch ..." is a trigger, not a request
+        if re.search(r"\b(?:sometimes|often|usually|always|rarely|never|already)\b",
+                     bare[m.end():m.end() + 40], re.I):
+            continue          # "the human reads lane sessions sometimes" is a habit, not a request
+        return True
+    if _BA_WHETHER_RE.search(bare):
+        return True
+    for sent in re.findall(r"[^.!;?]*\?", bare):          # each sentence that ends in "?"
+        if re.search(r"\b(?:he|him)\b|\bDrew\b(?![’']s)", sent, re.I):
             return True
     return False
 
 
+def _buried_subitems(lines, entries, any_entry=False):
+    """[(line_no, entry_id, text)] for each unchecked top-level `- [ ]` sub-item (continuation
+    lines joined). Only open entries that are not Q, D or T, unless `any_entry`."""
+    struct = scan_structure(lines)
+    out, seen = [], set()
+    for e in entries:
+        m = re.match(r"^(?:o\d+:)?([A-Z]+)\d", e["id"] or "")
+        if not any_entry:
+            if not m or m.group(1) in BURIEDASK_KINDS_OK or e.get("archived"):
+                continue
+            if (status_of(e.get("body") or "") or "") in TERMINAL_STATUS:
+                continue
+        end = e["line"] + (e.get("body") or "").count("\n")
+        i = e["line"] + 1
+        while i <= min(end, len(lines)):
+            raw = lines[i - 1]
+            mm = re.match(r"^(\s{0,1})- \[ \] (.*)$", raw)
+            if not mm or struct[i - 1][0] or struct[i - 1][1] > 0 or i in seen:
+                i += 1
+                continue
+            parts, j = [mm.group(2).strip()], i + 1
+            while j <= min(end, len(lines)):
+                nxt = lines[j - 1]
+                if not nxt.strip() or not nxt.startswith(" ") or re.match(r"^\s*(?:[-*] |\d+\. )", nxt):
+                    break
+                parts.append(nxt.strip())
+                j += 1
+            seen.add(i)
+            out.append((i, e["id"], " ".join(parts)))
+            i = j
+    return out
+
+
+def buried_ask_text_findings(old_lines, new_lines):
+    """[(line_no, entry_id, text)] for each buried ask `new_lines` ADDS or REWORDS over `old_lines`."""
+    import collections
+    new_entries, _s = parse_entries(new_lines)
+    old_entries, _s = parse_entries(old_lines)
+    seen_old = collections.Counter(t for _l, _e, t in _buried_subitems(old_lines, old_entries, True))
+    out = []
+    for ln, who, text in _buried_subitems(new_lines, new_entries):
+        if seen_old[text] > 0:
+            seen_old[text] -= 1
+            continue
+        if buried_ask_in(text):
+            out.append((ln, who, text))
+    return out
+
+
+def buried_ask_findings(path, ref=None):
+    """E-BURIEDASK findings for the working copy of `path` against `ref`. Says nothing when git
+    cannot answer or the doc is not on the ref yet."""
+    ref = ref or CANONICAL_REF
+    p = pathlib.Path(str(path)).resolve()
+    rc, top, _ = git(["rev-parse", "--show-toplevel"], cwd=p.parent)
+    if rc != 0 or not top.strip():
+        return []
+    top = pathlib.Path(top.strip())
+    try:
+        rel = p.relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return []
+    rc, old, _ = git(["show", "%s:%s" % (ref, rel)], cwd=top)
+    if rc != 0:
+        return []
+    try:
+        new_lines = p.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return [Finding("E-BURIEDASK", ln,
+                    "%s: an unchecked sub-item asks the human something inside a work entry" % who,
+                    text[:160])
+            for ln, who, text in buried_ask_text_findings(old.split("\n"), new_lines)]
+
+
+def buried_ask_sweep(path):
+    """Every buried ask in `path` as it stands, with no parent: [(entry_id, text)]. Read-only."""
+    lines = pathlib.Path(str(path)).read_text(encoding="utf-8").split("\n")
+    entries, _s = parse_entries(lines)
+    return [(who, t) for _l, who, t in _buried_subitems(lines, entries) if buried_ask_in(t)]
+
+
+def print_buried_ask_refusal(found):
+    """Per hit: the entry, the sub-item, the remedy. Prints nothing when empty."""
+    if not found:
+        return
+    print()
+    print("  E-BURIEDASK: %d question%s for the human written as an unchecked sub-item of a work or"
+          % (len(found), "" if len(found) == 1 else "s"))
+    print("  finding entry. The plate lists entries, not sub-items, so he never sees it. Move each")
+    print("  question into its own entry, state it in full there, and make the sub-item point to it:")
+    print("    orchdoc.py add --doc <doc> --kind question \"<the question in full>\"")
+    print("  (or --kind decision, or --kind todo). Old sub-items are never checked.")
+    for f in found:
+        who = f.msg.split(":", 1)[0]
+        print("    %s L%d  - [ ] %s" % (who, f.line, f.detail[:110]))
+
+
+def _selftest_buried_ask():
+    """The selftest fixture for E-BURIEDASK: an added ask fires; a pointer, a checked box and an
+    old sub-item do not."""
+    head = "# Doc\n\n## PLATE\n\n### W9998 - entry\n**Status:** OPEN - **Owner:** o99\n\n"
+    base = (head + "- [ ] the human rules on whether the title stays.\n").split("\n")
+    fire = (head + "- [ ] the human rules on whether the title stays.\n"
+            "- [ ] the human reads the draft and gives notes.\n").split("\n")
+    point = (head + "- [ ] the human reads the draft (now its own entry, Q4).\n").split("\n")
+    checked = (head + "- [x] the human reads the draft and gives notes.\n").split("\n")
+    return (len(buried_ask_text_findings(base, fire)) == 1
+            and not buried_ask_text_findings(base, base)
+            and not buried_ask_text_findings(base, point)
+            and not buried_ask_text_findings(base, checked))
+
+
+def wake_findings(path, ref=None):
+    """E-WAKESOTHERS findings for the working copy of `path` against `ref`.
+
+    Works in the repository that holds `path` (so a fixture in a scratch repo checks itself),
+    and says nothing when git cannot answer: a doc that is not on the ref yet has no citers.
+    """
+    ref = ref or CANONICAL_REF
+    p = pathlib.Path(str(path)).resolve()
+    rc, top, _ = git(["rev-parse", "--show-toplevel"], cwd=p.parent)
+    if rc != 0 or not top.strip():
+        return []
+    top = pathlib.Path(top.strip())
+    try:
+        rel = p.relative_to(top.resolve()).as_posix()
+    except ValueError:
+        return []
+    cites = citations_of(rel, ref, cwd=top)
+    if not any(ID_NEEDLE_RE.match(n) for _, _, ns in cites for n in ns):
+        return []
+    rc, old, _ = git(["show", "%s:%s" % (ref, rel)], cwd=top)
+    if rc != 0:
+        return []
+    rc, diff, _ = git(["diff"] + _DIFF_OPTS + [ref, "--", rel], cwd=top)
+    hunks = _parse_hunks(diff) if rc == 0 else None
+    if not hunks:
+        return []
+    try:
+        new_lines = p.read_text(encoding="utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return []
+    out = []
+    for needle, added, flagged in wake_violations(old.split("\n"), new_lines, hunks, cites,
+                                                  _orchdoc_slug_or_none(rel)):
+        who = ", ".join("%s:%s" % (re.sub(r"^ORCHESTRATOR-DECISIONS-|\.md$", "", o), e)
+                        for o, e in flagged)
+        pos, holder, text = added[0]
+        out.append(Finding(
+            "E-WAKESOTHERS", pos,
+            "a new line names %s, which is cited by %s - landing it flags %s"
+            % (needle, who, "that entry" if len(flagged) == 1 else "those entries"),
+            'L%d in %s: "%s"%s' % (pos, holder or "no entry", text.strip()[:110],
+                                   "" if len(added) == 1 else " (+%d more)" % (len(added) - 1))))
+    return out
+
+
 def entries_touched(sha, path):
-    """Which entry ids did commit `sha` add or remove headings for, in `path`?
+    """Which entry ids did commit `sha` change lines inside, in `path`?
 
     ⛔ WHY THIS EXISTS. E-STALEPROSE's cited-artifact edge is FILE-level: a cited OrchDoc moved,
     so every entry citing it is suspect. That is the right granularity - narrowing it to
@@ -1227,19 +3651,34 @@ def entries_touched(sha, path):
     """
     if not sha:
         return None
-    rc, diff, _ = git(["show", "--format=", "--unified=0", sha, "--", path])
+    rc, diff, _ = git(["show", "--format="] + _DIFF_OPTS + [sha, "--", path])
     if rc != 0 or not diff:
         return None
 
-    # \u26d4 CHANGED LINES, NOT CHANGED HEADINGS. The first version matched added/removed entry
+    # ⛔ CHANGED LINES, NOT CHANGED HEADINGS. The first version matched added/removed entry
     # HEADINGS and called the result "entries touched". o1's own case disproved it before it
     # shipped: their commit subject reads "W2 carries the pause-cue constraint now" - it changed
     # W2's BODY - and the helper returned nothing. It would have printed "touched no entry
     # headings" about a commit that touched an entry.
     #
-    # \u2b50 A confident "touched nothing" is exactly the sentence that lets an author stop
+    # ⭐ A confident "touched nothing" is exactly the sentence that lets an author stop
     # measuring, which is the failure this note exists to prevent. So map the diff's changed
     # line ranges onto the entry regions of the file AS IT WAS at that commit.
+    # ⛔ o9:W43 - COMPARE THE TWO SIDES OF A HUNK BEFORE COUNTING ITS LINES AS TOUCHED. A hunk
+    # whose removed and added lines are byte-identical (a re-anchored line) changed nothing, and
+    # the matcher (`_lines_naming`, compared as multisets) already says so. This reporter mapped
+    # the hunk's range onto entry spans anyway, so the number a human read named an entry the
+    # gate acting on the same commit did not. The matcher is authoritative; this agrees with it.
+    parsed = _parse_hunks(diff)
+    if parsed is not None:
+        real = [h for h in parsed if h[4] != h[5]]
+        if parsed and not real:
+            # Every hunk was a no-op. A demonstrated negative, so [] and not None - but only
+            # when the file can be read, the same condition `_entry_ids_in` holds the rest to.
+            rc2, blob, _ = git(["show", "%s:%s" % (sha, path)])
+            return [] if rc2 == 0 and blob else None
+        hunks = [(h[2], h[2] + h[3] - 1) for h in real if h[3]]
+        return _entry_ids_in(sha, path, hunks)
     hunks = []
     for ln in diff.split("\n"):
         m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", ln)
@@ -1248,47 +3687,22 @@ def entries_touched(sha, path):
             count = int(m.group(2) or "1")
             if count:
                 hunks.append((start, start + count - 1))
-    if not hunks:
-        return None
+    return _entry_ids_in(sha, path, hunks)
 
+
+def _entry_ids_in(sha, path, ranges):
+    """Entry ids whose regions in `path` at `sha` overlap any of `ranges` (1-based, inclusive,
+    new-file lines). None when there are no ranges or the file cannot be read - the caller
+    must not read that as "touched nothing"."""
+    if not ranges:
+        return None
     rc2, blob, _ = git(["show", "%s:%s" % (sha, path)])
     if rc2 != 0 or not blob:
         return None
-    lines = blob.split("\n")
-    spans, cur, cur_line = [], None, 0
-    _HEAD = re.compile(r"^#{1,6}\s*\S*\s*([A-Z]{1,3}\d+[a-z]?)\b")
-    fenced = False
-    for i, ln in enumerate(lines, 1):
-        # ⛔ A `#` INSIDE A FENCED BLOCK IS NOT A HEADING. An entry quoting a doc's markdown -
-        # which OrchDoc entries do constantly - would otherwise open a bogus span, and every
-        # changed line after it gets credited to the wrong id. `_reorder_slots` had the same
-        # bug and got the same fix earlier today; this scanner was written before that.
-        if ln.lstrip().startswith("```"):
-            fenced = not fenced
-            continue
-        if fenced:
-            continue
-        m = _HEAD.match(ln)
-        if not m and ln.startswith("#"):
-            # ⛔ AN ARCHIVED HEADING CARRIES ITS ID MID-LINE, and missing it credits that
-            # entry's whole body to the entry ABOVE it. Measured against o1's independent
-            # run: a hunk inside a demoted W32 entry came back as W9. `parse_entries` already
-            # reads this form; this scanner had its own private regex and did not - one fact,
-            # two readers, which is the defect this file has spent the week removing.
-            #
-            # ⭐ o1's version matched an id ANYWHERE in the heading and returned DA18 - o8's
-            # entry, merely NAMED in the title. Neither of us had it right, and only running
-            # both showed that.
-            m = ARCHIVED_ID_RE.search(ln)
-        if m:
-            if cur:
-                spans.append((cur_line, i - 1, cur))
-            cur, cur_line = m.group(1), i
-    if cur:
-        spans.append((cur_line, len(lines), cur))
+    spans = entry_spans(blob.split("\n"))
 
     ids = []
-    for a, b in hunks:
+    for a, b in ranges:
         for lo, hi, eid in spans:
             if a <= hi and b >= lo and eid not in ids:
                 ids.append(eid)
@@ -1386,6 +3800,12 @@ PLATE_ONLY_RE = re.compile(
     # ⛔ `**Enriched:**` and `**Opened:**` - `normalize` rewrites the first and `add` stamps the
     # second, and neither was here. Found by the derived test, not by re-reading this list.
     r"\*\*Attested-by:\*\*|\*\*Reviewed:\*\*|\*\*Enriched:\*\*|\*\*Opened:\*\*|"
+    # ⭐ `**Priority:**`, the human's bare `NOW` and the `(proposed by oN)` form `priority` writes.
+    # o9 ruled it on 2026-10-05 (o9:W153): the line says only where an entry sits on the plate
+    # and changes no fact another entry rests on, so a commit that only adds or changes one is
+    # bookkeeping. `test_orchdoc_priority_bookkeeping.py` pins both forms, and a commit that also
+    # changes a fact line still counts as work.
+    r"\*\*Priority:\*\*|"
     # ⛔ THE GENERATED META-BLOCK ROW, AND WITHOUT IT THE WHOLE EXEMPTION WAS DEAD CODE.
     # o7 measured this rather than reading it: they landed a commit that changed nothing but
     # restamps - no prose anywhere - and E-STALEPROSE went from 2 to 3. Two of the eight changed
@@ -1449,12 +3869,16 @@ def _generated_lines(sha, doc_name):
     rc, blob, _ = git(["show", "%s:%s" % (sha, doc_name)])
     if rc != 0 or not blob:
         return set()
+    # ⛔ THE MARKER MUST BE THE LINE, NOT A WORD IN IT. This searched anywhere in a line, so
+    # prose NAMING `ORCHDOC:PLATE:BEGIN` opened a region that never closed: in o9's doc every
+    # line after its third such mention counted as generated, and a real prose change there
+    # read as plate-only - the push edge failing open. Same anchored pattern as the needle test.
     out, inside = set(), False
     for ln in blob.split("\n"):
-        if re.search(r"ORCHDOC:(?:PLATE|INDEX|FINDEX):BEGIN", ln):
+        if _GENERATED_BEGIN_RE.search(ln):
             inside = True
             continue
-        if re.search(r"ORCHDOC:(?:PLATE|INDEX|FINDEX):END", ln):
+        if _GENERATED_END_RE.search(ln):
             inside = False
             continue
         if inside and ln.strip():
@@ -1482,12 +3906,22 @@ def _creation_times(doc_name, ref=None):
     if key in _CREATED_CACHE:
         return _CREATED_CACHE[key]
     out = {}
-    rc, blob, _ = git(["log", "--format=%x1e%cI", "--unified=0", "-p",
-                       ref or CANONICAL_REF, "--", doc_name])
+    # `histogram`: a commit that reorders entries must not report every moved heading as newly
+    # added - see WHAT A COMMIT DID TO A NEEDLE. It also shrinks this read on a reorder.
+    rc, blob, _ = git(["log", "--format=%x1e%cI", "--unified=0", "--diff-algorithm=histogram",
+                       "-p", ref or CANONICAL_REF, "--", doc_name])
     if rc == 0 and blob:
         head = re.compile(r"^\+#{1,6}\s+.*?(?<![A-Za-z0-9])"
                           r"([A-Z]{1,3}(?:\d+[a-z]?|-[A-Z][A-Z0-9]*\d*))\s+-\s")
-        for rec in blob.split("\x1e")[1:]:
+        # ⛔ NOT `split("\x1e")[1:]`, which skipped the NEWEST commit on every document.
+        # Python counts \x1c-\x1f as whitespace, so the `.strip()` inside `git()` removes the
+        # leading separator and the first chunk IS the newest record. Measured 2026-09-24: 39 of
+        # o6's 40 commits read, 662 of o10's 663. An entry created in its doc's newest commit
+        # read as unlanded and was measured from now. Empty chunks are skipped instead, which
+        # is right whether or not the separator survived.
+        for rec in blob.split("\x1e"):
+            if not rec.strip():
+                continue
             lines = rec.split("\n")
             when = lines[0].strip()
             if not when:
@@ -1525,10 +3959,25 @@ def _commit_role(sha, doc_name, eid):
     if key in _ROLE_CACHE:
         return _ROLE_CACHE[key]
     created = plate_only = False
-    rc, diff, _ = git(["show", "--format=", "--unified=0", sha, "--", doc_name])
+    # `histogram`, or a reorder reports the entry's heading as added and `created` goes True.
+    rc, diff, _ = git(["show", "--format=", "--unified=0", "--diff-algorithm=histogram",
+                       sha, "--", doc_name])
     if rc == 0 and diff:
-        adds = [ln[1:] for ln in diff.split("\n") if ln.startswith("+") and not ln.startswith("+++")]
-        dels = [ln[1:] for ln in diff.split("\n") if ln.startswith("-") and not ln.startswith("---")]
+        # ⛔ AN ACK IS NOT WORK ON THE ENTRY - the push-edge half of o7:F26. A hunk whose only
+        # change is `note --ack` rewriting a note line (see `note_without_ack`) is set aside
+        # before anything below looks at the commit, so an ack landed with `Touches: oN:D30`
+        # does not mark D30 as changed. A hunk that also changes the note's words is kept.
+        hunks = _parse_hunks(diff)
+        kept = [h for h in hunks if not _ack_only_hunk(h[4], h[5])] if hunks is not None else None
+        acked = hunks is not None and len(kept) < len(hunks)
+        if kept is not None:
+            adds = [x for h in kept for x in h[5]]
+            dels = [x for h in kept for x in h[4]]
+        else:
+            adds = [ln[1:] for ln in diff.split("\n")
+                    if ln.startswith("+") and not ln.startswith("+++")]
+            dels = [ln[1:] for ln in diff.split("\n")
+                    if ln.startswith("-") and not ln.startswith("---")]
         head = re.compile(r"^#{1,6}\s.*\b%s\b" % re.escape(eid))
         created = any(head.match(a.strip()) for a in adds) and \
             not any(head.match(d.strip()) for d in dels)
@@ -1544,7 +3993,9 @@ def _commit_role(sha, doc_name, eid):
         # so membership is a fact the doc states about itself rather than something inferred from
         # phrasing. That is the same move as reading a declaration region instead of a window.
         generated = _generated_lines(sha, doc_name)
-        plate_only = bool(touched) and all(
+        # `acked`: a commit that did nothing but acknowledge has no lines left to judge, and
+        # that is a bookkeeping commit, not an empty one.
+        plate_only = (bool(touched) or acked) and all(
             PLATE_ONLY_RE.match(x.strip()) or x.strip() in generated for x in touched)
 
         # ⛔ `eid` SCOPES `created` AND NEVER SCOPED THIS - o7's second finding, and the one that
@@ -1557,7 +4008,10 @@ def _commit_role(sha, doc_name, eid):
         # and D18 three, each time diffing the named commit, finding zero touching lines, and
         # writing that honestly. The instrument generated its own evidence of being needed.
         if not plate_only:
-            ids = entries_touched(sha, doc_name)
+            # Only the hunks that were kept: an ack sitting inside this entry must not be what
+            # places the commit there.
+            ids = (_entry_ids_in(sha, doc_name, [(h[2], h[2] + h[3] - 1) for h in kept if h[3]])
+                   if kept is not None else entries_touched(sha, doc_name))
             # ⚠️ TWO GUARDS, both fail-closed. `entries_touched` returns None when it cannot read
             # the diff, and it maps hunks by their NEW-file ranges - so a commit that only DELETES
             # prose from this entry attributes to no id at all. Requiring the deletions to be
@@ -1815,11 +4269,23 @@ def _governing_section(lines, entry_line):
     whatever heading it saw last, so the enclosing section is lost.
 
     Returned as the bare number ("2.1"), or None when nothing canonical precedes the entry.
+
+    ⛔ A HEADING QUOTED INSIDE A ``` FENCE IS NOT A SECTION. This used to count it, so an entry
+    quoting `## §99.1` in a code block moved every entry below it into "§99.1" - and once
+    `archive` moved the quoting entry out, the same entries were back in their real section,
+    so a second run moved what the first had skipped (o9's review of W83). The fence is read
+    with `is_fence_line`, the parser's own definition, and `_governing_outside_fences` is this
+    same rule for every line at once.
     """
-    cur = None
+    cur, infence = None, False
     for i, line in enumerate(lines, 1):
         if i > entry_line:
             break
+        if is_fence_line(line):
+            infence = not infence
+            continue
+        if infence:
+            continue
         m = _CANON_HEAD_RE.match(line)
         if m:
             cur = m.group(1)
@@ -1866,6 +4332,8 @@ def is_active_section(title):
 STATUS_MARKER = {
     "OPEN": "\U0001f534", "BLOCKED": "\u26d4", "PAUSED": "\u23f8\ufe0f",
     "DEFERRED": "\u23f3", "RESOLVED": "\u2705", "ANSWERED": "\u2705",
+    # \u23ed\ufe0f - ordered behind something, not stopped by it.
+    "SEQUENCED": "\u23ed\ufe0f",
     "DONE": "\u2705", "SUPERSEDED": "\U0001f5c4\ufe0f", "ARCHIVED": "\U0001f5c4\ufe0f",
     # ⛔ NOT the archive box. A retraction is not tidying - it says the entry was wrong,
     # and a reader scanning markers must be able to see that without opening it.
@@ -1902,7 +4370,11 @@ INLINE_ENUM_MIN = 2       # enumerators in one paragraph
 # ⛔ Defined here, next to nothing in particular, ON PURPOSE: both the validator and the gate that
 # consumes it read this ONE name. When they each carried their own answer, adding a gate token
 # silently failed to register with the validator and the documented fix became unreachable.
-GATE_OVERRIDE_CODES = {"GATE1-REWORD"}
+GATE_OVERRIDE_CODES = {"GATE1-REWORD", "E-DAYONLYRULING", "E-DAYONLYOPENED",
+                       # Gate 5 fires on the SHAPE of added prose, so it is never a
+                       # lint finding and the validator would reject it otherwise -
+                       # the exact trap that made GATE1-REWORD unreachable for o10.
+                       "BOLDWALL"}
 
 # The archived heading form, defined ONCE and read by both sides. `archive` strips the
 # live-looking id from a heading (E-ARCHIVEDMARKER's own instruction) and re-attaches it here;
@@ -1920,6 +4392,36 @@ ARCHIVED_ID_RE = re.compile(r"_\(was\s+([A-Z]+\d+)\s*[-–—]\s*[A-Z]+\)_")
 def archived_heading_suffix(eid, status):
     """The ONE writer of the archived-id suffix that ARCHIVED_ID_RE reads."""
     return "  _(was %s - %s)_" % (eid, status)
+
+
+# The heading shape, defined ONCE. `render_orchdoc_reader.archived_coverage` carried its
+# own copy of this pattern and its own comparison loop; two readers of one marker is the
+# contract defect this file already records twice about this exact suffix, so the reader
+# now imports the function below instead of re-deriving it.
+ARCHIVED_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
+def unreachable_archived(lines, entries):
+    """Line numbers of archived HEADINGS in the raw file that `parse_entries` did not reach.
+
+    ⛔ A SECOND ORACLE, AND IT MUST NEVER BECOME A SECOND PARSER. It decides nothing
+    about what an entry is. It scans raw lines for a heading carrying the archived-id
+    suffix and asks whether each one appears in what the parser returned. Agreement is the
+    normal state; a shortfall names a line where an entry exists in the file and no tool
+    that reads the document can see it.
+
+    ⭐ THE POINT IS THAT IT COUNTS THE FILE, NOT THE PARSE. Every other coverage check
+    in this workspace asks whether the renderer showed everything the parser yielded - so
+    when the PARSER loses an entry, the smaller set is rendered faithfully and every check
+    passes. That is exactly what happened twice: a ``` fence swallowed D24-D40 on
+    2026-09-16 and D41 on 2026-09-19, and the fence COUNT was unchanged both times, so
+    parity saw nothing either.
+    """
+    seen = set(e["line"] for e in entries)
+    return [n for n, raw in enumerate(lines, start=1)
+            if n not in seen
+            and ARCHIVED_HEADING_RE.match(raw)
+            and ARCHIVED_ID_RE.search(raw)]
 
 OVERRIDE_RE = re.compile(
     r"^\s*<!--\s*ORCHDOC:OVERRIDE\s+(\S+)\s+by=(\S+)\s+at=(\S+)\s*-->\s*(.*)$",
@@ -2020,6 +4522,10 @@ SCHEMA_SECTIONS = [
     # in a sentence whose whole job is to distinguish two owners, a pronoun has two candidate
     # referents. {NAME} is already derived for the heading; use it here too.
     ("2",    "LIVE ON {NAME}'S PLATE", "only what needs {NAME}. Nothing else."),
+    # ⭐ the human, 2026-09-30: "a 'Do today' §2.0 ... things that I specifically need to do today,
+    # and daily repeated actions". OPTIONAL: created the first time an item is added (`today
+    # --add`), so a doc without one is not missing anything - see OPTIONAL_SECTIONS.
+    ("2.0",  "Do today",             "what {NAME} does today, and the routines that repeat"),
     ("2.1",  "Decisions",            "need {NAME}'s ruling"),
     ("2.2",  "Questions",            "need an answer from {NAME}"),
     ("2.3",  "To-Dos",               "need {NAME} to act"),
@@ -2029,7 +4535,7 @@ SCHEMA_SECTIONS = [
     ("3",    "ON CLAUDE'S PLATE",    "the orchestrator's own work, NOT the human's plate"),
     ("4",    "FINDINGS",             "what was learned, and why it holds"),
     ("5",    "GUARDS",               "what this orchestrator will not do"),
-    # 6 through 98 are YOURS.\1The human, 2026-08-07: "For some orchestrators, they may need to
+    # 6 through 98 are YOURS. The human, 2026-08-07: "For some orchestrators, they may need to
     # create sections other than what I've created. They need latitude to do that." An
     # earlier draft gave custom content one fixed box, which forces every orchestrator's
     # subject matter into a single section whether it divides that way or not. A range
@@ -2040,10 +4546,17 @@ SCHEMA_SECTIONS = [
     ("99.3", "To-Dos",               "done"),
 ]
 
+# Schema sections a doc may leave out. `check` does not report them missing; `scaffold` still
+# writes them, in order, when it runs.
+OPTIONAL_SECTIONS = {"2.0"}
+
 # Prefix -> which numbered section an entry of that kind belongs in, live and completed.
+# ⚠️ F and S complete into the `§99.x Findings` subsection, whose number differs per doc, so
+# `_destination` finds it by title; the "4" here is used only by a doc with no §99 (W83).
 KIND_SECTION_NUM = {"D": ("2.1", "99.1"), "Q": ("2.2", "99.2"),
                     "T": ("2.3", "99.3"), "A": ("2.3", "99.3"),
-                    "F": ("4", "4"), "S": ("4", "4"), "W": ("3", "99.3")}
+                    "F": ("4", "4"), "S": ("4", "4"), "W": ("3", "99.3"),
+                    "N": ("2.0", "99.3")}
 
 # The leading decoration class must NOT swallow a SIGN. It was `\W*`, which happily ate the
 # "-" in "## \u00a7-1 NEGATIVE", so that heading read as \u00a71 and SATISFIED the schema's requirement
@@ -2124,15 +4637,35 @@ def _self_sha():
                     return cand
     return "0000000"
 
-BLOCKING = {"E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
+BLOCKING = {"W-NOPROV", "E-DUPID", "E-SELFCLAIM", "E-NOSTATUS", "E-BADSTATUS", "E-DEADREF",
             "E-STALE", "E-ARCHIVEDMARKER", "E-PLATEDRIFT", "E-SCATTERED",
             "E-STALEPROSE", "E-RUBBERSTAMP", "E-NODEPS", "E-BADMARKER",
             "E-BADTOUCH", "E-AMBIGUOUSDATE", "E-MIXEDSTATE", "E-CLOSEDWITHOPENSUBS", "E-SETTLEDNOTSTRUCK",
             "E-IDSHAPE", "E-IDORDER", "E-ALLSUBSDONE", "E-STUBLEFT", "E-EMPTYLINKS", "E-LEGACYDOC", "E-PLATEHISTORY", "E-LOOSEINPARENT", "E-WRONGSECTION",
-            "E-NOOWNER", "E-DONEINACTIVE", "E-DONEBUTOPEN", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO", "E-NEEDLESPACE"}
-ADVISORY = {"W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
+            "E-NOOWNER", "E-DONEINACTIVE", "E-DONEBUTOPEN", "E-MARKERDRIFT", "E-SCHEMA", "E-TITLE", "E-ONEH1", "E-FUTUREDATE", "E-NOFETCH", "E-BADID", "E-CONFLICT", "E-IO", "E-NEEDLESPACE", "E-HIDDENENTRY",
+            "E-WAKESOTHERS", "E-PICTUREPAGE"}
+ADVISORY = {"W-STALLED", "W-DEADCITE", "W-SHACITE", "W-LINECITE", "W-BADLINEREF", "W-EMPTYPROMISE", "W-FAKEBULLETS", "W-INLINEENUM",
             "W-OVERRIDE", "W-STRIKEDONE", "W-UNFALSIFIABLE",
-            "W-WALLOFTEXT"}
+            "W-WALLOFTEXT", "W-PICTURENOTSHOWN", "W-CLOUDREF"}
+# o9 W126 and W127 (the human, 2026-10-01): text the human copies, and pictures he looks at, go IN the
+# entry. The checks are in the block that starts at `fenced_lines`.
+BLOCKING |= {"E-COPYBYLINK", "E-IMAGEBYPATH", "E-PRELABEL", "E-BURIEDASK"}
+ADVISORY |= {"W-PASTEDRIFT", "W-PICUNTRACKED"}
+# o9:W258: notes are the human's; a `NOTE from o<N>` line is for its owner to clean up.
+ADVISORY |= {"W-ORCHNOTE"}
+
+
+# o9 L1181 (2026-10-09): `check --codes A,B` reports those codes only. `block_blanket_override`
+# asks the checker what an override's codes fired on, and the full `check --doc o9` took 137 to
+# 177 seconds, past the hook's 120-second limit, so an override on o9 landed unchecked. None
+# means every code. `check_doc` skips its slow blocks (git lookups, path harvests) when it is
+# wanted for none of the codes the block can emit, and `cmd_check` drops every other finding.
+CHECK_ONLY = None
+
+
+def _wants(*codes):
+    """True when `check` was not narrowed by --codes, or was narrowed to one of these codes."""
+    return CHECK_ONLY is None or not CHECK_ONLY.isdisjoint(codes)
 
 
 class Finding:
@@ -2150,7 +4683,7 @@ def strip_decoration(text):
     return DECORATION_RE.sub("", text).lstrip()
 
 
-# ⛔ ONE DEFINITION OF THE READER LINK.\1The human asked for plate ids in chat to be clickable
+# ⛔ ONE DEFINITION OF THE READER LINK. The human asked for plate ids in chat to be clickable
 # (2026-09-16) and for it to apply to EVERY orchestrator, not one. A skill entry is prose that
 # has to be read and remembered; this prints it into the output every orchestrator already
 # copies, so the convention arrives whether or not anyone opens the skill.
@@ -2161,11 +4694,45 @@ def strip_decoration(text):
 READER_PORT = 8787
 
 
+def reader_port():
+    """The port the Reader serves on by default: READER_PORT unless this machine says otherwise.
+
+    `$ORCHDOC_READER_PORT` (a whole number from 1 to 65535) wins, then `"reader_port": N` in the
+    workspace's `.orchdoc-config.json`. A value that is not a port number is ignored rather than
+    refused. Only the Reader's --port default reads the environment variable: links written into
+    an OrchDoc use `link_port()`, which reads the config file only, so a test Reader started with
+    the variable on another port never writes its port into document text that the human and
+    the stop hooks read later.
+    """
+    for raw in (os.environ.get("ORCHDOC_READER_PORT"), _config_get("reader_port")):
+        try:
+            n = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= 65535:
+            return n
+    return READER_PORT
+
+
+def link_port():
+    """The port that written and printed Reader links point at: `"reader_port": N` in the
+    workspace's `.orchdoc-config.json` (a standing choice for that workspace, used where 8787 is
+    taken), else READER_PORT. The environment variable is NOT read here; see reader_port()."""
+    try:
+        n = int(str(_config_get("reader_port")).strip())
+    except (TypeError, ValueError):
+        return READER_PORT
+    if 1 <= n <= 65535:
+        return n
+    return READER_PORT
+
+
 def reader_link(doc_name, eid):
     """`http://127.0.0.1:8787/#o9/D23` for a doc filename and an entry id.
 
     Returns "" when the doc name is not an OrchDoc, rather than guessing a slug - a link that
     goes nowhere is worse than no link, because it teaches the human to distrust the ones that work.
+    The port is `link_port()`: 8787 unless this workspace's config file sets another one.
     """
     stem = str(doc_name)
     if stem.endswith(".md"):
@@ -2176,25 +4743,59 @@ def reader_link(doc_name, eid):
     slug = stem.split(marker, 1)[1]
     if not re.fullmatch(r"o\d+", slug or ""):
         return ""
-    return "http://127.0.0.1:%d/#%s/%s" % (READER_PORT, slug, eid)
+    return "http://127.0.0.1:%d/#%s/%s" % (link_port(), slug, eid)
 
 
-def parse_entries(lines):
+def is_fence_line(raw):
+    """True for a line that opens or closes a fenced block: three backticks after any
+    indent. THE ONE DEFINITION - `parse_entries` reads fences through it, and so does
+    `archive`.
+
+    ⛔ `~~~` IS NOT A FENCE HERE, ON PURPOSE. `archive` once treated it as one while the
+    parser did not (o9's review of W83, 2026-09-25): a closed finding quoting `## §99.1`
+    inside `~~~` was cut where the parser ended it, the half-fence left behind hid every
+    §99 heading from `archive`, and the run crashed. Two readers of one marker must share
+    one definition."""
+    return raw.lstrip().startswith("```")
+
+
+def fence_states(lines):
+    """[(fenced, open_after)] for each line: `fenced` is True for a fence line and every line
+    inside a fence; `open_after` is True when a fence is still open below the line, so a line
+    inserted straight under it would be inside that fence.
+
+    ⛔ THE ONE SCAN OF FENCES, through `is_fence_line`. `parse_notes` (the reader of notes),
+    `scan_structure` (the reader of entries) and `note_slot` (the writer of notes) all read
+    fences here. On 2026-10-05 the writer placed a note by its own rule and the reader skipped
+    it by another: o5's T4 quoted o8:T9 inside a ````text fence, `note` wrote the human's
+    instruction after the quoted T9.n2, `parse_notes` could not see it, and five sends were
+    refused (o9:W153). `lines` must start outside a fence, as a document or an entry body does.
     """
-    Return (entries, sections).
+    out, inside = [], False
+    for raw in lines:
+        if is_fence_line(raw):
+            inside = not inside
+            out.append((True, inside))
+        else:
+            out.append((inside, inside))
+    return out
 
-    entry  = dict(id, line, level, title, body, section)
-    Body runs to the next heading of the same or shallower level.
+
+def scan_structure(lines):
+    """How `parse_entries` reads each line: a list of (fenced, depth, opens, closes).
+
+    `fenced` is True for a fence line and every line inside a fence. `depth` is the
+    `<details>` nesting after the line, which is what makes a heading ARCHIVED; `opens` and
+    `closes` say whether the line moved it. One scan, shared, so `archive` can never
+    disagree with the parser about where a fold or a fence begins and ends.
     """
-    heads = []
-    in_fence = False
+    out = []
     in_att = False  # inside an ORCHDOC:OVERRIDE attestation span - explanation, not structure
     depth = 0  # <details> nesting: a heading inside one is ARCHIVED, not live
-    for i, raw in enumerate(lines, start=1):
-        if raw.lstrip().startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
+    # Fences through `fence_states`, the one scan `parse_notes` and `note_slot` read too.
+    for raw, (fenced, _open) in zip(lines, fence_states(lines)):
+        if fenced:
+            out.append((True, depth, 0, 0))
             continue
         # Strip inline code spans BEFORE looking for the tag. A doc that discusses
         # `<details>` in prose (this tool's own OrchDoc does) would otherwise open a
@@ -2216,6 +4817,7 @@ def parse_entries(lines):
         # not to whichever check happened to trip over it", and then the PARSER - which every
         # check reads through - did not have it. Same rule as marker_span's: IF A READER WOULD
         # NOT ACT ON IT, THE PARSER MUST NOT EITHER.
+        opens = closes = 0
         if OVERRIDE_RE.match(raw):
             in_att = True
         elif in_att and not raw.strip():
@@ -2225,8 +4827,28 @@ def parse_entries(lines):
             low = re.sub(r"`[^`]*`", "", low)
             if "<details" in low:
                 depth += 1
+                opens = 1
             if "</details>" in low:
                 depth = max(0, depth - 1)
+                closes = 1
+        out.append((False, depth, opens, closes))
+    return out
+
+
+def parse_entries(lines):
+    """
+    Return (entries, sections).
+
+    entry  = dict(id, line, level, title, body, section)
+    Body runs to the next heading of the same or shallower level.
+    """
+    heads = []
+    # Fences and <details> folds are read by `scan_structure` - see its docstring for why
+    # the parser and `archive` share one scan.
+    for i, (raw, (fenced, depth, _o, _c)) in enumerate(
+            zip(lines, scan_structure(lines)), start=1):
+        if fenced:
+            continue
         m = re.match(r"^(#{1,6})\s+(.*)$", raw)
         if m:
             heads.append((i, len(m.group(1)), m.group(2).rstrip(), depth > 0))
@@ -2395,6 +5017,7 @@ KIND_ORDER = [
     ("Q", "QUESTIONS - need an answer from you"),
     ("D", "DECISIONS - need your call"),
     ("A", "ACTIONS - on your plate"),
+    ("N", "DO TODAY - due today"),
 ]
 
 
@@ -2412,6 +5035,9 @@ def build_plate_block(entries, raw_lines=None):
     held = 0          # open, but owned by the orchestrator - counted, not hidden
     for e in entries:
         if e.get("archived") or status_of(e["body"]) not in PLATE_STATUS:
+            continue
+        # A §2.0 item is on the plate only on the days it is due.
+        if not today_on_plate(e):
             continue
         # ⛔ THE PLATE IS "ONLY WHAT NEEDS THEM. NOTHING ELSE." - so an item the
         # ORCHESTRATOR owns does not belong on it, however open it is. Selecting on status
@@ -2458,11 +5084,37 @@ def build_plate_block(entries, raw_lines=None):
             cut = title[:88].rsplit(" ", 1)[0].rstrip(" ,;:-")
             title = (cut or title[:88]) + "…"
         live.append((e["id"], title, owner_text(e["body"]) or "-",
-                     gh_anchor(e["title"])))
+                     gh_anchor(e["title"]), e["body"]))
 
     def kind_of(eid):
         m = re.match(r"^([A-Z]+)", eid)
         return m.group(1)[0] if m else "?"
+
+    # \u2b50 PRIORITY, WITHIN EACH GROUP. The human asked for priority tagging on 2026-09-20; the
+    # measurement that shaped it is in `priority.py`. Ordering happens INSIDE a kind group
+    # because he ruled the plate grouped by kind on 2026-08-06 and sorting across the groups
+    # would reverse that quietly.
+    #
+    # \u26d4 Every live entry in the doc counts as a potential referrer, not just the plate
+    # ones - an unruled decision with three of o9's OWN work items stacked behind it is
+    # exactly the thing that should rise, and those live in section 3.
+    try:
+        import priority as _prio
+        _sibs = [x["body"] for x in entries if not x.get("archived")]
+        # One tally for the whole block - see priority.referrer_counts.
+        _counts = _prio.referrer_counts(_sibs)
+        # And the declared-dependency tally, once, for the same reason.
+        _blockers = _prio.blocker_counts(_sibs)
+
+        def _key(row):
+            return _prio.rank_key(row[0], row[4], _sibs, counts=_counts)
+
+        def _why(row):
+            return _prio.reason_short(row[0], row[4], _sibs, counts=_counts,
+                                      blockers=_blockers)
+    except Exception:
+        _key = lambda row: row[0]          # noqa: E731 - ordering is a nicety, never a gate
+        _why = lambda row: ""              # noqa: E731
 
     block = [PLATE_BEGIN, ""]
     total = 0
@@ -2472,17 +5124,22 @@ def build_plate_block(entries, raw_lines=None):
             continue
         total += len(group)
         block += ["**%s**" % label, "",
-                  "| | What it needs from you | Owner |", "|---|---|---|"]
-        for eid, title, owner, anchor in group:
-            block.append("| **[%s](%s)** | %s | %s |" % (eid, anchor, title, owner))
+                  "| | What it needs from you | Owner | Why here |", "|---|---|---|---|"]
+        for row in sorted(group, key=_key):
+            eid, title, owner, anchor = row[0], row[1], row[2], row[3]
+            block.append("| **[%s](%s)** | %s | %s | %s |"
+                         % (eid, anchor, title, owner, _why(row)))
         block.append("")
 
     other = [r for r in live if kind_of(r[0]) not in {p for p, _ in KIND_ORDER}]
     if other:
         total += len(other)
-        block += ["**OTHER OPEN**", "", "| | What | Owner |", "|---|---|---|"]
-        for eid, title, owner, anchor in other:
-            block.append("| **[%s](%s)** | %s | %s |" % (eid, anchor, title, owner))
+        block += ["**OTHER OPEN**", "", "| | What | Owner | Why here |",
+                  "|---|---|---|---|"]
+        for row in sorted(other, key=_key):
+            eid, title, owner, anchor = row[0], row[1], row[2], row[3]
+            block.append("| **[%s](%s)** | %s | %s | %s |"
+                         % (eid, anchor, title, owner, _why(row)))
         block.append("")
 
     # Does an ACTIVE section hold decision-shaped content the parser could not turn into
@@ -2490,18 +5147,46 @@ def build_plate_block(entries, raw_lines=None):
     # parser sees none of them - and "0 open" is then a statement about the PARSER, not
     # about the document. Detect that rather than report it as fact.
     unread = False
-    seen_ids = {(e["section"], e["id"]) for e in entries}
+    # ⛔ COMPARE A TITLE TO A TITLE. `e["section"]` is the section's TITLE - parse_entries
+    # sets it from `s["title"]`, with no leading "## " - while the loop below walks RAW heading
+    # lines, which have one. The membership test used to compare the two directly, so it never
+    # matched for ANY section, "this section contributed no entries" was always TRUE, and the
+    # heuristic silently collapsed to "any active section with >=2 bold bullets".
+    #
+    # ⭐ THAT MADE IT FIRE ON THE HEALTHY STATE IT WAS BUILT TO DISTINGUISH FROM. A doc
+    # whose open items are ALL orchestrator-owned has zero rows for the human - which is correct and
+    # good - and the banner then told him the document could not be parsed. Measured 2026-09-21
+    # on origin/main: o9 showed it with 367 parsed entries and 53 open items, o5 with 7. o11 and
+    # o12 also have zero rows and did NOT show it, only because they carry fewer bold bullets -
+    # so which docs lied was decided by their prose style.
+    #
+    # ⚠️ The o3 case it EXISTS for is untouched: o3 parses to 0 entries, so `not
+    # entries` still carries it and the banner is still correct there.
+    _sec_titles = {e["section"] for e in entries}
+
+    def _title_of(head_line):
+        return head_line.lstrip("#").strip()
+
+    # ⛔ A LINE INSIDE A ``` FENCE IS QUOTED TEXT, NOT STRUCTURE (o9 W150, 2026-10-03). This
+    # scan read raw lines with no fence tracking, while `parse_entries` skips fences. o9's
+    # archived former D40 quoted `## Decisions for the human (D14, D15 - ...)` in a code block; the
+    # scan took it for a live section, counted the 21 bold bullets below it, and the day o9's
+    # plate emptied the Reader showed "?" and this banner on a doc with 511 parsed entries.
+    # `fenced_lines` is the parser's own fence reading, so the two cannot disagree again.
+    _fz = fenced_lines(raw_lines or [])
     cur_sec, bullets = "", 0
-    for ln in (raw_lines or []):
+    for _i, ln in enumerate(raw_lines or []):
+        if _i in _fz:
+            continue
         if ln.startswith("## "):
             if cur_sec and is_active_section(cur_sec) and bullets >= 2 and \
-                    not any(s == cur_sec for s, _ in seen_ids):
+                    _title_of(cur_sec) not in _sec_titles:
                 unread = True
             cur_sec, bullets = ln, 0
         elif re.match(r"^\s*[-*]\s+\*\*", ln):
             bullets += 1
     if cur_sec and is_active_section(cur_sec) and bullets >= 2 and \
-            not any(s == cur_sec for s, _ in seen_ids):
+            _title_of(cur_sec) not in _sec_titles:
         unread = True
 
     if total == 0 and (not entries or unread):
@@ -2539,6 +5224,2412 @@ def build_plate_block(entries, raw_lines=None):
     return block
 
 
+# Where refusals go. Beside `lane-launches.jsonl`, for the same reason: a fact about what
+# the tooling DID that no document can carry.
+#
+# ⛔ THE MAIN CHECKOUT'S STATE DIR, NOT THIS WORKTREE'S. Resolved from `__file__` this wrote
+# whichever worktree the landing ran from, so the rows scattered - and on 2026-09-21 two
+# gate-5 rows went into a throwaway worktree that was deleted an hour later. A log that does
+# not accumulate in one place cannot answer the question it exists for.
+REFUSAL_LOG = _shared_state.state_dir() / "gate-refusals.jsonl"
+
+
+def log_refusal(doc, findings, lines=None):
+    """One row per blocking finding, at the moment the gate refuses a landing.
+
+    ⛔ THE ONE POPULATION NOTHING ELSE CAN REACH. Deciding whether a blocking check earns
+    its false positives means counting them - and they are NOT in the documents, because the
+    gate refused the commit that would have contained them. Measured 2026-09-20 while o1 and
+    I were arguing about `has_open_subitems`: 0 cases in all eleven live docs, 0 across ~600
+    historical versions of them, and a positive control proving the search worked. o1 had hit
+    three refusals that same evening and reworded past all three. **Both populations are
+    survivors of the instrument under study.**
+
+    ⭐ IT CARRIES THE OFFENDING LINE, and that is the part that makes the log worth
+    keeping. A code and a count say a gate fired; only the sentence says whether it should
+    have. o1's three were `pending`, `not yet` and a third phrasing, all describing somebody
+    else's trademark applications inside a `- [x]` box - unjudgeable from a tally.
+
+    ⚠️ NEVER FAILS THE RUN. A logging error must not become a refusal of its own; the
+    worst case is a missing row.
+    """
+    try:
+        REFUSAL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        who = actor_for(doc) if doc else "unknown"
+        rows = []
+        for f in findings:
+            text = ""
+            if lines and f.line and 0 < f.line <= len(lines):
+                text = lines[f.line - 1].strip()[:200]
+            rows.append(json.dumps({
+                "at": _now_iso(), "by": who,
+                "doc": Path(doc).name if doc else None,
+                "code": f.code, "line": f.line, "msg": f.msg[:200], "text": text,
+            }, ensure_ascii=False))
+        with open(str(REFUSAL_LOG), "a", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(rows) + "\n")
+    except Exception:
+        pass
+
+
+# ---- PICTURES GO IN THE ENTRY, NOT ON A PAGE OF THEIR OWN --------------------------------
+#
+# ⭐ the human, 2026-09-29, after o10 made a separate HTML page of mock-ups for D116 and gave him
+# its path: *"It would make far more sense to put the images into the OrchDoc Reader directly
+# - it's an HTML doc and is also right where I am already looking. the section could simply be
+# collapsed by default until I want to look at it. Set this as a hook/script rule for
+# creating/posting mock-ups for me to review."*
+#
+# ⛔ THE BLOCK'S SHAPE IS A CONTRACT WITH THE READER, SO IT IS DEFINED HERE ONCE.
+# `render_orchdoc_reader.py` folds a paragraph that matches it; E-PICTUREPAGE accepts one as
+# the fix. If the two drifted, the gate would accept a block the Reader shows as raw text.
+# One paragraph: the heading line, then one image per line, and nothing else in it.
+#
+#     **Pictures:** the referral card four ways, at phone width
+#     ![A as built today, light](pwa-orchestration-o10/o10L180-shots/vA-as-built-light.png)
+#
+# The image line takes a title in raw quotes or in `&quot;`, because the Reader matches it
+# after escaping the markdown and this file matches it before.
+PICTURES_HEAD_RE = re.compile(
+    r"^\*\*(?:Pictures|Screenshots|Mock-?ups)\s*:?\s*\*\*\s*:?\s*(.*)$", re.I)
+PICTURES_LINE_RE = re.compile(
+    r'^!\[[^\]\n]*\]\([^)\s]+(?:\s+(?:"[^"\n]*"|&quot;(?:(?!&quot;).)*&quot;))?\)$')
+PICTURE_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}   # the Reader's raster list
+_PAGE_URL_RE = re.compile(r"\b(?!file:)[a-z][a-z0-9+.-]*://\S+", re.I)
+_PAGE_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/])?[\w.@~+%-]+(?:[\\/][\w.@~+% -]*?[\w.@~+%-])*\.html?(?![\w.])", re.I)
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_IMG_SRC_RE = re.compile(r"""\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_IMG_ALT_RE = re.compile(r"""\balt\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_PAGE_READ_CAP = 5 * 1024 * 1024
+
+
+def pictures_blocks(text):
+    """The **Pictures:** blocks in `text` that the Reader will fold, as (heading, [image lines]).
+
+    Stricter than the Reader on purpose: the heading must START a paragraph and the images
+    must END it, so anything accepted here is folded there.
+    """
+    lines = text.splitlines()
+    found = []
+    for i, ln in enumerate(lines):
+        if not PICTURES_HEAD_RE.match(ln.strip()):
+            continue
+        if i and lines[i - 1].strip() and not lines[i - 1].lstrip().startswith("#"):
+            continue                       # joined to the paragraph above: not folded
+        imgs, j = [], i + 1
+        while j < len(lines) and lines[j].strip():
+            if not PICTURES_LINE_RE.match(lines[j].strip()):
+                imgs = []
+                break
+            imgs.append(lines[j].strip())
+            j += 1
+        if imgs:
+            found.append((ln.strip(), imgs))
+    return found
+
+
+def page_pictures(page):
+    """The local pictures an HTML page shows, as [(alt, absolute Path)], in page order.
+
+    Only `<img src>` values that name a file next to the page count. A saved web page draws its
+    pictures from the web, so it has none and is not a picture page; that is what keeps o1's
+    22 saved pages in W25 from reading as mock-ups (measured 2026-09-29).
+    """
+    try:
+        if page.stat().st_size > _PAGE_READ_CAP:
+            return []
+        text = page.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    import urllib.parse
+    out, seen = [], set()
+    for tag in _IMG_TAG_RE.findall(text):
+        m = _IMG_SRC_RE.search(tag)
+        src = (m.group(1) if m and m.group(1) is not None else (m.group(2) if m else "")) or ""
+        src = src.strip()
+        if not src or re.match(r"^(?:[a-z][a-z0-9+.-]*:|/)", src, re.I):
+            continue                       # remote, data:, or rooted at a server
+        src = urllib.parse.unquote(re.split(r"[?#]", src, 1)[0])
+        try:
+            p = (page.parent / src).resolve()
+        except (OSError, ValueError):
+            continue
+        if p.suffix.lower() not in PICTURE_TYPES or not p.is_file() or p in seen:
+            continue
+        seen.add(p)
+        a = _IMG_ALT_RE.search(tag)
+        alt = ((a.group(1) if a.group(1) is not None else a.group(2)) if a else "") or ""
+        out.append((" ".join(alt.split()), p))
+    return out
+
+
+_PIC_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/])?[\w.@~+%-]+(?:[\\/][\w.@~+% -]*?[\w.@~+%-])*\.(?:png|jpe?g|gif|webp)"
+    r"(?![\w.])", re.I)
+_SHOWN_RE = re.compile(r"!\[[^\]\n]*\]\(([^)\s]+)[^)\n]*\)")
+_ROOTS_CACHE = []
+
+
+def _picture_roots(root=None):
+    """Where a picture's path is taken relative to: this tree, then the shared checkout.
+
+    The Reader serves the shared checkout, and a worktree has the same layout, so a picture
+    saved in either gets the same relative path. Run from a worktree, a picture in the shared
+    checkout is not "outside the workspace". Asked of git once per run.
+    """
+    if root is not None:
+        return [Path(root).resolve()]
+    if not _ROOTS_CACHE:
+        roots = [Path(PROJECTS).resolve()]
+        rc, common, _e = git(["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             cwd=PROJECTS)
+        if rc == 0 and common.strip():
+            shared = Path(common.strip()).parent.resolve()
+            if shared not in roots:
+                roots.append(shared)
+        _ROOTS_CACHE.extend(roots)
+    return list(_ROOTS_CACHE)
+
+
+def _local_file(raw, roots):
+    """The existing file `raw` names: absolute as written, relative against each root."""
+    import urllib.parse
+    p = Path(urllib.parse.unquote(raw).replace("\\", "/"))
+    for c in ([p] if p.is_absolute() else [r / p for r in roots]):
+        try:
+            c = c.resolve()
+        except (OSError, ValueError):
+            continue
+        if c.is_file():
+            return c
+    return None
+
+
+def _without_urls(text):
+    return _PAGE_URL_RE.sub(" ", re.sub(r"file:///?", "", text, flags=re.I))
+
+
+def picture_pages(text, root=None):
+    """Each local HTML page `text` names that shows local pictures: [(as written, Path, pics)].
+
+    A relative path is tried against each of `_picture_roots`; an absolute one is read wherever
+    it is, because a page in a session's scratch folder sends the human away from the Reader just
+    the same.
+    """
+    roots = _picture_roots(root)
+    out, seen = [], set()
+    for m in _PAGE_PATH_RE.finditer(_without_urls(text)):
+        p = _local_file(m.group(0), roots)
+        if p is None or p in seen:
+            continue
+        seen.add(p)
+        pics = page_pictures(p)
+        if pics:
+            out.append((m.group(0), p, pics))
+    return out
+
+
+def pictures_not_shown(text, root=None):
+    """Local picture files `text` names by path but never shows as an image: [(as written, Path)].
+
+    A path counts as shown when the same file is the target of a `![alt](path)` anywhere in
+    `text`, folded or not.
+    """
+    roots = _picture_roots(root)
+    shown = set()
+    for m in _SHOWN_RE.finditer(text):
+        p = _local_file(m.group(1), roots)
+        if p is not None:
+            shown.add(p)
+    out, seen = [], set()
+    for m in _PIC_PATH_RE.finditer(_without_urls(_SHOWN_RE.sub(" ", text))):
+        p = _local_file(m.group(0), roots)
+        if p is None or p in shown or p in seen:
+            continue
+        seen.add(p)
+        out.append((m.group(0), p))
+    return out
+
+
+def pictures_block_for(pics, what="", root=None):
+    """The **Pictures:** block for [(alt, Path)], plus a line for each picture it cannot hold."""
+    roots = _picture_roots(root)
+    lines, left = ["**Pictures:** %s" % (what or "<say what they show>")], []
+    for alt, p in pics:
+        rel = None
+        for r in roots:
+            try:
+                rel = p.resolve().relative_to(r).as_posix()
+                break
+            except ValueError:
+                continue
+        if rel is None:
+            left.append("outside the workspace, so the Reader cannot show it: %s" % p)
+            continue
+        if re.search(r"[\s()]", rel):
+            left.append("the path has a space or bracket, so the image line cannot hold it: %s"
+                        % rel)
+            continue
+        alt = alt or re.sub(r"[-_]+", " ", p.stem)
+        lines.append("![%s](%s)" % (alt.replace("]", ")").replace("[", "("), rel))
+    return (lines if len(lines) > 1 else []), left
+
+
+def cmd_pictures(args):
+    """Print the **Pictures:** block for a page of pictures, or for a folder of them."""
+    raw = args.path.replace("\\", "/")
+    target = Path(raw)
+    if not target.is_absolute():
+        target = Path(raw) if Path(raw).exists() else Path(PROJECTS) / raw
+    target = target.resolve()
+    if target.is_dir():
+        pics = [("", p) for p in sorted(target.iterdir())
+                if p.is_file() and p.suffix.lower() in PICTURE_TYPES]
+    elif target.is_file():
+        pics = page_pictures(target)
+    else:
+        print("[REFUSE] no page or folder at %s" % target, file=sys.stderr)
+        return 2
+    if not pics:
+        print("[REFUSE] %s holds no pictures the Reader can show (png, jpg, gif, webp, next to "
+              "the page)" % target, file=sys.stderr)
+        return 2
+    block, left = pictures_block_for(pics, args.what)
+    if block:
+        print("\n".join(block))
+    for why in left:
+        print("[NOT IN THE BLOCK] %s" % why, file=sys.stderr)
+    if left:
+        print("  Copy those pictures into a folder of your own in the workspace (for example "
+              "pwa-orchestration-o<N>/<lane>-shots/), with no spaces in the names, and run "
+              "this again.", file=sys.stderr)
+    return 0 if block else 2
+
+
+# ---- TEXT THE HUMAN COPIES, AND PICTURES THE HUMAN LOOKS AT, GO IN THE ENTRY (o9 W126, W127) -------
+#
+# ⭐ the human, 2026-10-01, on o9's T16: *"This URL 404's ... Don't give me a new URL. Show me the
+# text right here in the OrchDoc. ... I shouldn't have to follow a URL and try to chase it in
+# order to just copy something when i'm already here. Design and build the hook."*
+#
+# ⭐ And the same evening, W127: *"Orchs are failing to put images into the OrchDoc reader.
+# They are giving me either file names and partial paths, or they are giving me the full path
+# in simple text format, which I have to then go find."*
+#
+# Everything for both is in this one block, so the lanes changing this file can merge it whole:
+#   - `fenced_lines`, `prose_only`, `_prose_bodies`: the checks that read what an entry SAYS
+#     read it with every fenced block blanked. Pasted text stays word for word, and T16's
+#     pasted prompt tripped E-PLATEHISTORY on the word "corrected" twice.
+#   - the PASTE provenance marker, written and read only here (`paste_marker`,
+#     `parse_paste_marker`, `pasted_blocks`): the marker's shape is a contract between every
+#     tool that reads it (memory/marker_format_is_a_contract.md).
+#   - E-COPYBYLINK (`copy_findings`), E-IMAGEBYPATH (`image_findings`) and W-PASTEDRIFT
+#     (`pastedrift_findings`), run by `copy_guard_findings` from `check_doc`. E-COPYBYLINK
+#     reads an instruction to copy in entries the human acts on, and "ready to paste" naming a
+#     file in every open entry (o9, 2026-10-02).
+#   - `text_guard_findings`: the same two blocking tests on an edit, old text against new, for
+#     the PreToolUse hook (orchdoc_write_guard.py) and for the add, note and resolve commands.
+#   - the paste and image commands, and the two helpers commit needs to land an image with
+#     its doc and to keep pasted text out of gate 5.
+#
+# The detector of "an instruction to copy text kept elsewhere" is copy_guard.py, shared with
+# the Stop hook, so the three readers cannot disagree about what counts.
+try:
+    import copy_guard  # noqa: E402
+except ImportError:      # publish_public_skill.py ships this file without its siblings
+    copy_guard = None
+import hashlib as _hashlib  # noqa: E402
+
+
+def fenced_lines(lines):
+    """0-based indexes of every line `parse_entries` reads as fenced: each ``` line and every
+    line between a pair. Through `scan_structure`, so no check can disagree with the parser."""
+    return {i for i, st in enumerate(scan_structure(lines)) if st[0]}
+
+
+def prose_only(text):
+    """`text` with every fenced line blanked, the same number of lines, for a check that reads
+    what the prose SAYS. Text pasted into a fence is someone else's, kept word for word, and
+    no prose rule may read it as the entry's own words. `text` must start outside a fence,
+    as an entry body always does."""
+    if not text or "```" not in text:
+        return text
+    rows = text.split("\n")
+    fz = fenced_lines(rows)
+    return "\n".join("" if i in fz else r for i, r in enumerate(rows))
+
+
+def _prose_bodies(entries, lines):
+    """Blank the fenced rows of every entry's `body`, in place, keeping the text as written in
+    `raw_body` for the reader that needs the structure (the plate builder).
+    -> the set of fenced line indexes, so a caller need not scan twice."""
+    fz = fenced_lines(lines)
+    for e in entries:
+        e["raw_body"] = e["body"]
+        if not fz:
+            continue
+        base = e["line"] - 1
+        rows = e["body"].split("\n")
+        if any((base + k) in fz for k in range(len(rows))):
+            e["body"] = "\n".join("" if (base + k) in fz else r for k, r in enumerate(rows))
+    return fz
+
+
+# ⛔ THE PASTE MARKER. ONE WRITER (`paste_marker`), ONE READER (`parse_paste_marker`), and
+# every tool that looks for a pasted block goes through `pasted_blocks`. The line sits directly
+# above the block's opening fence:
+#
+#     <!-- ORCHDOC:PASTE src=prompts/lane.md commit=0123456789ab sha256=<64 hex> -->
+#     ```text
+#     ...the file's text, word for word...
+#     ```
+#
+# `src` is workspace-relative when the file is inside the workspace (the same in a worktree
+# and in the shared checkout), else absolute; percent-encoded, so it has no spaces and can
+# never close the comment. `commit` is the commit that last changed the file, "uncommitted"
+# when git has changes it has not recorded, "none" outside a repository. `sha256` is of the
+# text exactly as the block holds it (`paste_canonical`). The Reader shows the line dimmed.
+PASTE_MARK = "ORCHDOC:PASTE"
+PASTE_MARK_RE = re.compile(
+    r"^\s*<!--\s*" + PASTE_MARK + r"\s+src=(?P<src>\S+)\s+commit=(?P<commit>\S+)"
+    r"\s+sha256=(?P<sha>[0-9a-f]{64})\s*-->\s*$")
+PASTE_FENCE_OPEN = "```text"
+PASTE_FENCE_CLOSE = "```"
+# ⛔ A CAP REFUSES; IT NEVER SHORTENS. Text over it is not pasted at all, and the refusal says
+# so. A prompt is a few thousand characters (T16's was about 8,000).
+PASTE_MAX_CHARS = 100000
+_PASTE_SAFE = "/:._-~@+()[]!$&,;="
+# Characters `str.splitlines` breaks a line at, besides \n and \r: a pasted line holding one
+# would come back from the doc as two lines and the hash would no longer match.
+_PASTE_BREAKS = "\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+
+
+def paste_marker(src, commit, sha):
+    """The ONE writer of the provenance line above a pasted block. `PASTE_MARK_RE` reads it."""
+    import urllib.parse
+    return "<!-- %s src=%s commit=%s sha256=%s -->" % (
+        PASTE_MARK, urllib.parse.quote(src, safe=_PASTE_SAFE), commit, sha)
+
+
+def parse_paste_marker(line):
+    """{"src", "commit", "sha"} for a line `paste_marker` wrote, else None."""
+    m = PASTE_MARK_RE.match(line or "")
+    if not m:
+        return None
+    import urllib.parse
+    return {"src": urllib.parse.unquote(m.group("src")), "commit": m.group("commit"),
+            "sha": m.group("sha")}
+
+
+def paste_canonical(text):
+    """Text as a pasted block holds it: LF line ends, and no final line break (the closing
+    fence ends the last line). Every hash and comparison of pasted text goes through this."""
+    t = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    return t[:-1] if t.endswith("\n") else t
+
+
+def paste_digest(canonical_text):
+    """sha256 of text ALREADY passed through `paste_canonical` (or read out of a block).
+    Never canonicalize twice: a text ending in a blank line would lose it and stop matching."""
+    return _hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
+
+
+def _paste_src(path, roots=None):
+    """How a marker names its source: relative to the workspace when the file is inside it,
+    else the absolute path, both with forward slashes."""
+    p = Path(path).resolve()
+    for r in (roots if roots is not None else _picture_roots()):
+        try:
+            return p.relative_to(Path(r).resolve()).as_posix()
+        except ValueError:
+            continue
+    return p.as_posix()
+
+
+def _paste_src_path(src, roots=None):
+    """The file a marker's `src` names on this computer, or None."""
+    p = Path((src or "").replace("\\", "/"))
+    if not str(p).strip():
+        return None
+    cands = [p] if p.is_absolute() else [Path(r) / p for r in
+                                         (roots if roots is not None else _picture_roots())]
+    for c in cands:
+        try:
+            c = c.resolve()
+        except (OSError, ValueError):
+            continue
+        if c.is_file():
+            return c
+    return None
+
+
+def _paste_commit(path):
+    """The commit that last changed `path` (12 characters), "uncommitted" when the file has
+    changes git has not recorded (or none at all), "none" outside a repository."""
+    p = Path(path).resolve()
+    rc, top, _e = git(["rev-parse", "--show-toplevel"], cwd=str(p.parent))
+    top = (top or "").strip()
+    if rc != 0 or not top:
+        return "none"
+    try:
+        rel = p.relative_to(Path(top).resolve()).as_posix()
+    except ValueError:
+        return "none"
+    rc, st, _e = git(["status", "--porcelain", "--", rel], cwd=top)
+    if rc != 0 or st.strip():
+        return "uncommitted"
+    rc, h, _e = git(["log", "-1", "--format=%H", "--", rel], cwd=top)
+    h = (h or "").strip()
+    return h[:12] if rc == 0 and re.fullmatch(r"[0-9a-f]{40}", h) else "uncommitted"
+
+
+def _paste_read(path):
+    """(the file's text, canonical, None), or (None, why it cannot be pasted whole).
+    Over the cap is a refusal: the text is never shortened."""
+    try:
+        size = Path(path).stat().st_size
+    except OSError as ex:
+        return None, "cannot read it (%s)" % type(ex).__name__
+    if size > PASTE_MAX_CHARS * 4:
+        return None, ("it is %d bytes, over the %d-character limit, and paste never shortens "
+                      "text" % (size, PASTE_MAX_CHARS))
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as ex:
+        return None, "cannot read it (%s)" % type(ex).__name__
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "it is not UTF-8 text"
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    text = paste_canonical(text)
+    if len(text) > PASTE_MAX_CHARS:
+        return None, ("it is %d characters, over the %d-character limit, and paste never "
+                      "shortens text" % (len(text), PASTE_MAX_CHARS))
+    return text, None
+
+
+def pasted_blocks(lines, fz=None):
+    """Every pasted block in `lines`, as [{"marker", "open", "close", "text", "src", "commit",
+    "sha"}] with 0-based line indexes. A block is a marker line (outside any fence), a fence
+    on the very next line, the text, and the next fence line. "open" is None when no fence
+    follows the marker; "close" and "text" are None when the fence never closes."""
+    fz = fenced_lines(lines) if fz is None else fz
+    out = []
+    for i, ln in enumerate(lines):
+        if i in fz or PASTE_MARK not in ln:
+            continue
+        mk = parse_paste_marker(ln)
+        if not mk:
+            continue
+        rec = dict(mk, marker=i, open=None, close=None, text=None)
+        if i + 1 < len(lines) and is_fence_line(lines[i + 1]):
+            rec["open"] = i + 1
+            for j in range(i + 2, len(lines)):
+                if is_fence_line(lines[j]):
+                    rec["close"] = j
+                    rec["text"] = "\n".join(lines[i + 2:j])
+                    break
+        out.append(rec)
+    return out
+
+
+def paste_hazards(text):
+    """Why `text` cannot sit inside a pasted block without some reader of the doc acting on
+    it, as ["line N <why>"]; empty when it can. Each reason names what it would fool: these
+    readers match raw lines, fence or no fence."""
+    return ["line %d %s" % (n, why) for n, why, _fence in _paste_hazard_rows(text)]
+
+
+def _paste_hazard_rows(text):
+    """[(line number, why, True for a line starting with ```)], one per line `paste_hazards`
+    names, so a fix can count the ``` lines apart from the rest."""
+    out = []
+    for n, ln in enumerate(text.split("\n"), 1):
+        bad = [c for c in ln if c in _PASTE_BREAKS]
+        fence = False
+        if bad:
+            why = ("holds the line-break character U+%04X, so the doc would read it back as two "
+                   "lines" % ord(bad[0]))
+        elif "\x00" in ln:
+            why = "holds a NUL character"
+        elif is_fence_line(ln):
+            why = ("starts with ```, which would close the block early (write the source's own "
+                   "fences as ~~~)")
+            fence = True
+        elif OVERRIDE_RE.match(ln):
+            why = "is an ORCHDOC:OVERRIDE attestation line, which gate 1 reads"
+        elif NOTE_LINE_RE.match(ln):
+            why = "is a note line, which the note commands address and rewrite"
+        elif _GENERATED_BEGIN_RE.search(ln) or _GENERATED_END_RE.search(ln):
+            why = "is a generated-region marker"
+        elif ARCHIVED_HEADING_RE.match(ln) and ARCHIVED_ID_RE.search(ln):
+            why = "is an archived entry heading, which E-HIDDENENTRY reads"
+        elif PASTE_MARK in ln and parse_paste_marker(ln):
+            why = "is a paste provenance line"
+        elif REVIEWED_RE.search(ln):
+            why = "reads as a review stamp, and review dates are read from the whole entry"
+        elif RESOLVED_LINE_RE.search(ln) or ln.startswith("**Resolved "):
+            why = "reads as a ruling line, which resolve and gate 1b read"
+        elif DEPENDS_RE.match(ln):
+            why = "reads as a Depends line, which E-STALEPROSE follows"
+        else:
+            continue
+        out.append((n, why, fence))
+    return out
+
+
+# --- what paste takes, and the fix to print when it does not ---------------------------
+# o9, 2026-10-02 (W126): a printed fix is never a command the tool would refuse. Every fix
+# that sends a session to `paste` goes through `paste_fix`, which asks `_paste_check` (the
+# test cmd_paste refuses by) and prints the paste command only for a file paste takes. A
+# source with its own ``` lines (o1 D42's FILING-CHEATSHEET.md has 12, the first at line 74)
+# gets their count, the first one's line, and the two ways through. The fence grammar of this
+# file and the Reader stays as it is: only ``` opens or closes a block, so ~~~ lines paste.
+def paste_cmd(slug, eid, src):
+    """The paste command, as every fix prints it."""
+    return 'python .shared/scripts/orchdoc.py paste --doc %s %s --file "%s"' % (slug, eid, src)
+
+
+# ⛔ TEXT OTHERS WROTE NEVER GOES INTO AN ORCHDOC (o9, 2026-10-02). Every session that reads an
+# OrchDoc holds a shell, secrets and push access, so paste refuses a file whose text came from
+# outside, and never opens it: a path ingress_taint.INGRESS_READ matches (imported from
+# ingress_taint.py, never copied, so the two cannot drift), and a path under a folder named in
+# UNTRUSTED_PASTE_FOLDERS. Those two folders are not added to INGRESS_READ because that pattern
+# also decides which reads take a lane's shell away (ingress_taint.py's PreToolUse hook), and
+# widening that hook is a separate decision from what paste takes.
+UNTRUSTED_PASTE_FOLDERS = {
+    "app-feedback": ("it is under a folder named app-feedback, where the app's feedback form "
+                     "puts what its users write"),
+    "motion-export": "it is under motion-export/, the old Motion tasks, whose text is untrusted",
+}
+_UNTRUSTED_TAIL = (", and an OrchDoc is read by sessions that hold a shell and push access, so "
+                   "text from there never goes into one")
+
+
+def _outsider_text(path):
+    """None when `path` may be pasted as far as who wrote it goes, else (code, why), read from
+    the path alone (the file is never opened): ("untrusted", why) for text others wrote, or
+    ("nocheck", why) when ingress_taint.py cannot be loaded to ask."""
+    forms = [Path(path)]
+    try:
+        forms.append(Path(path).resolve())
+    except (OSError, ValueError):
+        pass
+    for p in forms:
+        for part in p.parts[:-1]:
+            why = UNTRUSTED_PASTE_FOLDERS.get(part.lower())
+            if why:
+                return "untrusted", why + _UNTRUSTED_TAIL
+    try:
+        import ingress_taint
+        rx = ingress_taint.INGRESS_READ
+    except Exception:
+        return "nocheck", ("ingress_taint.py cannot be loaded, so its path cannot be checked for "
+                           "text others wrote")
+    if any(rx.search(p.as_posix()) or rx.search(str(p)) for p in forms):
+        return "untrusted", ("its path is one ingress_taint.INGRESS_READ names (the email "
+                             "briefing, the feedback digest, voice-note transcripts and images), "
+                             "whose text others wrote" + _UNTRUSTED_TAIL)
+    return None
+
+
+def _paste_check(path):
+    """(text, None) when `paste` takes the file at `path`, else (None, refusal). The refusal is
+    {"code", "why", "fences", "others", "hazards", "module"}: code is one of orchdoc, secret,
+    untrusted, read, empty, lines, credential, nocheck; why is a clause for "paste refuses
+    <file>: <why>"; for "lines", hazards is paste_hazards' list, fences the 1-based numbers of
+    its lines starting with ``` and others the rest of it; for "nocheck", module is the file
+    to restore. The first refusal in cmd_paste's order wins, except that a credential outranks
+    the lines: changing them would not make paste take the file. A file refused by its path
+    (orchdoc, secret, untrusted) is never opened."""
+    p = Path(path)
+
+    def no(code, why, fences=(), others=(), hazards=(), module=None):
+        return None, {"code": code, "why": why, "fences": list(fences), "others": list(others),
+                      "hazards": list(hazards), "module": module}
+    if p.name.startswith("ORCHESTRATOR-DECISIONS-"):
+        return no("orchdoc", "it is an OrchDoc")
+    secretish = copy_guard.SECRETISH if copy_guard is not None else \
+        re.compile(r"(?i)(^|[\\/])\.?secrets?[\\/]|(^|[\\/])\.env(\.|$)|secret|credential")
+    if secretish.search(p.as_posix()):
+        return no("secret", "it looks like a secrets file by its path. Its text is never pasted "
+                            "into an OrchDoc, which is pushed to GitHub")
+    outside = _outsider_text(p)
+    if outside is not None:
+        return no(outside[0], outside[1],
+                  module="ingress_taint.py" if outside[0] == "nocheck" else None)
+    text, why = _paste_read(p)
+    if text is None:
+        return no("read", why)
+    if not text.strip():
+        return no("empty", "it is empty")
+    rows = _paste_hazard_rows(text)
+    try:
+        import secret_patterns
+    except ImportError:
+        return no("nocheck", "secret_patterns.py is missing, so its text cannot be checked for "
+                             "credentials", module="secret_patterns.py")
+    kind = secret_patterns.find_credential(text)
+    if kind:
+        return no("credential", "its text holds something shaped like %s, which never goes "
+                                "into an OrchDoc (the value is not shown here)" % kind)
+    if rows:
+        return no("lines", "%d of its lines would be acted on inside the pasted block"
+                  % len(rows), [n for n, _w, f in rows if f],
+                  ["line %d %s" % (n, w) for n, w, f in rows if not f],
+                  ["line %d %s" % (n, w) for n, w, _f in rows])
+    return text, None
+
+
+def _paste_refusal_fix(ref, name, eid, cmd, replacing=False):
+    """The fix for a file paste refuses (`ref` from `_paste_check`), named `name`, for entry
+    `eid`; `cmd` is the paste command to run once the file is changed. `replacing`: the entry
+    holds an earlier paste of the file, which the snippets would replace."""
+    def lines_of(n):
+        return "%d line%s" % (n, "" if n == 1 else "s")
+    instead = (", in place of the pasted block and the provenance line above it"
+               if replacing else "")
+    by_hand = ("put the text the human needs into %s as a fenced block yourself%s, and point the human to "
+               "it, not to the file" % (eid, instead))
+    code, fences, others = ref["code"], ref["fences"], ref["others"]
+    if code == "lines" and fences:
+        out = ("%s has %s starting with ``` (%s), which paste refuses because each would end the "
+               "pasted block early" % (name, lines_of(len(fences)),
+                                       ("the first at line %d" if len(fences) > 1
+                                        else "at line %d") % fences[0]))
+        also = ""
+        if others:
+            n = len(others)
+            out += "; it also has %d other line%s paste refuses (the first: %s)" % (
+                n, "" if n == 1 else "s", others[0])
+            also = ", and %s too," % ("that line" if n == 1 else "those lines")
+        return ("%s. Either change those fences to ~~~ in %s%s and run: %s; or put the snippets "
+                "into %s as fenced blocks yourself%s, and point the human to them, not to the file"
+                % (out, name, also, cmd, eid, instead))
+    if code == "lines":
+        return ("paste refuses %s: it has %s the doc's tools would act on inside the pasted "
+                "block (the first: %s). Change %s in %s, then run: %s"
+                % (name, lines_of(len(others)), others[0],
+                   "that line" if len(others) == 1 else "those lines", name, cmd))
+    if code == "untrusted":
+        then = ("take the pasted block and the provenance line above it out of %s, and tell "
+                "the human where he reads that text himself" % eid if replacing else
+                "tell the human where he can read it himself, in words that do not ask him to copy or "
+                "paste from that file, and never copy its text into an OrchDoc")
+    else:
+        then = {"orchdoc": "link the entry that holds the text, or paste the file the text came "
+                           "from",
+                "secret": "tell the human where the value is kept",
+                "empty": "write the text into it, then run: %s" % cmd,
+                "nocheck": "restore .shared/scripts/%s, then run: %s" % (
+                    ref.get("module") or "the module named", cmd),
+                "credential": ("put the text without that value into %s as a fenced block "
+                               "yourself%s, and tell the human where the value is kept"
+                               % (eid, instead)),
+                }.get(code, by_hand)
+    return "paste refuses %s: %s. Instead, %s" % (name, ref["why"], then)
+
+
+# The refusals whose fix keeps the file's text out of the entry: a wrapper that says "put the
+# text in the entry" around such a fix would contradict it.
+_PASTE_KEEPS_OUT = ("secret", "untrusted")
+
+
+def paste_fix_parts(slug, eid, path, roots=None, replacing=False):
+    """(fix, lands): `paste_fix`'s text, and False when that fix keeps the text out of the
+    entry (a secret, or text others wrote), so no caller wraps it in "put the text there"."""
+    roots = roots if roots is not None else _picture_roots()
+    name = _paste_src(path, roots)
+    cmd = paste_cmd(slug, eid, name)
+    _text, ref = _paste_check(path)
+    if ref is None:
+        return cmd, True
+    return (_paste_refusal_fix(ref, name, eid, cmd, replacing),
+            ref["code"] not in _PASTE_KEEPS_OUT)
+
+
+def paste_fix(slug, eid, path, roots=None, replacing=False):
+    """The fix for text the human must copy from the file at `path`, on this computer: the paste
+    command when paste takes the file, else why it does not and what to do instead."""
+    return paste_fix_parts(slug, eid, path, roots, replacing)[0]
+
+
+def paste_save_fix(slug, eid):
+    """The fix for text that is not in a file on this computer (a URL, or a path not here)."""
+    return ("save the text to a file (write any line in it that starts with ``` as ~~~), then: "
+            + paste_cmd(slug, eid, "<that file>"))
+
+
+# --- who acts, and on which rows --------------------------------------------------------
+_AGENT_WHO_RE = re.compile(r"^\s*(?:o\d+(?:L\d+)?|orch\w*|claude\w*|agent|lane|session)\b",
+                           re.I)
+
+
+def _note_by_agent(who):
+    """True when a note's author is a session, not the human. The human's own words are never refused,
+    and a note written without --by is recorded as his."""
+    return bool(_AGENT_WHO_RE.match(who or ""))
+
+
+# o9:W258: a note is the human's channel to the orchestrators. `--by o7` used to write "NOTE from o7",
+# and a session's call with no --by was labelled "NOTE from the human". A caller is an orchestrator
+# when $ORCHDOC_ME names one (o<N>) or --by does (o<N> or a lane, o<N>L<m>), any case.
+_ORCH_CALLER_RE = re.compile(r"^\s*o\d+(?:L\d+)?\s*$", re.I)
+
+ORCH_NOTE_REFUSAL = (
+    "notes are the human's, and a session cannot write or edit one (%s). Put a status update in the "
+    "entry body as a ticked box or a dated line. Put a question to the human in the body of its own "
+    "Q entry: `orchdoc.py add --kind question`. `note --ack`, `--list`, `--show` and `--delete` "
+    "of a note labelled with an orchestrator stay available."
+)
+
+
+# o9:W258 follow-up (o9L1478): no real session sets $ORCHDOC_ME, so a Claude Code session or a
+# lane that ran `note` with no --by was still recorded as the human (an o1 lane deleted the human's note
+# that way, 2ed15b14f). Claude Code sets $CLAUDECODE=1 in every shell it starts, and a lane
+# carries $ORCHDOC_LANE, so either one marks the caller as a session. The human writes notes through
+# the Reader, whose writer starts its child without these variables (`owner_writer_env`).
+ORCH_ENV_VARS = ("ORCHDOC_ME", "CLAUDECODE", "ORCHDOC_LANE")
+_LANE_PREFIX_RE = re.compile(r"^\s*(o\d+)", re.I)
+_DOC_OWNER_RE = re.compile(r"(?:^|ORCHESTRATOR-DECISIONS-)(o\d+)(?:\.md)?$", re.I)
+
+
+def owner_writer_env(env=None):
+    """A copy of `env` (default os.environ) without the variables that mark a session, for a
+    child that writes the human's own words (the Reader's writer, a test that writes as the human)."""
+    out = dict(os.environ if env is None else env)
+    for var in ORCH_ENV_VARS:
+        out.pop(var, None)
+    return out
+
+
+def _session_caller(args):
+    """The name to record when Claude Code or a lane is running this, else None.
+
+    $ORCHDOC_ME if it names an orchestrator, else the o<N> of $ORCHDOC_LANE, else the owner
+    named by --doc, else "orchestrator". Never the human."""
+    lane = (os.environ.get("ORCHDOC_LANE") or "").strip()
+    cc = (os.environ.get("CLAUDECODE") or "").strip()
+    if not lane and cc in ("", "0"):
+        return None
+    me = (os.environ.get("ORCHDOC_ME") or "").strip()
+    if me and _ORCH_CALLER_RE.match(me):
+        return me
+    m = _LANE_PREFIX_RE.match(lane)
+    if m:
+        return m.group(1).lower()
+    m = _DOC_OWNER_RE.search(str(getattr(args, "doc", None) or "").strip())
+    if m:
+        return m.group(1).lower()
+    return "orchestrator"
+
+
+def _orch_caller(args):
+    """The o<N> name when the caller is an orchestrator (--by, $ORCHDOC_ME, or a Claude Code
+    session or lane: see `_session_caller`), else None."""
+    for v in (getattr(args, "by", None), os.environ.get("ORCHDOC_ME")):
+        if v and _ORCH_CALLER_RE.match(v):
+            return v.strip()
+    return _session_caller(args)
+
+
+def _orch_note_refusal(args, what):
+    """Print the refusal and return True when an orchestrator is writing the human's text."""
+    who = _orch_caller(args)
+    if not who:
+        return False
+    _note_fail(args, ORCH_NOTE_REFUSAL % ("%s as %s" % (what, who)))
+    return True
+
+
+def _doc_slug(doc_name):
+    """"o9" for ORCHESTRATOR-DECISIONS-o9.md; the file's stem for anything else.
+
+    Not for the wake path or `_dup_id_refusal`, which want None for a file that is not an
+    OrchDoc: they call `_orchdoc_slug_or_none`."""
+    m = re.search(r"ORCHESTRATOR-DECISIONS-(o\d+)", str(doc_name))
+    return m.group(1) if m else Path(str(doc_name)).stem
+
+
+def _own_span(e, starts, n):
+    """(a, b): the 0-based rows an entry holds itself, from its heading up to the next entry's
+    heading (a child entry holds its own rows) or the end of its body."""
+    import bisect
+    a = e["line"] - 1
+    end = a + len(e["body"].split("\n"))
+    k = bisect.bisect_right(starts, a)
+    nxt = starts[k] if k < len(starts) else n
+    return a, min(nxt, end, n)
+
+
+def _guard_lines(lines, live, fz, a, b):
+    """Rows a..b-1 as the copy and picture checks read them, and the indexes (within the
+    result) of the rows that are notes. None for a fenced row (it ends a paragraph); "" for an
+    attestation, a review stamp or the human's note; an agent's note as its text alone; HTML
+    comments blanked."""
+    out, notes = [], set()
+    for i in range(a, b):
+        ln = lines[i]
+        if i in fz:
+            out.append(None)
+            continue
+        if live[i] != ln or STAMP_LINE_RE.match(ln):
+            out.append("")
+            continue
+        m = NOTE_LINE_RE.match(ln)
+        if m:
+            if _note_by_agent(m.group("who")):
+                notes.add(len(out))
+                # o9L1439: an `ESC` note's real text (single backslashes in an image path),
+                # kept on one row as before.
+                out.append(decode_note_text(m.group("text"), m.group("enc")).replace("\n", " "))
+            else:
+                out.append("")
+            continue
+        out.append(re.sub(r"<!--.*?-->", " ", ln))
+    return out, notes
+
+
+def _guard_open(e, force_open=()):
+    """An entry the guards read: live, or named in `force_open` (resolve reads its ruling)."""
+    return e["id"] in force_open or (not e.get("archived")
+                                     and status_of(e["body"]) not in TERMINAL_STATUS)
+
+
+def _drew_acts(e):
+    """An entry the human acts on: a T item, or any entry whose Owner names him."""
+    return bool(re.match(r"^T\d", e["id"])) or owner_is_drew(e["body"])
+
+
+def _entry_insert_at(lines, e, starts):
+    """Where paste and image put a new block in entry `e`: after the last non-blank row of
+    its own text, and never inside a <details> fold or a generated region (the block goes
+    before the first one in the entry). -> 0-based index to insert at."""
+    a, b = _own_span(e, starts, len(lines))
+    st = scan_structure(lines)
+    stop = b
+    for i in range(a + 1, b):
+        fenced, depth, opens, closes = st[i]
+        if fenced:
+            continue
+        if opens or closes or depth != st[a][1] or _GENERATED_BEGIN_RE.search(lines[i]):
+            stop = i
+            break
+    k = stop
+    while k > a + 1 and not lines[k - 1].strip():
+        k -= 1
+    return k
+
+
+# --- E-COPYBYLINK ---------------------------------------------------------------------
+def _fenced_texts(rows):
+    """[(open, close, text, marked)] for each closed fenced block in `rows` (indexes within
+    rows, which must start outside a fence); `marked` when a PASTE marker is the row above."""
+    # o9 W133: the marker's shape has ONE reader, `pasted_blocks`; this does not parse it again.
+    marked_opens = {blk["open"] for blk in pasted_blocks(rows) if blk["open"] is not None}
+    out, i = [], 0
+    while i < len(rows):
+        if is_fence_line(rows[i]):
+            for j in range(i + 1, len(rows)):
+                if is_fence_line(rows[j]):
+                    marked = i in marked_opens
+                    out.append((i, j, "\n".join(rows[i + 1:j]), marked))
+                    i = j
+                    break
+            else:
+                break
+        i += 1
+    return out
+
+
+def _norm_text(t):
+    """Text compared loosely: canonical line ends, trailing spaces and outer blank lines gone."""
+    t = paste_canonical(t)
+    return "\n".join(ln.rstrip() for ln in t.split("\n")).strip("\n")
+
+
+def _local_text_file(ref, roots):
+    """The text file a copy instruction's `ref` names on this computer, or None. A GitHub file
+    URL counts as its path in the repository; any other URL, and a secret, never do."""
+    if copy_guard is None:
+        return None
+    src = copy_guard.local_source(ref)
+    if re.match(r"(?i)^[a-z][a-z0-9+.-]*://", src) or copy_guard.SECRETISH.search(src):
+        return None
+    src = os.path.expanduser(src.split("#")[0].strip())
+    if not src:
+        return None
+    p = Path(src.replace("\\", "/"))
+    for c in ([p] if p.is_absolute() else [Path(r) / p for r in roots]):
+        try:
+            c = c.resolve()
+        except (OSError, ValueError):
+            continue
+        if c.is_file():
+            return c
+    return None
+
+
+def _same_source(marker_src, src_path, ref, roots):
+    """Does a PASTE marker's `src` name the file a copy instruction names?"""
+    p = _paste_src_path(marker_src, roots)
+    if p is not None and src_path is not None:
+        return os.path.normcase(str(p)) == os.path.normcase(str(src_path))
+    a = (marker_src or "").replace("\\", "/").strip("/").lower()
+    b = (copy_guard.local_source(ref) if copy_guard else ref or "")
+    b = b.replace("\\", "/").strip("/").lower()
+    return bool(a and b) and (a == b or a.endswith("/" + b) or b.endswith("/" + a))
+
+
+def _text_is_here(ref, raw_rows, roots):
+    """True when the entry already holds, in a fenced block, the text `ref` names:
+      a. a block pasted from that same file (its PASTE marker names it), or
+      b. when the file is on this computer, a block whose text equals the file's, or
+      c. when the file is NOT on this computer to compare against (T16's GitHub URL that
+         404'd), any filled block without a marker: the session put the text in by hand.
+    A file others wrote (`_outsider_text`) is never opened to compare: its text never belongs
+    in the entry."""
+    src_path = _local_text_file(ref, roots)
+    blocks = _fenced_texts(raw_rows)
+    for o, _c, _t, marked in blocks:
+        if marked and _same_source(parse_paste_marker(raw_rows[o - 1])["src"], src_path,
+                                   ref, roots):
+            return True
+    if src_path is not None:
+        outside = _outsider_text(src_path)
+        if outside is not None and outside[0] == "untrusted":
+            return False
+        got, _why = _paste_read(src_path)
+        if got is None:
+            return False
+        want = _norm_text(got)
+        return any(_norm_text(t) == want for _o, _c, t, _m in blocks)
+    return any(t.strip() and not m for _o, _c, t, m in blocks)
+
+
+def copy_findings(doc_name, entries, lines, force_open=(), roots=None, only=None, fz=None,
+                  live=None):
+    """E-COPYBYLINK: an open entry tells the reader to copy, paste, run or type text kept in a
+    file or at a URL, and the entry does not hold the text. The instruction form ("paste the
+    prompt in X") is read in entries the human acts on (a T item, or one he owns); the "ready to
+    paste", "paste-ready" and "copy-ready" form naming a file or URL is read in every open
+    entry, whoever owns it (o9, 2026-10-02: o8 W57's "LANE PROMPT WRITTEN AND READY TO PASTE:
+    <path>" sat in an orchestrator's entry, and the human is the one who pastes a lane prompt).
+    The remedy is the text itself, in a fenced block in the entry: the paste command when paste
+    takes the file (`paste_fix`), else what to do instead."""
+    if copy_guard is None:
+        return []
+    roots = roots if roots is not None else _picture_roots()
+    fz = fenced_lines(lines) if fz is None else fz
+    if live is None or len(live) != len(lines):
+        live = without_attestations("\n".join(lines)).split("\n")
+        if len(live) != len(lines):
+            live = list(lines)
+    starts = sorted(x["line"] - 1 for x in entries)
+    slug = _doc_slug(doc_name)
+    out = []
+    for e in entries:
+        if only is not None and e["id"] not in only:
+            continue
+        if not _guard_open(e, force_open):
+            continue
+        acts = _drew_acts(e)
+        a, b = _own_span(e, starts, len(lines))
+        rows, _notes = _guard_lines(lines, live, fz, a, b)
+        seen = set()
+        for h in copy_guard.copy_hits(rows):
+            # A READY hit's "verb" is the phrase as written: "ready to paste", "Paste-ready".
+            ready = "ready" in h["verb"].lower()
+            if h["exempt"] or not (acts or ready) or (h["line"], h["ref"]) in seen:
+                continue
+            seen.add((h["line"], h["ref"]))
+            if _text_is_here(h["ref"], lines[a:b], roots):
+                continue
+            local = _local_text_file(h["ref"], roots)
+            fix = (paste_fix(slug, e["id"], local, roots) if local is not None
+                   else paste_save_fix(slug, e["id"]))
+            verb = h["verb"].lower()
+            what = ("says the text kept at %s is %s" % (h["ref"], verb) if ready
+                    else "tells the human to %s text kept at %s" % (verb, h["ref"]))
+            out.append(Finding("E-COPYBYLINK", a + 1 + h["line"],
+                               "%s %s, and the text is not in the entry" % (e["id"], what),
+                               fix))
+    return out
+
+
+# --- E-IMAGEBYPATH --------------------------------------------------------------------
+# ⛔ PINNED COPIES OF THE READER'S RULES. render_orchdoc_reader.py imports this file, so this
+# file cannot import it; test_orchdoc_copy_guards.py holds each copy equal to the Reader's
+# (`resolve_asset`, `_IMG_RE`, `_CODE_RE`, IMAGE_MARK_RE, PASTE_DIR, PASTE_MAX_BYTES,
+# PASTE_MAGIC, IMG_TYPES). If the Reader changes one, that test fails until this one follows.
+IMAGE_DIR = "orchdoc-images"                  # = the Reader's PASTE_DIR
+IMAGE_MAX_BYTES = 8 * 1024 * 1024             # = the Reader's PASTE_MAX_BYTES
+IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"),
+               (b"GIF87a", ".gif"), (b"GIF89a", ".gif"))   # = the Reader's PASTE_MAGIC
+# The Reader's `_IMG_RE`, which it matches on escaped text, written for the raw text: its
+# title `&quot;[^&]*&quot;` is a quoted title holding no character that escaping changes.
+_EMBED_SRC_RE = re.compile(r'!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"&<>\']*")?\)')
+_NOTE_IMAGE_RE = re.compile(r"\[image:\s*([^\]\s][^\]]*?)\s*\]")    # = IMAGE_MARK_RE
+_READER_CODE_RE = re.compile(r"(`+)(.+?)\1", re.S)                     # = the Reader's _CODE_RE
+_BLOCK_START_RE = re.compile(r"^\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>)")
+_ELIDED_RE = re.compile(r"(?:^|[\\/])\.{3,}(?=[\\/])")
+# `_PIC_PATH_RE` (W-PICTURENOTSHOWN's) with one change: a path that ENDS A SENTENCE counts.
+# Its `(?![\w.])` refuses `see C:\x\shot.png.` because of the full stop, which is how a path
+# is most often written; this refuses only a longer name such as `shot.png.bak`.
+_PIC_MENTION_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/])?[\w.@~+%-]+(?:[\\/][\w.@~+% -]*?[\w.@~+%-])*\.(?:png|jpe?g|gif|webp)"
+    r"(?!\w|\.\w)", re.I)
+_DIGEST_CACHE = {}
+# ⚠️ A NAME THAT NAMES NO PICTURE HERE IS NOT REFUSED, by measurement. Over every open entry
+# on 2026-10-01 each such name was either a picture shown elsewhere in the entry under a
+# longer path (now matched by name) or a file name in technical prose that is not a picture
+# for the human (`${APP_URL}/install/step-1.png`, planned asset names). A refusal cannot print
+# the exact command for a file it cannot find. True turns it on for entries the human acts on.
+IMAGE_NAME_REFUSES = False
+
+
+def image_ext(raw):
+    """The extension the BYTES say a picture is, or None. The Reader's `paste_ext`."""
+    for magic, ext in IMAGE_MAGIC:
+        if raw.startswith(magic):
+            return ext
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
+def reader_shows(raw, roots=None):
+    """(Path, None) when the Reader would show `![alt](raw)` as a picture, else (None, why).
+    The Reader's `resolve_asset`, tried against each root: a picture saved in a worktree has
+    the same relative path in the shared checkout the Reader serves."""
+    u = (raw or "").strip().replace("\\", "/")
+    if not u:
+        return None, "empty path"
+    if u.startswith(("/", "//", "#")) or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", u):
+        return None, "only a path relative to the workspace is allowed, not %r" % u
+    ext = os.path.splitext(u)[1].lower()
+    if ext not in PICTURE_TYPES:
+        return None, "%s is not one of %s" % (ext or "no extension",
+                                              ", ".join(sorted(PICTURE_TYPES)))
+    why = "no file at that path"
+    for r in (roots if roots is not None else _picture_roots()):
+        r = Path(r).resolve()
+        try:
+            p = (r / u).resolve()
+        except (OSError, ValueError) as ex:
+            why = "unreadable path (%s)" % type(ex).__name__
+            continue
+        if not p.is_relative_to(r):
+            why = "resolves outside the workspace"
+            continue
+        if p.is_file():
+            return p, None
+    return None, why
+
+
+def _note_mark_shows(raw, roots=None):
+    """The picture the Reader shows for a note's `[image: raw]`, or None: an absolute path
+    inside the workspace counts as its relative path, as `_image_marks_html` reads it."""
+    raw = (raw or "").replace("\\", "/")
+    for r in (roots if roots is not None else _picture_roots()):
+        pre = Path(r).resolve().as_posix().rstrip("/") + "/"
+        rel = raw[len(pre):] if raw.lower().startswith(pre.lower()) else raw
+        p, _why = reader_shows(rel, [r])
+        if p is not None:
+            return p
+    return None
+
+
+def _file_digest(p):
+    """sha256 of a file's bytes, or None. Remembered per (path, size, mtime) for one run."""
+    try:
+        st = Path(p).stat()
+    except OSError:
+        return None
+    if st.st_size > 4 * IMAGE_MAX_BYTES:
+        return None
+    key = (str(p), st.st_size, st.st_mtime_ns)
+    if key not in _DIGEST_CACHE:
+        try:
+            _DIGEST_CACHE[key] = _hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        except OSError:
+            return None
+    return _DIGEST_CACHE[key]
+
+
+def _mask_code_spans(rows):
+    """`rows` with each inline code span blanked (lengths kept), paragraph by paragraph as the
+    Reader pairs backticks, so an embed written inside a code span is not taken for one."""
+    out = list(rows)
+    seg = []
+
+    def flush():
+        if seg:
+            joined = "\n".join(out[i] for i in seg)
+            if "`" in joined:
+                masked = _READER_CODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)),
+                                             joined)
+                for i, part in zip(seg, masked.split("\n")):
+                    out[i] = part
+            del seg[:]
+
+    for i, r in enumerate(rows):
+        if r is None or not r.strip():
+            flush()
+            continue
+        if _BLOCK_START_RE.match(r):
+            flush()
+        seg.append(i)
+    flush()
+    return out
+
+
+_CODE_SPAN_LINE_RE = re.compile(r"(`+)([^`\n]+?)\1")
+_PIC_END_RE = re.compile(r"\.(?:png|jpe?g|gif|webp)\s*$", re.I)
+_ABS_PATH_RE = re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/]|~[\\/])[^\s`'\"<>|*?()\[\]]*")
+_LINK_TARGET_RE = re.compile(r"\]\(([^)\s]+)\)")
+
+
+def _entry_folders(rows, roots):
+    """The folders an entry names that exist here, and the folders of the files it names
+    that exist here: where a partial path or a bare picture name in it is looked up, so
+    `out\\p1.png` written under a named folder resolves to the picture it means."""
+    cands = []
+    for r in rows:
+        if not r:
+            continue
+        cands += [m.group(2) for m in _CODE_SPAN_LINE_RE.finditer(r)]
+        cands += [m.group(1) for m in _LINK_TARGET_RE.finditer(r)]
+        cands += [m.group(0) for m in _ABS_PATH_RE.finditer(r)]
+    out = []
+    for c in cands:
+        c = c.strip().rstrip(".,;:")
+        if not c or len(c) > 400 or re.match(r"(?i)^[a-z][a-z0-9+.-]*://", c):
+            continue
+        p = Path(os.path.expanduser(c.replace("\\", "/")))
+        for q in ([p] if p.is_absolute() else [Path(r) / p for r in roots]):
+            try:
+                q = q.resolve()
+                d = q if q.is_dir() else (q.parent if q.is_file() else None)
+            except (OSError, ValueError):
+                continue
+            if d is not None:
+                if d not in out:
+                    out.append(d)
+                break
+    return out       # o9 W133: all of them; a cap of 24 left a picture in the 25th unchecked
+
+
+def _same_file_bytes(a, b):
+    """True when both files could be hashed and their bytes are equal. o9 W133: a file
+    `_file_digest` cannot hash (too large, unreadable) gives None, and two Nones are NOT the same
+    picture."""
+    da = _file_digest(a)
+    return da is not None and da == _file_digest(b)
+
+
+def _resolve_mention(raw, roots, bases):
+    """The picture file a mention names: as written (absolute, or relative to a root), else
+    relative to a folder the entry names, or its parent, else by name inside one. None when
+    none exists here."""
+    p = _local_file(raw, roots)
+    if p is not None:
+        return p
+    s = raw.replace("\\", "/").strip()
+    gb = re.match(r"^/([A-Za-z])/(.+)$", s)          # Git Bash's /c/Users/... form
+    if gb:
+        return _local_file("%s:/%s" % (gb.group(1), gb.group(2)), roots)
+    rp = Path(s)
+    if not s or rp.is_absolute() or s.startswith("~"):
+        return None
+    for b in bases:
+        for c in (b / rp, b.parent / rp, b / rp.name):
+            try:
+                c = c.resolve()
+            except (OSError, ValueError):
+                continue
+            if c.is_file() and c.suffix.lower() in PICTURE_TYPES:
+                return c
+    return None
+
+
+def _image_mentions(rows, notes, roots):
+    """Each picture named in `rows` (from `_guard_lines`), as [(row, kind, raw, Path, why)]:
+      embed-ok    an embed the Reader shows
+      embed-bad   an embed the Reader cannot show (`why` says why)
+      note-ok     an agent's note `[image: ...]` the Reader shows
+      path        a path or a name, as text or inline code, of a picture on this computer
+                  that the entry does not show (the same bytes, or the same file name,
+                  shown elsewhere in the entry count as shown)
+      elided      a path shortened with ... (or the ellipsis character)
+      gone        a full path to a picture that is not on this computer
+      name        a file name or partial path that names no picture here"""
+    masked = _mask_code_spans(rows)
+    found, shown, plain = [], set(), {}
+    for i, r in enumerate(rows):
+        if r is None or not r.strip():
+            continue
+        cut = list(r)
+        for m in _EMBED_SRC_RE.finditer(masked[i]):
+            p, why = reader_shows(m.group(2), roots)
+            if p is not None:
+                shown.add(p)
+                found.append((i, "embed-ok", m.group(2), p, None))
+            else:
+                found.append((i, "embed-bad", m.group(2), None, why))
+            cut[m.start():m.end()] = " " * (m.end() - m.start())
+        if i in notes:
+            for m in _NOTE_IMAGE_RE.finditer(masked[i]):
+                p = _note_mark_shows(m.group(1), roots)
+                if p is not None:
+                    shown.add(p)
+                    found.append((i, "note-ok", m.group(1), p, None))
+                    cut[m.start():m.end()] = " " * (m.end() - m.start())
+        plain[i] = "".join(cut)
+    digests = {d for d in (_file_digest(p) for p in shown) if d}
+    names = {p.name.lower() for p in shown}
+    bases = _entry_folders([plain[i] for i in sorted(plain)], roots)
+
+    # Each mention as (row, [readings to try, best first], the text before it). A code span
+    # that ends in a picture's extension is read whole first, so a name with spaces in it
+    # (`1 - the home screen.png`) is one name; then each path inside it.
+    mentions = []
+    for i in sorted(plain):
+        text = plain[i]
+        spans = []
+        for m in _CODE_SPAN_LINE_RE.finditer(text):
+            inner = m.group(2).strip()
+            if _PIC_END_RE.search(inner):
+                tries = [inner] + [x.group(0) for x in
+                                   _PIC_MENTION_RE.finditer(_without_urls(inner))
+                                   if x.group(0) != inner]
+                mentions.append((i, tries, text[:m.start()]))
+                spans.append((m.start(), m.end()))
+        rest = list(text)
+        for a, b in spans:
+            rest[a:b] = " " * (b - a)
+        rest = _without_urls("".join(rest))
+        for m in _PIC_MENTION_RE.finditer(rest):
+            mentions.append((i, [m.group(0)], rest[:m.start()]))
+
+    seen = set()
+    for i, tries, before in mentions:
+        p, raw = None, tries[-1] if len(tries) > 1 and " " in tries[0] else tries[0]
+        for t in tries:
+            p = _resolve_mention(t, roots, bases)
+            if p is not None:
+                raw = t
+                break
+        if p is not None:
+            if p in shown or p in seen or _file_digest(p) in digests:
+                continue
+            seen.add(p)
+            found.append((i, "path", raw, p, None))
+            continue
+        key = raw.replace("\\", "/").lower()
+        if key in seen or Path(key).name in names:
+            continue
+        seen.add(key)
+        if _ELIDED_RE.search(raw) or "\u2026" in raw or \
+                before.rstrip("/\\").endswith("\u2026"):
+            kind = "elided"
+        elif re.match(r"^(?:[A-Za-z]:[\\/]|~[\\/]|/[A-Za-z]/)", raw):
+            kind = "gone"      # a full path; one starting with a bare / is a web route
+        else:
+            kind = "name"
+        found.append((i, kind, raw, None, None))
+    return found
+
+
+# --- where a picture already is: the embed of it in place, or the image command -----------
+#
+# ⛔ A PICTURE GIT IGNORES STAYS OUT OF GIT. o9's ruling on W126, 2026-10-02 at 02:30 PT:
+# `.gitignore` files such as pwa-orchestration-o10/app-feedback/.gitignore keep pictures out
+# of the repository on purpose (a customer's feedback picture, the human's phone screenshots), and
+# the image command copies into orchdoc-images/<doc>/, which `commit` lands. So `image`
+# refuses a picture git ignores inside the workspace and prints the embed that shows it where
+# it is. The Reader serves the main checkout from disk, ignored files included, so that embed
+# shows the picture and the picture never reaches git.
+#
+# Every fix E-IMAGEBYPATH prints follows the same rule (`picture_fix`): the embed in place for
+# a picture inside the main checkout, tracked or ignored; the image command only for one
+# outside it. No printed fix is a command the tool would refuse, or one that copies a picture
+# git ignores.
+def _main_root(roots=None):
+    """The main checkout, which the Reader serves: the last of `roots`, as `_picture_roots`
+    orders them (this tree first, the shared checkout last)."""
+    rs = list(roots) if roots else _picture_roots()
+    return Path(rs[-1]).resolve()
+
+
+def _worktree_top(p, main):
+    """The top folder of another working tree of this repository that holds `p` (a worktree
+    under the main checkout, such as .worktrees/o9-w65b), or None when `p` is in the main
+    checkout's own tree. Read from the `.git` FILE a worktree has, which names a folder under
+    the main checkout's .git/worktrees/, so it costs no git call. A folder holding a repository
+    of its own (a clone such as product-app/) ends the walk with None: the Reader serves
+    its files from the main checkout like any others."""
+    common = (main / ".git").resolve()
+    d = p.parent
+    while d != main and main in d.parents:
+        dot_git = d / ".git"
+        try:
+            if dot_git.is_dir():
+                return None
+            if dot_git.is_file():
+                m = re.match(r"\s*gitdir:\s*(.+?)\s*$",
+                             dot_git.read_text(encoding="utf-8", errors="replace"), re.M)
+                if m:
+                    gd = Path(m.group(1))
+                    gd = (gd if gd.is_absolute() else d / gd).resolve()
+                    if gd.parent.name == "worktrees" and gd.parent.parent == common:
+                        return d
+                return None
+        except (OSError, ValueError):
+            return None
+        d = d.parent
+    return None
+
+
+def picture_home(p, roots=None):
+    """Where picture file `p` is, for `image` and for the fix E-IMAGEBYPATH prints:
+      ("main", main, rel)   inside the main checkout, which the Reader serves: `rel` is the
+                            path the Reader shows it by
+      ("tree", top, rel)    inside another working tree of this repository: the calling
+                            worktree, or one under the main checkout
+      None                  outside them, as a session's scratchpad in %TEMP% is"""
+    try:
+        p = Path(p).resolve()
+    except (OSError, ValueError):
+        return None
+    rs = []
+    for r in (roots if roots else _picture_roots()):
+        try:
+            rs.append(Path(r).resolve())
+        except (OSError, ValueError):
+            continue
+    if not rs:
+        return None
+    main = rs[-1]
+    if p.is_relative_to(main):
+        top = _worktree_top(p, main)
+        if top is None:
+            return "main", main, p.relative_to(main).as_posix()
+        return "tree", top, p.relative_to(top).as_posix()
+    for r in rs[:-1]:
+        if p.is_relative_to(r):
+            return "tree", r, p.relative_to(r).as_posix()
+    return None
+
+
+def _git_ignores(top, rel):
+    """True when git, in the working tree `top`, ignores `rel` (a path it does not track that
+    a .gitignore rule matches), False when it does not, None when git cannot say.
+    orchdoc-images/ counts as not ignored: the workspace ignores it only so that a stray
+    `git add` does not take the Reader's uploads, and commit lands the pictures a doc embeds
+    from its own folder there (`_images_to_land`)."""
+    if rel == IMAGE_DIR or rel.startswith(IMAGE_DIR + "/"):
+        return False
+    rc, _o, _e = git(["check-ignore", "-q", "--", rel], cwd=str(top))
+    return True if rc == 0 else (False if rc == 1 else None)
+
+
+def _embed_holds(rel):
+    """True when `![alt](rel)` can hold this path. A space or a bracket ends the embed early,
+    and the Reader does not decode %20 (`resolve_asset` unescapes HTML only)."""
+    return not re.search(r"[\s()\[\]]", rel or "")
+
+
+def _image_cmd(slug, eid, path):
+    return 'python .shared/scripts/orchdoc.py image --doc %s %s --file "%s"' % (slug, eid, path)
+
+
+def _image_source(src, whole=True):
+    """(the picture's bytes, the extension its bytes say, None), or (None, None, why `image`
+    refuses `src`). The one test both `image` and the fixes printed for it apply. With
+    whole=False only the first bytes are read, which is enough to say whether it refuses."""
+    src = Path(src)
+    ext = src.suffix.lower()
+    if ext == ".svg":
+        return None, None, ("%s is an SVG. The Reader shows raster pictures only, because an SVG "
+                            "can carry script. Export it as a PNG and run this again." % src.name)
+    if ext not in PICTURE_TYPES:
+        return None, None, ("%s is not one of %s, the pictures the Reader shows."
+                            % (src.name, ", ".join(sorted(PICTURE_TYPES))))
+    try:
+        size = src.stat().st_size
+        raw = b""
+        if size <= IMAGE_MAX_BYTES:
+            with open(src, "rb") as fh:
+                raw = fh.read() if whole else fh.read(16)
+    except OSError as ex:
+        return None, None, "cannot read %s (%s)" % (src, type(ex).__name__)
+    if size > IMAGE_MAX_BYTES:
+        return None, None, ("%s is %d bytes; the Reader's limit for a picture is %d MB."
+                            % (src.name, size, IMAGE_MAX_BYTES // (1024 * 1024)))
+    if not raw:
+        return None, None, "%s is empty." % src.name
+    real_ext = image_ext(raw)
+    if real_ext is None:
+        return None, None, ("the bytes of %s are not a PNG, JPEG, GIF or WebP picture, whatever "
+                            "its name says." % src.name)
+    return raw, real_ext, None
+
+
+def _command_or_why(slug, eid, p):
+    """The image command for picture `p`, or why `image` would refuse it."""
+    _raw, _ext, why = _image_source(p, whole=False)
+    return _image_cmd(slug, eid, p.as_posix()) if why is None else "image refuses it: " + why
+
+
+def _clean_rel(rel):
+    """`rel` with each run of spaces and brackets in its file name made one hyphen, or None
+    when its folders hold one too: a name an embed can hold, for a copy beside the file."""
+    d, _sep, name = rel.rpartition("/")
+    if not _embed_holds(d):
+        return None
+    stem, dot, ext = name.rpartition(".")
+    clean = re.sub(r"[\s()\[\]]+", "-", stem if dot else name).strip("-") or "picture"
+    return (d + "/" if d else "") + clean + ("." + ext if dot else "")
+
+
+def _ignored_words(ign):
+    return "git ignores" if ign else "git could not say whether it ignores"
+
+
+def picture_fix(slug, eid, p, roots=None, alt=None, instead_of="its path"):
+    """The fix for picture file `p`, named in entry `eid` of doc `slug` without being shown:
+      - inside the main checkout, tracked, ignored or neither: the embed of it where it is,
+        which the Reader shows from disk, so nothing new lands;
+      - inside another working tree of this repository: the same when the main checkout holds
+        the same picture at that path; else the image command, or, for a picture git ignores
+        there, where to save it in the main checkout and the embed of it there;
+      - outside them: the image command, which copies it into orchdoc-images/<doc>/.
+    A path an embed cannot hold (a space or a bracket) gets the image command when git does
+    not ignore the picture, and a copy beside it under a name an embed holds when git does.
+    The image command is printed only for a file `image` accepts; for any other, why not.
+    `instead_of` says what in the entry the embed replaces (None: nothing, it is added)."""
+    p = Path(p).resolve()
+    ext = p.suffix.lower()
+    if ext == ".svg":
+        return ("%s is an SVG, which the Reader does not show because an SVG can carry script. "
+                "Export it as a PNG and show that instead" % p.name)
+    if ext not in PICTURE_TYPES:
+        return ("%s is not one of %s, the pictures the Reader shows. Save it as a PNG and show "
+                "that instead" % (p.name, ", ".join(sorted(PICTURE_TYPES))))
+    rs = list(roots) if roots else _picture_roots()
+    main = _main_root(rs)
+    a = _image_alt(alt, p.name)
+    put = "put ![%s](%%s) in %s%s" % (a.replace("%", "%%"), eid,
+                                     (" in place of " + instead_of) if instead_of else "")
+    home = picture_home(p, rs)
+    if home is None:
+        return _command_or_why(slug, eid, p)
+    kind, top, rel = home
+    if kind == "tree":
+        twin = main / rel
+        if twin.is_file() and _same_file_bytes(twin, p):
+            kind, top = "main", main
+    if kind == "main":
+        if _embed_holds(rel):
+            return "the Reader shows it where it is: " + put % rel
+        ign = _git_ignores(main, rel)
+        if ign is False:
+            return _command_or_why(slug, eid, p)
+        clean = _clean_rel(rel)
+        if clean and not (main / clean).exists() and _git_ignores(main, clean):
+            return ("%s %s, so it is not copied into %s/, and an embed cannot hold its name (a "
+                    "space or a bracket): save a copy of it as %s (git ignores that name too), "
+                    "then %s" % (_ignored_words(ign), rel, IMAGE_DIR, (main / clean).as_posix(),
+                                 put % clean))
+        return ("%s %s, so it is not copied into %s/, and an embed cannot hold its name (a space "
+                "or a bracket): save a copy of it beside it under a name with no space or bracket "
+                "that git ignores, then %s" % (_ignored_words(ign), rel, IMAGE_DIR,
+                                               put % "<the copy's path in the workspace>"))
+    ign = _git_ignores(top, rel)
+    if ign is False:
+        return _command_or_why(slug, eid, p)
+    dest = rel if _embed_holds(rel) else _clean_rel(rel)
+    if dest and not (main / dest).exists() and _git_ignores(main, dest):
+        return ("%s %s, so it is not copied into %s/, and it is only in %s, which the Reader "
+                "does not serve: save it in the main checkout as %s (git ignores that path "
+                "there too), then %s" % (_ignored_words(ign), rel, IMAGE_DIR, top.as_posix(),
+                                         (main / dest).as_posix(), put % dest))
+    return ("%s %s, so it is not copied into %s/, and it is only in %s, which the Reader does "
+            "not serve: save it in the main checkout %s, under a name with no space or bracket "
+            "that git ignores there, then %s"
+            % (_ignored_words(ign), rel, IMAGE_DIR, top.as_posix(), main.as_posix(),
+               put % "<its path in the workspace>"))
+
+
+def _unknown_picture_fix(slug, eid, lead, instead_of="its path"):
+    """The fix for a picture this computer cannot find: what `picture_fix` prints, once the
+    session has found the file."""
+    return ("%s, then: if it is in the workspace, put ![<what it shows>](<its path in the "
+            "workspace>) in %s in place of %s; if it is outside, %s"
+            % (lead, eid, instead_of, _image_cmd(slug, eid, "<its full path>")))
+
+
+def image_findings(doc_name, entries, lines, force_open=(), roots=None, only=None, fz=None,
+                   live=None, reported=None):
+    """E-IMAGEBYPATH: an open entry names a picture by its path (as text or inline code)
+    instead of showing it, shortens the path so nobody can find it, or embeds one the Reader
+    cannot show. A file name that names no file here counts only in an entry the human acts on.
+    Any owner otherwise: the human reads every entry in the Reader (W127). The fix (`picture_fix`)
+    is the embed of the picture where it is when it is in the main checkout, and the image
+    command, which copies it into orchdoc-images/<doc>/, only when it is outside it.
+    `reported`, a dict, gets {entry heading line: {normcased path of each picture file a
+    finding names}}, so check_doc's W-PICTURENOTSHOWN does not name the same picture again."""
+    roots = roots if roots is not None else _picture_roots()
+    fz = fenced_lines(lines) if fz is None else fz
+    if live is None or len(live) != len(lines):
+        live = without_attestations("\n".join(lines)).split("\n")
+        if len(live) != len(lines):
+            live = list(lines)
+    starts = sorted(x["line"] - 1 for x in entries)
+    slug = _doc_slug(doc_name)
+    out = []
+    for e in entries:
+        if only is not None and e["id"] not in only:
+            continue
+        if not _guard_open(e, force_open):
+            continue
+        a, b = _own_span(e, starts, len(lines))
+        rows, notes = _guard_lines(lines, live, fz, a, b)
+        for off, kind, raw, p, why in _image_mentions(rows, notes, roots):
+            line = a + 1 + off
+            if reported is not None and kind in ("embed-bad", "path"):
+                f = p if kind == "path" else _local_file(raw, roots)
+                if f is not None:
+                    reported.setdefault(e["line"], set()).add(os.path.normcase(str(f)))
+            if kind == "embed-bad":
+                local = _local_file(raw, roots)
+                if local is not None:
+                    alt = next((m.group(1) for m in _EMBED_SRC_RE.finditer(rows[off] or "")
+                                if m.group(2) == raw), None)
+                    fix = picture_fix(slug, e["id"], local, roots, alt, "that embed")
+                else:
+                    fix = _unknown_picture_fix(slug, e["id"], "find the picture", "that embed")
+                out.append(Finding("E-IMAGEBYPATH", line,
+                                   "%s embeds %s, which the Reader cannot show: %s"
+                                   % (e["id"], raw, why), fix))
+            elif kind == "path":
+                out.append(Finding("E-IMAGEBYPATH", line,
+                                   "%s names the picture %s by its path instead of showing it"
+                                   % (e["id"], raw), picture_fix(slug, e["id"], p, roots)))
+            elif kind == "elided":
+                out.append(Finding("E-IMAGEBYPATH", line,
+                                   "%s names a picture by a shortened path, %s, instead of "
+                                   "showing it" % (e["id"], raw),
+                                   _unknown_picture_fix(slug, e["id"], "find the file")))
+            elif kind == "gone" and _drew_acts(e):
+                out.append(Finding("E-IMAGEBYPATH", line,
+                                   "%s names the picture %s, which is not on this computer, "
+                                   "instead of showing it" % (e["id"], raw),
+                                   _unknown_picture_fix(slug, e["id"], "find or remake it")))
+            elif kind == "name" and IMAGE_NAME_REFUSES and _drew_acts(e):
+                out.append(Finding("E-IMAGEBYPATH", line,
+                                   "%s names the picture %s without showing it, and no file by "
+                                   "that name is here" % (e["id"], raw),
+                                   _unknown_picture_fix(slug, e["id"], "find the file")))
+    return out
+
+
+# --- W-PASTEDRIFT ---------------------------------------------------------------------
+def pastedrift_findings(doc_name, entries, lines, roots=None, fz=None):
+    """W-PASTEDRIFT: a pasted block in an open entry no longer matches its marker. Its text was
+    edited in the doc, or its source file changed after the paste, so the copy the human would take
+    is not the file's text. A source that no longer exists is silent: the entry's copy is then
+    the only one. The remedy pastes the file again, which replaces the block, when paste takes
+    the file (`paste_fix`); for a source no longer on this computer it says what to do instead
+    of a paste that would be refused."""
+    roots = roots if roots is not None else _picture_roots()
+    fz = fenced_lines(lines) if fz is None else fz
+    starts = sorted(x["line"] - 1 for x in entries)
+    slug = _doc_slug(doc_name)
+    blocks = pasted_blocks(lines, fz)
+    out = []
+    if not blocks:
+        return out
+    for e in entries:
+        if not _guard_open(e):
+            continue
+        a, b = _own_span(e, starts, len(lines))
+        for blk in blocks:
+            if not a <= blk["marker"] < b:
+                continue
+            src = _paste_src_path(blk["src"], roots)
+            if blk["open"] is None:
+                why = "a paste provenance line has no pasted block under it"
+            elif blk["close"] is None:
+                why = "a pasted block is never closed"
+            elif paste_digest(blk["text"]) != blk["sha"]:
+                why = "the text pasted from %s was edited in the doc after the paste" % blk["src"]
+            else:
+                if src is None:
+                    continue
+                outside = _outsider_text(src)
+                if outside is not None and outside[0] == "untrusted":
+                    continue                     # never opened: text others wrote
+                got, why_src = _paste_read(src)
+                if got is None:
+                    why = "%s can no longer be pasted whole: %s" % (blk["src"], why_src)
+                elif paste_digest(got) != blk["sha"]:
+                    why = "%s has changed since it was pasted" % blk["src"]
+                else:
+                    continue
+            if src is not None:
+                fix = paste_fix(slug, e["id"], src, roots, replacing=True)
+                # o9 W133: pasting again ADDS a block and leaves a broken marker where it is,
+                # so the broken marker comes out first.
+                if blk["open"] is None:
+                    fix = ("Delete the paste provenance line at line %d, which has no block under "
+                           "it, then: %s" % (blk["marker"] + 1, fix))
+                elif blk["close"] is None:
+                    fix = ("Delete the paste provenance line at line %d and the unclosed block "
+                           "under it (the fence at line %d and every line after it that was "
+                           "pasted text), then: %s" % (blk["marker"] + 1, blk["open"] + 1, fix))
+            else:
+                fix = ("%s is not on this computer, so paste cannot put it back. If the change "
+                       "to the block was meant, delete the paste provenance line above it and "
+                       "the block stays as %s's own text; if not, put the pasted text back as "
+                       "it was" % (blk["src"], e["id"]))
+            out.append(Finding("W-PASTEDRIFT", blk["marker"] + 1, "%s: %s" % (e["id"], why), fix))
+    return out
+
+
+def copy_guard_findings(path, entries, lines, reported=None):
+    """E-COPYBYLINK, E-IMAGEBYPATH and W-PASTEDRIFT for one doc, for `check_doc`. Each fails
+    open on its own: one that cannot run says so on stderr and the rest of the check stands.
+    `reported`: see `image_findings`."""
+    out = []
+    name = Path(str(path)).name
+    fz = fenced_lines(lines)
+    live = without_attestations("\n".join(lines)).split("\n")
+    if len(live) != len(lines):
+        live = list(lines)
+    for code, run in (
+            ("E-COPYBYLINK", lambda: copy_findings(name, entries, lines, fz=fz, live=live)),
+            ("E-IMAGEBYPATH", lambda: image_findings(name, entries, lines, fz=fz, live=live,
+                                                     reported=reported)),
+            ("W-PASTEDRIFT", lambda: pastedrift_findings(name, entries, lines, fz=fz))):
+        try:
+            out.extend(run())
+        except Exception as ex:
+            sys.stderr.write("[orchdoc] %s could not run on %s: %s\n"
+                             % (code, name, str(ex)[:160]))
+            if code == "E-IMAGEBYPATH" and reported is not None:
+                reported.clear()     # it reported nothing, so W-PICTURENOTSHOWN skips nothing
+    return out
+
+
+# --- the same tests at write time ------------------------------------------------------
+def _changed_ids(old_entries, old_lines, new_entries, new_lines):
+    """Ids whose own rows differ between two versions of a doc, and ids new in the second."""
+    def spans(entries, lines):
+        starts = sorted(x["line"] - 1 for x in entries)
+        got = {}
+        for e in entries:
+            a, b = _own_span(e, starts, len(lines))
+            got.setdefault(e["id"], []).append("\n".join(lines[a:b]))
+        return got
+    old, new = spans(old_entries, old_lines), spans(new_entries, new_lines)
+    return {i for i, t in new.items() if old.get(i) != t}
+
+
+def text_guard_findings(doc_name, old_text, new_text, force_open=(), roots=None):
+    """The E-COPYBYLINK and E-IMAGEBYPATH findings an edit ADDS: those in the new text of the
+    entries it changes, less the ones the same entries already had. For the PreToolUse hook
+    and for add, note and resolve, so a write is refused when it is made, not at landing."""
+    from collections import Counter
+
+    def read(text):
+        lines = text.splitlines()
+        entries, _s = parse_entries(lines)
+        fz = _prose_bodies(entries, lines)
+        live = without_attestations(text).splitlines()
+        if len(live) != len(lines):
+            live = list(lines)
+        return lines, entries, fz, live
+
+    nl, ne, nfz, nlive = read(new_text or "")
+    ol, oe, ofz, olive = read(old_text or "")
+    ids = _changed_ids(oe, ol, ne, nl) | set(force_open)
+    if not ids:
+        return []
+    new = (copy_findings(doc_name, ne, nl, force_open, roots, ids, nfz, nlive)
+           + image_findings(doc_name, ne, nl, force_open, roots, ids, nfz, nlive))
+    if not new:
+        return []
+    old = (copy_findings(doc_name, oe, ol, force_open, roots, ids, ofz, olive)
+           + image_findings(doc_name, oe, ol, force_open, roots, ids, ofz, olive))
+    left = Counter((f.code, f.msg) for f in old)
+    out = []
+    for f in new:
+        k = (f.code, f.msg)
+        if left[k] > 0:
+            left[k] -= 1
+            continue
+        out.append(f)
+    return out
+
+
+def guard_refusal_lines(findings, verb):
+    """The refusal for a write that would add E-COPYBYLINK or E-IMAGEBYPATH findings, with
+    the command to run instead of each."""
+    out = ["%s refused: it would put %d thing%s in front of the human that he has to go and find:"
+           % (verb, len(findings), "" if len(findings) == 1 else "s")]
+    for f in findings:
+        out.append("  %s line %d: %s" % (f.code, f.line, f.msg))
+        out.append("    instead: %s" % f.detail)
+    out.append("  Text the human copies goes into the entry as a fenced block (the paste command);")
+    out.append("  a picture goes in embedded: where it is when it is in the workspace, by the")
+    out.append("  image command when it is outside. The human, 2026-10-01: \"I shouldn't have to")
+    out.append("  follow a URL and try to chase it in order to just copy something when i'm")
+    out.append("  already here.\"")
+    return out
+
+
+def _write_guard_refuses(doc, old_text, new_text, verb, force_open=(), fail=None):
+    """True, with the refusal printed, when a write by add, note or resolve would add an
+    E-COPYBYLINK or E-IMAGEBYPATH finding. Fails open: a guard that crashes says so and lets
+    the write through, because `check` and gate 0 still read the result."""
+    try:
+        found = text_guard_findings(Path(doc).name, old_text, new_text, force_open)
+    except Exception as ex:
+        sys.stderr.write("[orchdoc] the copy and picture guard could not run (%s); the write "
+                         "goes ahead and check still reads it\n" % str(ex)[:160])
+        return False
+    if not found:
+        return False
+    msg = "\n".join(guard_refusal_lines(found, verb))
+    if fail is not None:
+        fail(msg)
+    else:
+        print("[REFUSE] " + msg, file=sys.stderr)
+    return True
+
+
+def print_copy_guard_remedies(findings):
+    """Each E-COPYBYLINK and E-IMAGEBYPATH remedy in full, once. The detail line is cut at
+    100 characters, and a command with a path in it does not fit."""
+    mine = []
+    for f in findings:
+        if f.code in ("E-COPYBYLINK", "E-IMAGEBYPATH") and f.detail not in mine:
+            mine.append(f.detail)      # one command per fix, however many lines it clears
+    if not mine:
+        return
+    print("          note: E-COPYBYLINK / E-IMAGEBYPATH - the human copies text and looks at")
+    print("                pictures IN the entry (his rules, 2026-10-01). The fix for each:")
+    for d in mine[:20]:
+        print("                  %s" % d)
+    if len(mine) > 20:
+        print("                  ... and %d more fixes" % (len(mine) - 20))
+
+
+# --- the paste command -----------------------------------------------------------------
+def _resolve_input_file(raw):
+    """The existing file `raw` names: absolute as written, else from the current folder, else
+    from the workspace. None when there is none."""
+    s = os.path.expanduser((raw or "").strip().strip('"'))
+    if not s:
+        return None
+    p = Path(s)
+    cands = [p] if p.is_absolute() else [Path.cwd() / p] + [Path(r) / p
+                                                            for r in _picture_roots()]
+    for c in cands:
+        try:
+            c = c.resolve()
+        except (OSError, ValueError):
+            continue
+        if c.is_file():
+            return c
+    return None
+
+
+def _verify_entry_write(before, after, eid, block_ok):
+    """Why a write from `before` to `after` would change more than one block in entry `eid`,
+    or None: the same entries in the same order, nothing newly hidden, the same status, owner
+    and notes, and `block_ok(lines, entries, entry)` true for the new block."""
+    bl = before.splitlines()
+    al = after.splitlines()
+    ob, _s = parse_entries(bl)
+    nb, _s = parse_entries(al)
+    if [(x["id"], bool(x.get("archived"))) for x in ob] != \
+            [(x["id"], bool(x.get("archived"))) for x in nb]:
+        return "the doc's entries would change"
+    if len(unreachable_archived(al, nb)) != len(unreachable_archived(bl, ob)):
+        return "an archived heading would become unreachable"
+    o = [x for x in ob if x["id"] == eid and not x.get("archived")]
+    n = [x for x in nb if x["id"] == eid and not x.get("archived")]
+    if len(o) != 1 or len(n) != 1:
+        return "%s is not one live entry" % eid
+    if status_of(o[0]["body"]) != status_of(n[0]["body"]) or \
+            owner_text(o[0]["body"]) != owner_text(n[0]["body"]):
+        return "%s's status or owner would read differently" % eid
+
+    def key(text):
+        return [(x["nid"], x["who"], x["kind"], x["text"], x["ack"]) for x in parse_notes(text)]
+    if key(before) != key(after):
+        return "the notes would change"
+    if not block_ok(al, nb, n[0]):
+        return "the new block would not read back as written"
+    return None
+
+
+def cmd_paste(args):
+    """Put a file's text into an entry, word for word, as a fenced block under a provenance
+    line (`paste_marker`). Pasting the same file again replaces its block; a block already
+    holding the text is left alone. Refuses rather than shortens."""
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("[REFUSE] no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+    if refuse_if_not_mine(doc, "paste", getattr(args, "not_mine", False)):
+        return 1
+    src = _resolve_input_file(args.file)
+    if src is None:
+        print("[REFUSE] no file at %s" % args.file, file=sys.stderr)
+        return 2
+    roots = _picture_roots()
+    text, refusal = _paste_check(src)
+    if refusal is not None and refusal["code"] == "lines":
+        hazards = refusal["hazards"]
+        print("[REFUSE] %s has %d line%s that the doc's tools would act on inside the block:"
+              % (src.as_posix(), len(hazards), "" if len(hazards) == 1 else "s"),
+              file=sys.stderr)
+        for h in hazards[:8]:
+            print("  %s" % h, file=sys.stderr)
+        if len(hazards) > 8:
+            print("  ... and %d more" % (len(hazards) - 8), file=sys.stderr)
+        if refusal["fences"]:
+            name = _paste_src(src, roots)
+            print("  %s. Nothing was written." % _paste_refusal_fix(
+                refusal, name, args.id, paste_cmd(_doc_slug(doc.name), args.id, name)),
+                file=sys.stderr)
+        else:
+            print("  Change those lines in the source file, then paste it again. Nothing was "
+                  "written.", file=sys.stderr)
+        return 2
+    if refusal is not None:
+        print("[REFUSE] paste refuses %s: %s. Nothing was written."
+              % (src.as_posix(), refusal["why"]), file=sys.stderr)
+        return 2
+
+    sha = paste_digest(text)
+    src_name = _paste_src(src, roots)
+    block = [paste_marker(src_name, _paste_commit(src), sha), PASTE_FENCE_OPEN] \
+        + text.split("\n") + [PASTE_FENCE_CLOSE]
+    with _lock(doc):
+        before = doc.read_text(encoding="utf-8")
+        lines = before.splitlines()
+        entries, _s = parse_entries(lines)
+        match = [e for e in entries if e["id"] == args.id and not e.get("archived")]
+        if len(match) != 1:
+            print("[REFUSE] %s %s in %s" % (args.id, "is not a live entry" if not match
+                                            else "appears %d times" % len(match), doc.name),
+                  file=sys.stderr)
+            return 1
+        e = match[0]
+        starts = sorted(x["line"] - 1 for x in entries)
+        a, b = _own_span(e, starts, len(lines))
+        fz = fenced_lines(lines)
+        mine = [blk for blk in pasted_blocks(lines, fz)
+                if a <= blk["marker"] < b and blk["close"] is not None]
+        if any(blk["sha"] == sha and paste_digest(blk["text"]) == sha for blk in mine):
+            print("[UNCHANGED] %s already holds this text, pasted from %s."
+                  % (args.id, src_name))
+            return 0
+
+        def same_file(blk):
+            p = _paste_src_path(blk["src"], roots)
+            return (p is not None and os.path.normcase(str(p)) == os.path.normcase(str(src))) \
+                or blk["src"] == src_name
+        old = [blk for blk in mine if same_file(blk)]
+        bare = [(o, c) for o, c, t, m in _fenced_texts(lines[a:b])
+                if not m and _norm_text(t) == _norm_text(text)]
+        if old:
+            lines[old[0]["marker"]:old[0]["close"] + 1] = block
+            verb = "REPLACED"
+        elif bare:
+            # The session put the text in by hand: give that block its marker, so the entry
+            # does not carry the same text twice.
+            lines[a + bare[0][0]:a + bare[0][1] + 1] = block
+            verb = "MARKED"
+        else:
+            k = _entry_insert_at(lines, e, starts)
+            ins = [""] + block
+            if k < len(lines) and lines[k].strip():
+                ins.append("")
+            lines[k:k] = ins
+            verb = "PASTED"
+        after = "\n".join(lines) + "\n"
+
+        def block_ok(al, nb, n):
+            st2 = sorted(x["line"] - 1 for x in nb)
+            a2, b2 = _own_span(n, st2, len(al))
+            return any(a2 <= blk["marker"] < b2 and blk["close"] is not None
+                       and blk["sha"] == sha and paste_digest(blk["text"]) == sha
+                       for blk in pasted_blocks(al))
+        why = _verify_entry_write(before, after, args.id, block_ok)
+        if why:
+            print("[REFUSE] paste would not be clean: %s. Nothing was written." % why,
+                  file=sys.stderr)
+            return 1
+        write_doc(doc, after, expect=before)
+        if doc.read_text(encoding="utf-8") != after:
+            print("[FAILED] %s on disk is not what paste wrote. Read it before doing anything "
+                  "else." % doc.name, file=sys.stderr)
+            return 1
+    n_lines = len(text.split("\n"))
+    print("[%s] %s: %d characters, %d line%s from %s, in a fenced block with its source"
+          % (verb, args.id, len(text), n_lines, "" if n_lines == 1 else "s", src_name))
+    link = reader_link(doc.name, args.id)
+    if link:
+        print("  the human copies it with the block's Copy button at %s once it lands." % link)
+    print('  Land it:  python .shared/scripts/orchdoc.py commit --doc %s --message "..." --commit'
+          % _doc_slug(doc.name))
+    return 0
+
+
+# --- the image command -----------------------------------------------------------------
+def _image_alt(alt, src):
+    """Alt text for an embed: what the caller gave, else the file's name in words; never a
+    character that would end the embed early. Never shortened: the Reader's embed pattern
+    has no length limit, and the alt says what the picture shows."""
+    a = alt if alt else re.sub(r"[-_]+", " ", Path(src).stem)
+    a = re.sub(r"[\[\]()`\r\n]+", " ", a or "")
+    a = " ".join(a.split())
+    return a or "picture"
+
+
+def cmd_image(args):
+    """Copy a picture into orchdoc-images/<doc>/ under a name of its own and embed it in an
+    entry, so the Reader shows it where the human is reading. commit lands the picture with the
+    doc. Refuses an SVG and anything else the Reader would not show."""
+    import secrets as _secrets
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("[REFUSE] no such doc: %s" % args.doc, file=sys.stderr)
+        return 2
+    slug = _doc_slug(doc.name)
+    if not re.fullmatch(r"o\d+", slug):
+        print("[REFUSE] %s is not an OrchDoc" % doc.name, file=sys.stderr)
+        return 2
+    if refuse_if_not_mine(doc, "image", getattr(args, "not_mine", False)):
+        return 1
+    src = _resolve_input_file(args.file)
+    if src is None:
+        print("[REFUSE] no file at %s" % args.file, file=sys.stderr)
+        return 2
+    raw, real_ext, why = _image_source(src)
+    if why:
+        print("[REFUSE] " + why, file=sys.stderr)
+        return 2
+    # A picture git ignores stays out of git (o9, 2026-10-02): the copy would be a new file in
+    # orchdoc-images/<doc>/, which commit lands. Inside the workspace it is shown where it is.
+    roots = _picture_roots()
+    home = picture_home(src, roots)
+    if home is not None:
+        ignored = _git_ignores(home[1], home[2])
+        if ignored is not False:
+            print("[REFUSE] %s %s, so image does not copy it into %s/%s/, which commit lands "
+                  "in git." % (_ignored_words(ignored), home[2], IMAGE_DIR, slug),
+                  file=sys.stderr)
+            print("  Instead: %s" % picture_fix(slug, args.id, src, roots,
+                                                getattr(args, "alt", None), instead_of=None),
+                  file=sys.stderr)
+            print("Nothing was written.", file=sys.stderr)
+            return 2
+
+    root = Path(PROJECTS).resolve()
+    folder = root / IMAGE_DIR / slug
+    digest = _hashlib.sha256(raw).hexdigest()
+    target, created = None, False
+    if folder.is_dir():
+        for p in sorted(folder.iterdir()):
+            if (p.is_file() and p.suffix.lower() in PICTURE_TYPES and p.stat().st_size == len(raw)
+                    and _file_digest(p) == digest):
+                target = p
+                break
+    if target is None:
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as ex:
+            print("[REFUSE] cannot make %s (%s)" % (folder, type(ex).__name__), file=sys.stderr)
+            return 1
+        stem = re.sub(r"[^A-Za-z0-9]+", "-", src.stem).strip("-").lower()[:40]
+        for _try in range(5):
+            cand = folder / ("%s-%s%s%s" % (time.strftime("%Y%m%d-%H%M%S"), _secrets.token_hex(3),
+                                            ("-" + stem) if stem else "", real_ext))
+            try:
+                with open(cand, "xb") as fh:
+                    fh.write(raw)
+                target, created = cand, True
+                break
+            except FileExistsError:
+                continue
+            except OSError as ex:
+                print("[REFUSE] cannot write %s (%s)" % (cand, type(ex).__name__),
+                      file=sys.stderr)
+                return 1
+        if target is None:
+            print("[REFUSE] could not find a free name in %s" % folder, file=sys.stderr)
+            return 1
+
+    def undo():
+        if created:
+            try:
+                target.unlink()
+            except OSError:
+                pass
+
+    rel = target.resolve().relative_to(root).as_posix()
+    shown, why = reader_shows(rel, [root])
+    if shown is None:
+        undo()
+        print("[REFUSE] the Reader could not show %s: %s" % (rel, why), file=sys.stderr)
+        return 1
+    embed = "![%s](%s)" % (_image_alt(getattr(args, "alt", None), src), rel)
+    try:
+        with _lock(doc):
+            before = doc.read_text(encoding="utf-8")
+            lines = before.splitlines()
+            entries, _s = parse_entries(lines)
+            match = [e for e in entries if e["id"] == args.id and not e.get("archived")]
+            if len(match) != 1:
+                undo()
+                print("[REFUSE] %s %s in %s" % (args.id, "is not a live entry" if not match
+                                                else "appears %d times" % len(match), doc.name),
+                      file=sys.stderr)
+                return 1
+            e = match[0]
+            starts = sorted(x["line"] - 1 for x in entries)
+            a, b = _own_span(e, starts, len(lines))
+            fz = fenced_lines(lines)
+            for i in range(a, b):
+                if i not in fz and any(m.group(2) == rel
+                                       for m in _EMBED_SRC_RE.finditer(lines[i])):
+                    print("[UNCHANGED] %s already shows %s" % (args.id, rel))
+                    return 0
+            k = _entry_insert_at(lines, e, starts)
+            ins = ["", embed]
+            if k < len(lines) and lines[k].strip():
+                ins.append("")
+            lines[k:k] = ins
+            after = "\n".join(lines) + "\n"
+
+            def block_ok(al, nb, n):
+                st2 = sorted(x["line"] - 1 for x in nb)
+                a2, b2 = _own_span(n, st2, len(al))
+                return embed in al[a2:b2]
+            why = _verify_entry_write(before, after, args.id, block_ok)
+            if why:
+                undo()
+                print("[REFUSE] image would not be clean: %s. Nothing was written." % why,
+                      file=sys.stderr)
+                return 1
+            write_doc(doc, after, expect=before)
+            if doc.read_text(encoding="utf-8") != after:
+                print("[FAILED] %s on disk is not what image wrote. Read it before doing "
+                      "anything else." % doc.name, file=sys.stderr)
+                return 1
+    except DocPathError:
+        undo()
+        raise
+    print("[EMBEDDED] %s shows %s (copied from %s)" % (args.id, rel, src.as_posix()))
+    link = reader_link(doc.name, args.id)
+    if link:
+        print("  the human sees it at %s once it lands." % link)
+    print("  commit lands the picture with the doc:")
+    print('    python .shared/scripts/orchdoc.py commit --doc %s --message "..." --commit' % slug)
+    return 0
+
+
+# --- what commit needs -----------------------------------------------------------------
+def _blob_text(blob):
+    """The text of a git blob, read as bytes and decoded as UTF-8 (`git()` decodes with the
+    console's code page). "" when it cannot be read."""
+    if not blob:
+        return ""
+    try:
+        p = subprocess.run(["git", "-C", str(PROJECTS), "cat-file", "blob", blob],
+                           capture_output=True, timeout=60, creationflags=flags())
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else ""
+
+
+def _shown_embeds(lines, fz=None):
+    """[(line index, url)] for each `![alt](url)` in `lines` that the Reader draws: not inside
+    a fenced block, a code span or an HTML comment (o9 W133). A comment may span lines; a
+    fenced row neither opens nor closes one."""
+    out = []
+    fz = fenced_lines(lines) if fz is None else fz
+    in_comment = False
+    for i, ln in enumerate(lines):
+        if i in fz:
+            continue
+        ln = _mask_code_spans([ln])[0]       # a `<!--` quoted in code opens no comment
+        shown_ln, pos = [], 0
+        while pos < len(ln):
+            if in_comment:
+                end = ln.find("-->", pos)
+                if end < 0:
+                    pos = len(ln)
+                else:
+                    in_comment, pos = False, end + 3
+                    shown_ln.append(" ")
+            else:
+                start = ln.find("<!--", pos)
+                if start < 0:
+                    shown_ln.append(ln[pos:])
+                    pos = len(ln)
+                else:
+                    shown_ln.append(ln[pos:start])
+                    in_comment, pos = True, start + 4
+        ln = "".join(shown_ln)
+        if "](" not in ln:
+            continue
+        for m in _EMBED_SRC_RE.finditer(_mask_code_spans([ln])[0]):
+            out.append((i, m.group(2).strip().replace("\\", "/")))
+    return out
+
+
+def _untracked_embeds(root, lines, fz=None):
+    """[(line index, url, rel)] for each shown embed whose file is in the repository at `root`
+    and that git neither tracks nor ignores (o9 W133): a commit of the doc does not take it,
+    so it never reaches main (only the hourly autosave ref holds it). ONE git call for all of
+    them: `ls-files --others --exclude-standard` lists exactly the untracked files no .gitignore rule matches.
+    ⛔ orchdoc-images/ is left out: `commit` lands the pictures a doc embeds from its own
+    folder (`_images_to_land`). A file inside a nested repository is left out too."""
+    root = Path(root).resolve()
+    cand = []
+    for i, u in _shown_embeds(lines, fz):
+        if u == IMAGE_DIR or u.startswith(IMAGE_DIR + "/"):
+            continue
+        p, _why = reader_shows(u, [root])
+        if p is None:
+            continue
+        try:
+            rel = Path(p).resolve().relative_to(root).as_posix()
+        except (OSError, ValueError):
+            continue
+        if rel == IMAGE_DIR or rel.startswith(IMAGE_DIR + "/"):
+            continue                          # a link led there
+        d, nested = Path(p).resolve().parent, False
+        while d != root and root in d.parents:
+            if (d / ".git").exists():
+                nested = True
+                break
+            d = d.parent
+        if not nested:
+            cand.append((i, u, rel))
+    if not cand:
+        return []
+    rels = sorted({c[2] for c in cand})
+    # Not `git()`: with -z git writes each path as raw UTF-8, and `git()` decodes in the
+    # locale's code page unless Python runs in UTF-8 mode, so `café.png` came back as
+    # `cafÃ©.png` and matched nothing (o9L1413 review).
+    try:
+        p = subprocess.run(["git", "-C", str(root), "ls-files", "--others",
+                            "--exclude-standard", "-z", "--"] + rels,
+                           capture_output=True, timeout=60, creationflags=flags())
+    except Exception:
+        return []
+    if p.returncode != 0:
+        return []
+    bad = {x for x in p.stdout.decode("utf-8", "replace").split("\0") if x}
+    return [c for c in cand if c[2] in bad]
+
+
+def _images_to_land(doc, pinned, text):
+    """Workspace paths of the pictures `text` embeds from the doc's own folder,
+    orchdoc-images/<doc>/, that `pinned` does not already hold as they are on disk. commit
+    adds them to what it lands, so the Reader on main shows what the entry embeds. A picture
+    `pinned` already holds byte for byte is left out: gate 2's re-check after a race wants
+    exactly the files that change.
+    ⛔ ONLY THE DOC'S OWN FOLDER. commit adds these with `update-index --cacheinfo`, which no
+    .gitignore rule stops, so a path that resolves anywhere else is never listed: another
+    doc's folder (that doc's own commit lands its pictures), and a path that leaves the folder
+    through `..` or a link (`orchdoc-images/o9/../../x/shot.png`, a picture git ignores)."""
+    out = set()
+    if not text:
+        return []
+    lines = text.splitlines()
+    fz = fenced_lines(lines)
+    root = Path(PROJECTS).resolve()
+    own = (root / IMAGE_DIR / _doc_slug(Path(str(doc)).name)).resolve()
+    # o9 W133: an embed inside an HTML comment is not shown, so it lands nothing.
+    for _i, u in _shown_embeds(lines, fz):
+        if not u.startswith(IMAGE_DIR + "/"):
+            continue
+        p, _why = reader_shows(u, [root])
+        if p is None:
+            continue
+        try:
+            p = Path(p).resolve()
+            p.relative_to(own)
+        except (OSError, ValueError):
+            continue
+        rel = p.relative_to(root).as_posix()
+        if rel in out:
+            continue
+        rc, have, _e = git(["rev-parse", "--verify", "--quiet", "%s:%s" % (pinned, rel)])
+        rc2, now, _e2 = git(["hash-object", "--path", rel, str(p)])
+        if rc2 != 0 or not now.strip():
+            continue
+        if rc == 0 and have.strip() == now.strip():
+            continue
+        out.add(rel)
+    return sorted(out)
+
+
+def _drop_fenced_adds(diff_text, new_text):
+    """A `--unified=0` diff of the doc with each ADDED line that sits inside a fenced block of
+    `new_text` turned into context, so gate 5 reads only the prose a landing adds. Bold in
+    pasted text is the source's, not the writer's, and the text must stay word for word."""
+    if not diff_text or not new_text or "```" not in new_text:
+        return diff_text
+    fz = fenced_lines(new_text.splitlines())
+    out, n = [], None
+    for ln in diff_text.split("\n"):
+        if ln.startswith("diff --git"):
+            n = None
+            out.append(ln)
+            continue
+        m = _HUNK_RE.match(ln)
+        if m:
+            n = int(m.group(3))
+            out.append(ln)
+            continue
+        if n is None:
+            out.append(ln)
+            continue
+        if ln.startswith("+"):
+            out.append((" " + ln[1:]) if (n - 1) in fz else ln)
+            n += 1
+        elif ln.startswith(" "):
+            out.append(ln)
+            n += 1
+        else:
+            out.append(ln)
+    return "\n".join(out)
+
+
+def _selftest_copy_guards(fixtured):
+    """E-COPYBYLINK, E-IMAGEBYPATH and W-PASTEDRIFT driven both ways, and E-PLATEHISTORY
+    reading past a pasted block. A blocking code joins `fixtured` only when its refusal was
+    SEEN to fire."""
+    import tempfile
+    ok = True
+    td = Path(tempfile.mkdtemp(prefix="orchdoc-copyguard-")).resolve()
+    scratch = Path(tempfile.mkdtemp(prefix="orchdoc-scratch-")).resolve()
+    saved_roots = list(_ROOTS_CACHE)
+    _ROOTS_CACHE[:] = [td]
+    try:
+        (td / "prompts").mkdir()
+        prompt = td / "prompts" / "lane.md"
+        prompt.write_text("You are lane o99L1.\nDo the work.\n", encoding="utf-8")
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+        (td / IMAGE_DIR / "o99").mkdir(parents=True)
+        (td / IMAGE_DIR / "o99" / "card.png").write_bytes(png)
+        shot = scratch / "shot.png"
+        shot.write_bytes(png)
+        doc = td / "ORCHESTRATOR-DECISIONS-o99.md"
+
+        def codes(body, eid="T5", status="OPEN", owner="the human", section="## §2.2 Yours"):
+            doc.write_text(canonical_title("o99", "a role") + "\n\n%s\n\n### %s - a step for "
+                           "the human\n**Status:** %s - **Owner:** %s\n\n%s\n"
+                           % (section, eid, status, owner, body), encoding="utf-8")
+            return {f.code for f in check_doc(doc)}
+
+        ask = "Paste the prompt in `prompts/lane.md` into a new session."
+        sha = paste_digest("You are lane o99L1.\nDo the work.")
+        marked = "%s\n```text\nYou are lane o99L1.\nDo the work.\n```" % paste_marker(
+            "prompts/lane.md", "none", sha)
+        plate = "This entry previously said $25, which was wrong; o7 caught it and it is now " \
+                "corrected."
+        note_hist1 = ("> \U0001F440 **INSTRUCTION from the human** (2026-10-21 20:07): Mission control is "
+                      "defunct and superseded by the Reader. <!-- ORCHDOC:NOTE D3.n1 ESC ACK o99 "
+                      "2026-10-21 20:35 -->")
+        # A multi-line note is stored as ONE line with `\n` escapes (see encode_note_breaks).
+        note_hist2 = ("> **NOTE from the human** (2026-10-21 20:08): First paragraph.\\n\\nThe old plan "
+                      "is superseded.\\nThird line. <!-- ORCHDOC:NOTE D3.n2 ESC -->")
+        cases = [
+            ("E-COPYBYLINK", "refuses a link", dict(body=ask), True),
+            ("E-COPYBYLINK", "text in the entry",
+             dict(body=ask + "\n\n```text\nYou are lane o99L1.\nDo the work.\n```"), False),
+            ("E-COPYBYLINK", "pasted block", dict(body=ask + "\n\n" + marked), False),
+            ("E-COPYBYLINK", "Reader link silent",
+             dict(body="Paste the prompt from http://127.0.0.1:8787/#o99/W1."), False),
+            ("E-COPYBYLINK", "payload shown silent",
+             dict(body="Run `python go.py` from `prompts/lane.md`."), False),
+            ("E-COPYBYLINK", "not his: silent", dict(body=ask, eid="W5", owner="o99"), False),
+            ("E-COPYBYLINK", "ready form, not his: fires",
+             dict(body="LANE PROMPT WRITTEN AND READY TO PASTE: prompts/lane.md", eid="W5",
+                  owner="o99"), True),
+            ("E-IMAGEBYPATH", "refuses a path",
+             dict(body="The card is at `%s`." % shot.as_posix(), eid="D7"), True),
+            ("E-IMAGEBYPATH", "embed clears it",
+             dict(body="The card is at `%s`.\n\n![the card](%s/o99/card.png)"
+                  % (shot.as_posix(), IMAGE_DIR), eid="D7"), False),
+            ("E-IMAGEBYPATH", "bad embed",
+             dict(body="![the card](%s/o99/gone.png)" % IMAGE_DIR, eid="D7"), True),
+            ("E-IMAGEBYPATH", "shortened path",
+             dict(body="See C:\\...\\scratchpad\\shot.png for the card.", eid="D7"), True),
+            ("E-IMAGEBYPATH", "finished silent",
+             dict(body="The card is at `%s`." % shot.as_posix(), eid="D7",
+                  status="RESOLVED"), False),
+            ("W-PASTEDRIFT", "unchanged silent", dict(body=marked), False),
+            ("W-PASTEDRIFT", "edited block",
+             dict(body=marked.replace("Do the work.", "Do other work.")), True),
+            ("E-PLATEHISTORY", "inside a fence silent",
+             dict(body="```text\n%s\n```" % plate, eid="D3", section="## §2.1 Decisions"),
+             False),
+            ("E-PLATEHISTORY", "outside a fence",
+             dict(body=plate, eid="D3", section="## §2.1 Decisions"), True),
+            # o1, 2026-10-21: the human's own note or instruction is never the orchestrator's history.
+            ("E-PLATEHISTORY", "the owner's instruction silent",
+             dict(body="Decide it.\n\n" + note_hist1, eid="D3", section="## §2.1 Decisions"),
+             False),
+            ("E-PLATEHISTORY", "multi-line note silent",
+             dict(body="Decide it.\n\n" + note_hist2, eid="D3", section="## §2.1 Decisions"),
+             False),
+            ("E-PLATEHISTORY", "same word outside a note",
+             dict(body="Decide it.\n\nThis was superseded by the Reader.\n\n" + note_hist1,
+                  eid="D3", section="## §2.1 Decisions"), True),
+        ]
+        for code, label, kw, want in cases:
+            fired = code in codes(**kw)
+            if fired and want and code in BLOCKING and label.startswith("refuses"):
+                fixtured.add(code)
+            good = fired == want
+            ok &= good
+            print("  [%s] %-12s -> %s: %s" % ("OK" if good else "FAIL", code, label,
+                                              "fired" if fired else "silent"))
+        prompt.write_text("You are lane o99L1.\nDo the new work.\n", encoding="utf-8")
+        fired = "W-PASTEDRIFT" in codes(body=marked)
+        ok &= fired
+        print("  [%s] %-12s -> source changed: %s" % ("OK" if fired else "FAIL",
+                                                     "W-PASTEDRIFT",
+                                                     "fired" if fired else "silent"))
+        prompt.unlink()
+        fired = "W-PASTEDRIFT" in codes(body=marked)
+        ok &= not fired
+        print("  [%s] %-12s -> source gone silent: %s" % ("OK" if not fired else "FAIL",
+                                                         "W-PASTEDRIFT",
+                                                         "fired" if fired else "silent"))
+    finally:
+        _ROOTS_CACHE[:] = saved_roots
+        _remove_tree(str(td))
+        _remove_tree(str(scratch))
+    return ok
+
+
 def check_doc(path):
     """Run every invariant against one doc. Returns a list of Finding."""
     try:
@@ -2554,6 +7645,45 @@ def check_doc(path):
     lines_live = without_attestations(text).splitlines()
     findings = []
     entries, sections = parse_entries(lines)
+    # o9 W126: every check below reads an entry's PROSE, so each body has its fenced rows
+    # blanked (same rows, same line numbers). Text pasted into a fence is kept word for word
+    # and is not the entry's own words. Only the plate builder reads `raw_body`. Measured on
+    # the eleven OrchDocs of origin/main 6dc05873: no entry's needles differ between the two.
+    _prose_bodies(entries, lines)
+    # Held now, because the E-NEEDLESPACE loop below rebinds `path` to a cited path.
+    _copy_guard_doc = path
+
+    # --- E-HIDDENENTRY: an archived heading in the file that no parser can reach. -------
+    #
+    # ⛔ THE ONE ORACLE THAT HAS EVER CAUGHT THIS WAS THE ONE NOT IN THE GATE. Twice an
+    # archived entry has landed INSIDE a fenced example block: D24-D40 on 2026-09-16 -
+    # seventeen of the human's rulings, unreachable to every tool that parses the doc - and D41
+    # on 2026-09-19, under observation, hours after the first was repaired.
+    #
+    # ⛔ AND `check` PASSED BOTH TIMES, WITH NOTHING TO SAY. The fence count was 86
+    # before the archiving commit and 86 after, so a parity check sees nothing. The only
+    # thing that noticed either time was `test_orchdoc_reader.py`'s archived-coverage
+    # assertion - which runs when somebody runs it, not when somebody lands.
+    #
+    # ⭐ BLOCKING, AND THE MEASUREMENT IS WHY IT CAN BE. W19's precedent: an
+    # entry-hiding gate that refuses every doc on day one gets switched off. So it was
+    # counted before it was wired - 408 archived headings across the eleven live docs, 0
+    # unreachable, 0 docs refused (2026-09-19). There is no backlog to grandfather, so it
+    # lands as a refusal rather than as advice. A legitimate illustration that carries the
+    # suffix takes `--override E-HIDDENENTRY --because ...` like any other finding.
+    #
+    # This does not find the CAUSE - `reorder`, `plate` and `commit` all rewrite regions
+    # and none is ruled out (F226). It converts a silent loss into a refusal while the
+    # cause is looked for, which is worth having first.
+    for _n in unreachable_archived(lines, entries):
+        _m = ARCHIVED_ID_RE.search(lines[_n - 1])
+        findings.append(Finding(
+            "E-HIDDENENTRY", _n,
+            "an archived heading for %s is in the file, and no parser can reach it"
+            % _m.group(1),
+            "almost certainly inside a ``` fence. Move the ENTRY out; leave every fence "
+            "where it is and assert the count is unchanged before writing - deleting one "
+            "took this doc's reachable archived headings from 161 to 126"))
 
     # --- E-DUPID: one ID, one entry. The single highest-value invariant. ---
     by_id = defaultdict(list)
@@ -2584,11 +7714,16 @@ def check_doc(path):
         # finding as a matter of course. Reading them as outstanding work made 6 of 6 hits false
         # on the first run. The distinction is not a heuristic: a decision/to-do/work item's
         # sub-items ARE the work; a finding's sub-items are a description OF work.
-        if (e["id"][:1] in ("D", "T", "W", "A")
-                and status_of(e["body"]) in TERMINAL_STATUS
-                and has_open_subitems(e["body"], _stopsign_ok)):
+        _open_sub = (first_open_subitem(e["body"], _stopsign_ok)
+                     if (e["id"][:1] in ("D", "T", "W", "A")
+                         and status_of(e["body"]) in TERMINAL_STATUS) else None)
+        if _open_sub is not None:
+            # ⭐ THE SUB-ITEM'S LINE, NOT THE HEADING'S. This reported `e["line"]`, so the
+            # author was told the entry had open work and left to find which bullet - and the
+            # refusal log recorded the heading, which is identical for every finding on the
+            # entry and therefore useless for judging any of them.
             findings.append(Finding(
-                "E-CLOSEDWITHOPENSUBS", e["line"],
+                "E-CLOSEDWITHOPENSUBS", e["line"] + _open_sub[0],
                 "%s claims a closed status while a sub-item under it is still not done"
                 % e["id"],
                 "mark the container IN PROGRESS and strike the finished sub-items; it moves "
@@ -2673,7 +7808,7 @@ def check_doc(path):
                     "NOT rendered here and shows as visible junk mid-sentence. "
                     "Fix: orchdoc.py strike --doc <doc> --commit. At: %s" % short))
 
-            # ⛔ ALL sub-items done, container still live.\1The human: a done item with all done
+            # ⛔ ALL sub-items done, container still live. The human: a done item with all done
             # sub-items goes to §99 COMPLETELY - never left in a live section. The existing
             # E-DONEINACTIVE only sees an entry whose STATUS is already terminal, so an entry
             # that finished its last sub-item and never had its status updated is invisible to
@@ -2744,7 +7879,7 @@ def check_doc(path):
     # ⛔ FIRES ONLY ON DEMONSTRABLE SATISFACTION. Unknown forms, unevaluatable conditions and
     # OWNER_TOKEN are all silent. o11: a guard that refuses correct work several times a day
     # trains bypass, and a bypassed guard is worth less than none.
-    for e in entries:
+    for e in (entries if _wants("E-DONEBUTOPEN") else ()):
         if e.get("archived") or status_of(e["body"]) not in ("OPEN", "BLOCKED"):
             continue
         cond = done_when(e["body"])
@@ -2759,11 +7894,60 @@ def check_doc(path):
                 "genuinely not finished, correct the Done-when - a condition that fires early "
                 "is worse than none" % e["id"]))
 
-    for e in entries:
+    # o9:W88 - which cited paths live in a product repo rather than this one, asked of git once
+    # per repo for the whole doc. See PRODUCT-REPO CITATIONS.
+    # Skipped when `check --codes` asks for none of the product codes and the switch is off:
+    # nothing below can then use it, and the scan runs git once per product repo.
+    _product = (resolve_product_citations(
+        [p for e in entries if not e.get("archived") for p in cited_paths(e["body"])],
+        path.name)
+        if (PRODUCT_STALE_BLOCKS
+            or _wants("W-PRODUCTSTALE", "W-PRODUCTGONE", "W-PRODUCTNONEEDLE")) else {})
+
+    for e in (entries if _wants("E-AMBIGUOUSDATE", "E-NODEPS", "E-RUBBERSTAMP", "E-STALEPROSE",
+                                "W-DEADCITE", "W-NOBLOCKER", "W-NOPROV", "W-STALLED",
+                                "W-PRODUCTSTALE", "W-PRODUCTGONE", "W-PRODUCTNONEEDLE")
+              else ()):
         if e.get("archived"):
             continue
         deps = depends_of(e["body"])
         cited = cited_paths(e["body"])
+        # ⛔ W-DEADCITE - A DEPENDS LINE THAT NAMES A FILE AND PARSES AS NOTHING.
+        #
+        # `CITED_PATH_RE` only matches inside backticks or a markdown link. An author who
+        # writes `**Depends:** path/to/doc.md#T7` with no backticks gets NO citation - not a
+        # narrowed edge, not a whole-file edge, NO edge. The entry then satisfies E-NODEPS on
+        # the strength of the text, can never restale, and reads as permanently current.
+        #
+        # ⭐ THE TOOL TAUGHT THIS. The restamp hint above printed the whole line inside
+        # one pair of backticks, so an author copying it exactly wrote the dead form. o8 hit
+        # it on three entries in one night and filed a finding blaming the wrong mechanism.
+        # Both halves are fixed together, because the hint alone would leave 34 dead edges
+        # standing and the check alone would keep minting new ones.
+        #
+        # ⚠️ ADVISORY ON PURPOSE, per the W-NOBLOCKER precedent in this same
+        # function. Measured 2026-09-21 over LIVE entries: 8 of 66 file-naming Depends lines
+        # are dead - o1 1, o7 3, o8 3, o10 1, o9 0. Landing it BLOCKING would refuse four
+        # other groups' next commit over a rule that did not exist when they wrote those
+        # entries. Clear the inherited debt first, then promote. Flip when the count is zero.
+        #
+        # ⛔ THE FIRST FIGURE I PUBLISHED WAS 34 of 117, AND IT WAS A TRUE NUMBER ON THE
+        # WRONG AXIS - it counted ARCHIVED entries, which this loop skips two lines above
+        # because an archived entry cannot restale whatever its citations say. 28% of
+        # everything reads as an emergency; 12% of what can actually go stale is a backlog.
+        # Same defect shape as the orphan audit that scanned two roots of seven, arriving in
+        # the report about the fix for it.
+        for _dm in DEPENDS_LINE_RE.finditer(e["body"]):
+            if not BARE_FILEISH_RE.search(_dm.group(1)):
+                continue                   # names only entry ids - a different kind of edge
+            if cited_paths(_dm.group(0)):
+                continue                   # at least one citation parsed; not this defect
+            findings.append(Finding(
+                "W-DEADCITE", e["line"],
+                "%s declares a **Depends:** on a file but it parses as NO citation, so the "
+                "entry can never restale: %s" % (e["id"], _dm.group(1).strip()[:60]),
+                "put backticks round the PATH - **Depends:** `path/to/doc.md#<id>` - not "
+                "round the whole line"))
         # ⛔ A DOCUMENT IS NOT ITS OWN DEPENDENCY. An entry citing the file it lives in was
         # staled by every commit to that file, including commits that changed other entries -
         # so editing anything marked it stale, forever. That is the file noticing itself move,
@@ -2773,6 +7957,105 @@ def check_doc(path):
         # is the entire point of the push model: it works without the author's foresight.
         # Skipping undeclared entries meant a trailer naming them did nothing, which
         # silently reinstated the invisible-gap this model exists to close.
+        # \u26a0\ufe0f ADVISORY ON PURPOSE, AND IT IS SEQUENCED RATHER THAN SOFTENED.
+        # Measured before landing: o6 carries SIX entries that trip this. Landing it
+        # BLOCKING would refuse their next landing over a rule that did not exist when
+        # those entries were written - the cross-repo ambush, arriving from the gate that
+        # preaches against it. o9:W19's own resolution says how this goes: clear the
+        # inherited debt FIRST, then flip the gate, because a gate that refuses on day one
+        # against a backlog refuses everything and gets switched off. Promote to BLOCKING
+        # when the fleet count is zero.
+        # \u26d4 A STATUS THAT CANNOT BE CHECKED IS A CLAIM, AND THIS DOCUMENT IS AN
+        # EVIDENCE INSTRUMENT. BLOCKED and SEQUENCED both assert that something else has to
+        # happen first - so they have to NAME it, or the word is unfalsifiable and rots in
+        # place. Measured on o9:W25, 2026-09-18: it read IN PROGRESS for two weeks while
+        # blocked by the human's own ruling, and the reason nobody reached for BLOCKED is that
+        # BLOCKED would have been just as empty. Naming the blocker is what makes the state
+        # worth having.
+        st_now = status_of(e["body"])
+        if st_now in ("BLOCKED", "SEQUENCED") and not e.get("archived"):
+            names_it = (DEPENDS_RE.search(e["body"])
+                        or DONE_WHEN_RE.search(e["body"])
+                        or re.search(r"\*\*(?:Blocked-by|Waiting-on|Sequenced-behind):\*\*",
+                                     e["body"], re.I))
+            if not names_it:
+                findings.append(Finding(
+                    "W-NOBLOCKER", e["line"],
+                    "%s is %s but names nothing it waits on, so nobody can tell when it "
+                    "stops being %s" % (e["id"], st_now, st_now),
+                    "add **Depends:**, **Done-when:** or **Blocked-by:** naming the thing"))
+
+        # ⛔ W-STALLED - THE OTHER HALF OF THE SAME RULE (the human, 2026-09-22).
+        #
+        # *"Sessions have a tendency to create a large backlog of W items. Those need to be
+        # proactively read, evaluated, and either acted on or moved to 'Blocked by:....'"*
+        #
+        # ⭐ W-NOBLOCKER ABOVE FIRES ONLY ONCE THE STATUS IS ALREADY BLOCKED - that is,
+        # after somebody has done the evaluation the human is asking to force. An item that simply
+        # sits at OPEN trips nothing, and sitting is what a backlog does.
+        #
+        # Measured on o9 the day this landed, 28 open work items: 14 never reviewed since
+        # written, 18 declaring no blocker, 9 open 7+ days, the oldest at 36 and 34.
+        #
+        # THE TEST IS A DISJUNCTION, so an item has two honest ways out and only one dishonest
+        # one: it is MOVING (reviewed since it was opened) or it is WAITING ON SOMETHING NAMED.
+        # Silent and old is neither, and reads exactly like an item nobody has opened.
+        if (st_now in ("OPEN", "IN PROGRESS") and not e.get("archived")
+                and e["id"][:1] in ("W", "T")):
+            # \u26d4 A REVIEW DOES NOT EXEMPT, AND THE FIRST DRAFT OF THIS CHECK LET IT.
+            # the human's wording has no review clause: "read, evaluated, and either ACTED ON or
+            # MOVED TO 'Blocked by:'". Reading is the input, not an outcome.
+            #
+            # \u2b50 AND THE LENIENT VERSION EXEMPTED EXACTLY THE BACKLOG IT EXISTS TO FIND.
+            # An attestation on these docs usually means a CITED FILE moved, not that anyone
+            # worked on the item - o9 restamped one entry 17 times in a day without touching
+            # its subject. Measured over the fleet, 93 open work items 14+ days old:
+            #     a review exempts it   -> 29 findings; o8 scores 0 of 46
+            #     only a blocker exempts -> 73 findings; o8 scores 39 of 46
+            # o8 restamps everything, so the lenient rule certified their entire backlog as
+            # healthy. A check that goes quiet on the largest backlog in the fleet is measuring
+            # restamp discipline, not motion.
+            _age = _days_since_opened(e["body"])
+            _waits = (DEPENDS_RE.search(e["body"])
+                      or re.search(r"\*\*(?:Blocked-by|Waiting-on|Sequenced-behind):\*\*",
+                                   e["body"], re.I)
+                      or re.search(r"(?i)\b(?:blocked on|waiting on|not mine)\b", e["body"]))
+            if _age is not None and _age >= STALLED_DAYS and not _waits:
+                findings.append(Finding(
+                    "W-STALLED", e["line"],
+                    "%s has been open %d days and names nothing it waits on" % (e["id"], _age),
+                    "pick one: act on it, or give it **Blocked-by:** naming what it waits on. "
+                    "A review is not an outcome - re-reading it again changes nothing"))
+
+        # \u26d4 W-NOPROV (W20) - A CLOSED ENTRY WHOSE SUB-ITEM IS DEFERRED WORK.
+        #
+        # the human ratified this 2026-08-19: a tracked task states WHY it is tracked, in one
+        # clause. "agreed - provenance is always good."
+        #
+        # \u2b50 THE CASE IT EXISTS FOR: o7's D4 closed BY DECIDING TO DEFER the work. A
+        # resolved DECISION and finished WORK are different facts, and a resolved entry can be
+        # the REASON a task exists. That task looked exactly like a stale one, and a clause
+        # saying why it existed is all that saved it from a cleanup sweep. This file already
+        # said so in prose - "the only thing standing between a deferred item and a cleanup
+        # sweep that reads it as stale" - and enforced nothing.
+        #
+        # \u26a0\ufe0f THE DETECTOR WAS PICKED BY MEASUREMENT over 524 closed entries:
+        #     phrase OR open sub-item   245 matches, 96% without provenance
+        #     phrase AND open sub-item   49 matches
+        #     a sub-item that ITSELF schedules   7 matches, and the originating D4 is one
+        # A 96% rate is a loose detector, not a broken corpus.
+        if (st_now or "").upper() in CLOSED_STATES and not e.get("archived"):
+            _subs = [s for s in OPEN_SUB_RE.findall(e["body"])
+                     if not FOREIGN_SUB_RE.search(s)]
+            _defer = [s for s in _subs if SCHEDULES_RE.search(s)]
+            if _defer and not PROVENANCE_RE.search(e["body"]):
+                findings.append(Finding(
+                    "W-NOPROV", e["line"],
+                    "%s is %s but schedules future work with no provenance: %s"
+                    % (e["id"], st_now, _defer[0].strip()[:60]),
+                    "add **Provenance:** saying WHY the task outlives the ruling - a cleanup "
+                    "sweep cannot tell a deferred task from a stale one without it"))
+
         if not deps and not cited and e["id"] not in pushed:
             # o8's residual risk, and it is the one this design inherits rather than
             # creates: `Depends:` edges are hand-authored, so a MISSING edge is
@@ -2782,7 +8065,7 @@ def check_doc(path):
             # So a RULED decision must declare at least one edge, and "no dependencies
             # declared" cannot masquerade as "no dependencies moved".
             if (status_of(e["body"]) in {"RESOLVED", "ANSWERED", "DONE"}
-                    and re.search(r"\*\*Resolved[^:]*:\*\*", e["body"])):
+                    and re.search(RESOLVED_LINE_RE, e["body"])):
                 findings.append(Finding(
                     "E-NODEPS", e["line"],
                     "ruled decision '%s' declares no **Depends:** edge, so nothing can "
@@ -2815,26 +8098,32 @@ def check_doc(path):
         # DERIVED edges: the section cited these, so it already declared them.
         rstamp = _as_stamp(rdate) if rdate else _as_stamp(_born)
         regions = cited_regions(e["body"])
-        for pth, _pv in paths_changed_since(cited, rstamp).items():
+        # A citation that narrowed itself to `path#needle` comes back only when some commit
+        # since the review touched a needle - every such commit is read, not just the newest -
+        # and it names that commit. See WHAT A COMMIT DID TO A NEEDLE.
+        for pth, _pv in paths_changed_since(cited, rstamp, regions).items():
             when, subject = _pv[0], _pv[1]
             psha = _pv[2] if len(_pv) > 2 else ""
-            if not (rstamp is None or when > rstamp):
-                continue
-            # A citation that narrowed itself to `path#needle` only counts commits that
-            # touched a line containing that needle. See commit_touched_region.
+            why = _pv[3] if len(_pv) > 3 else ""
             needles = regions.get(str(pth)) or []
-            if psha and needles and not any(
-                    commit_touched_region(psha, str(pth), n) for n in needles):
+            # A narrowed path was already filtered commit by commit, and a fail-closed answer
+            # may carry no usable time - re-filtering here would drop exactly that answer.
+            if not needles and not (rstamp is None or when > rstamp):
                 continue
-            note = ""
+            note = " [%s]" % why if why else ""
             if "ORCHESTRATOR-DECISIONS-" in str(pth):
                 # ⭐ Say WHAT it touched. Most of these trips are cleared by discovering the
                 # commit never went near the entry this one cites, and that answer costs three
                 # commands today. Printed here, it costs a glance.
                 touched = entries_touched(psha, pathlib.Path(str(pth)).name)
                 if touched:
-                    note = " [touched: %s]" % ", ".join(touched[:8])
-                elif touched == []:
+                    note += " [touched: %s]" % ", ".join(touched[:8])
+                elif touched == [] and not needles:
+                    # ⚠️ A BARE citation only. For a narrowed one the needle test above has
+                    # already said the commit touched it - a line naming the id outside every
+                    # entry is still a line about the id, and a deletion inside the entry maps
+                    # to no id here because this helper reads only the added side's ranges.
+                    #
                     # ⛔ DEMONSTRABLE NEGATIVE, so it SKIPS rather than annotating. The commit
                     # changed this OrchDoc outside every entry region - a plate regeneration,
                     # a meta stamp, an override trailer. `_commit_role` already refuses to
@@ -2862,6 +8151,65 @@ def check_doc(path):
                 bare_citations.add(pathlib.Path(str(pth)).name)
             moved.append("%s changed %s%s (%s)"
                          % (pth, when[:16].replace("T", " "), note, subject[:44]))
+
+        # o9:W88 - a citation into a product repo. Only a `#needle` can make it stale, and
+        # until PRODUCT_STALE_BLOCKS is set that is advisory. See PRODUCT-REPO CITATIONS.
+        _baseline = rdate or ("written %s, never reviewed" % _born[:16]
+                              if _born else "never reviewed")
+        for pth in cited:
+            pc = _product.get(pth)
+            if not pc or pc.get("skip"):
+                continue
+            needles = regions.get(str(pth)) or []
+            gone = pc.get("gone")
+            gone_to = _renamed_to(pc["root"], gone[0], pc["rel"]) if gone else ""
+            hit = None
+            if needles:
+                try:
+                    hit = product_needle_mover(pc["root"], pc["ref"], pc["rel"], rstamp,
+                                               needles)
+                except Exception as exc:     # advice, never a crash of `check`
+                    PRODUCT_NOTES[(path.name, pc["label"], "the needle test failed (%s)"
+                                   % type(exc).__name__)] += 1
+                    continue
+            if hit:
+                why = hit[3]
+                if gone and hit[2] == gone[0]:
+                    why = "renamed to %s" % gone_to if gone_to else "the file was deleted"
+                # The commit first: the detail is cut at 100 characters, and the sha is what
+                # the reader needs to look at the change.
+                what = "%s on %s %s%s (%s)" % (
+                    (hit[2] or "?")[:8], pc["ref"], hit[0][:16].replace("T", " "),
+                    " [%s]" % why if why else "", hit[1][:44])
+                if PRODUCT_STALE_BLOCKS:
+                    moved.append("%s changed: %s" % (pth, what))
+                else:
+                    findings.append(Finding(
+                        "W-PRODUCTSTALE", e["line"],
+                        "entry '%s' rests on %s (%s), which moved after it was last reviewed"
+                        " (%s)" % (e["id"], pth, pc["label"], _baseline),
+                        what + " - walk it and re-review"))
+            elif gone:
+                # A file the deploy branch no longer holds. Without a needle, or deleted before
+                # the review, nothing above can ever fire on it - say so, once per citation.
+                findings.append(Finding(
+                    "W-PRODUCTGONE", e["line"],
+                    "entry '%s' cites %s (%s), which is not on %s: %s by %s %s (%s)"
+                    % (e["id"], pth, pc["label"], pc["ref"],
+                       "renamed to %s" % gone_to if gone_to else "deleted",
+                       gone[0][:8], gone[1][:10], gone[2][:44]),
+                    "point the citation at %s" % gone_to if gone_to
+                    else "cite what replaced it, or drop the citation"))
+        _nn = product_nonneedle_paths(e["body"], _product)
+        if _nn:
+            # ONE finding per entry, listing its paths: one per citation made 99 findings on
+            # o10, which buried the suggestion. `restamp` and `commit` print it in full for the
+            # entry being edited - see `print_needle_hints`.
+            findings.append(Finding(
+                "W-PRODUCTNONEEDLE", e["line"],
+                "entry '%s' cites %d product file(s) with no #needle, so no commit there can "
+                "make it stale: %s" % (e["id"], len(_nn), ", ".join(_nn)),
+                "add #<a word from the line it rests on> inside each citation's backticks"))
 
         # PUSH edge: it is timestamped by git, so it resolves same-day ordering
         # that the date-only PULL edge cannot see.
@@ -2900,7 +8248,9 @@ def check_doc(path):
             rday = (rdate or _born or "")[:10]
             if dmoved > rday:
                 moved.append("%s moved %s" % (d, dmoved))
-            elif dmoved == rday and len(rdate) <= 10:
+            # `rdate or _born`: the baseline the line above measured from. `len(rdate)` raised
+            # TypeError for a never-reviewed entry on the day it was written (o9, 2026-10-01).
+            elif dmoved == rday and len(rdate or _born or "") <= 10:
                 # Same day, and the review carries only a DATE. o5: this is the one
                 # case the value genuinely cannot answer - so refuse, rather than
                 # interpret it in either direction.
@@ -2994,7 +8344,7 @@ def check_doc(path):
             # ⛔ THIS CHECK USED TO TEACH THE WRONG FORM, AND THAT IS WHY IT KEPT REAPPEARING.
             #
             # It detected a missing `~~` and said *"wrap it in ~~ ~~"*. Tildes give
-            # strike-through and NOTHING ELSE - no green tick, no grey.\1The human's rule is three
+            # strike-through and NOTHING ELSE - no green tick, no grey. The human's rule is three
             # marks, and greying is the one that makes settled items recede so an open one
             # stands out. So every session that obeyed this remedy produced one mark out of
             # three, and then tripped E-SETTLEDNOTSTRUCK, which asks for the checkbox.
@@ -3436,6 +8786,14 @@ def check_doc(path):
             # a bug caused by having two would be the same defect wearing a repair's clothes.
             if STAMP_LINE_RE.match(raw):
                 continue
+            # ⛔ A NOTE OR INSTRUCTION IS THE HUMAN'S TEXT, NEVER THE ORCHESTRATOR'S HISTORY. Found by
+            # o1, 2026-10-21: the check refused o1's landing over the word "superseded" in
+            # the human's own instruction on D50, a line the orchestrator is forbidden to edit. A
+            # note is stored as ONE file line (line breaks are `\n` escapes, see
+            # `encode_note_breaks`), so skipping the line skips every paragraph of it. This
+            # reuses `NOTE_LINE_RE`, the one definition of a protected note line.
+            if NOTE_LINE_RE.match(raw.rstrip()):
+                continue
             # Text INSIDE a multi-line struck span is part of the struck item, even when the
             # wrap happens to begin with a dash. L309 of o8's doc is the second half of a
             # settled sub-item's sentence and was flagged as history on its own.
@@ -3523,7 +8881,7 @@ def check_doc(path):
             "one paragraph, authored - what this orchestrator is FOR. It is the only part of "
             "the spine that cannot be generated, which is why it is the part that gets left"))
 
-    _span1 = section_span(lines, "1")
+    _span1 = section_span(lines, "1") if _wants("E-EMPTYLINKS") else None
     if _span1:
         _body1 = [l for l in lines[_span1[0] + 1:_span1[1]]
                   if l.strip() and not re.fullmatch(r"_.*_", l.strip())]
@@ -3629,7 +8987,7 @@ def check_doc(path):
     #
     # Fires only when the doc DOES cite assets elsewhere - an orchestrator that genuinely
     # owns no links should not be nagged.
-    for num, title, note in SCHEMA_SECTIONS:
+    for num, title, note in (SCHEMA_SECTIONS if _wants("W-EMPTYPROMISE") else ()):
         if num != "1":
             continue
         sp = section_span(lines, num)
@@ -3679,8 +9037,9 @@ def check_doc(path):
         # that discusses its own markers: describing a thing is not doing it.
         probe = re.sub(r"`[^`]*`", "", ln)
         probe = re.sub(r"[\"“‘'][^\"”’']{0,90}[\"”’']", "", probe)
+        # (?<![A-Z][A-Z]-): "AT-S5, line 3" is line 3 of the script AT-S5, not S5's (o9 F266)
         for m in re.finditer(
-                r"\*{0,2}([A-Z]{1,3}[-]?\d{1,3})\*{0,2}[^|\n]{0,18}?\(?\bline\s+(\d{1,4})\b",
+                r"\*{0,2}(?<![A-Z][A-Z]-)([A-Z]{1,3}[-]?\d{1,3})\*{0,2}[^|\n]{0,18}?\(?\bline\s+(\d{1,4})\b",
                 probe):
             eid, target = m.group(1), int(m.group(2))
             if eid not in own_ids:
@@ -3765,7 +9124,7 @@ def check_doc(path):
 
     if nums:                      # only judge docs that have opted into the schema
         want = [n for n, _t, _d in SCHEMA_SECTIONS]
-        missing = [n for n in want if n not in nums]
+        missing = [n for n in want if n not in nums and n not in OPTIONAL_SECTIONS]
         if missing:
             findings.append(Finding(
                 "E-SCHEMA", 0,
@@ -3835,7 +9194,8 @@ def check_doc(path):
         try:
             start, stop = _span
             rendered = lines[start:stop + 1]
-            expected = build_plate_block(entries, lines)
+            expected = build_plate_block([dict(e, body=e.get("raw_body", e["body"]))
+                                          for e in entries], lines)
             if rendered != expected:
                 findings.append(Finding(
                     "E-PLATEDRIFT", start + 1,
@@ -3934,7 +9294,7 @@ def check_doc(path):
         if in_fence:
             continue
 
-        # NO em-dash check.\1The human's scope ruling, 2026-08-06: em-dashes are ALLOWED in
+        # NO em-dash check. The human's scope ruling, 2026-08-06: em-dashes are ALLOWED in
         # internal writing, and an OrchDoc is internal. The ban exists to avoid the
         # "AI-giveaway" backlash among internet-consuming humans, which only exists where
         # the public reads. 643 advisory hits across these docs were masking real
@@ -3964,7 +9324,7 @@ def check_doc(path):
     # --- E-DEADREF / W-SHACITE: settle every SHA candidate against git, in ONE call ---
     # A SHA that still resolves is a rot RISK (advisory). A SHA that no longer resolves
     # is a dead pointer the reader cannot follow (blocking). Verified, never guessed.
-    if sha_candidates:
+    if sha_candidates and _wants("E-DEADREF", "W-CLOUDREF", "W-SHACITE"):
         toks = [t for _, t in sha_candidates]
         resolved = [False] * len(toks)
         settled = False
@@ -3986,12 +9346,34 @@ def check_doc(path):
                 break
         if not settled:
             resolved = [True] * len(toks)  # cannot settle it: do not accuse
+        # ⛔ "RESOLVES NOWHERE I CAN SEE" IS NOT "DOES NOT EXIST", AND ONLY ONE OF THEM IS
+        # E-DEADREF's TO REPORT. The block above already refuses to accuse when it could not
+        # settle ANY token; what it could not tell was the case where git answered cleanly
+        # about a world that is missing most of the repos and most of the history. In a cloud
+        # session that is every run: see `ref_settle_limits` for the 263-to-58 measurement.
+        #
+        # ⭐ THE DEMOTION IS CONDITIONED ON A MEASURED INCAPACITY, NOT ON THE ENVIRONMENT'S
+        # NAME. A cloud clone that was deep and did hold the sibling repos would get the full
+        # E-DEADREF back, because `ref_settle_limits()` would return "". So this cannot become
+        # a permanent excuse that follows the variable around - it expires the moment the
+        # environment can actually look.
+        #
+        # ⚠️ AND IT IS GATED ON cloud_mode() AS WELL, so the laptop answer cannot move. There,
+        # the siblings are present and the clone is complete, the limits are empty, and every
+        # line below takes exactly the branch it took before this comment existed.
+        _limits = ref_settle_limits() if (cloud_mode() and not all(resolved)) else ""
         for (lineno, tok), ok in zip(sha_candidates, resolved):
             if ok:
                 findings.append(Finding(
                     "W-SHACITE", lineno,
                     "citation by commit SHA rots on rebase; cite the commit SUBJECT",
                     tok))
+            elif _limits:
+                findings.append(Finding(
+                    "W-CLOUDREF", lineno,
+                    "cited commit resolves in no repo reachable from here - NOT reported "
+                    "as dead, because this environment cannot settle it",
+                    "%s - %s" % (tok, _limits)))
             else:
                 findings.append(Finding(
                     "E-DEADREF", lineno,
@@ -4038,6 +9420,137 @@ def check_doc(path):
                     "decision entry '%s' has no machine-readable Status field" % e["id"],
                     "add a line reading:  %s" % STATUS_CANONICAL))
 
+    # --- E-PICTUREPAGE: pictures for the human sit on a page of their own, not in the entry ---
+    #
+    # ⭐ the human's rule of 2026-09-29, quoted above PICTURES_HEAD_RE: pictures he is asked to look
+    # at go in the entry, folded, where he is already reading. A separate page is the thing he
+    # asked to stop. A link to the page may stay BESIDE the block; the block is what clears it.
+    #
+    # ⭐ BLOCKING, AND THE MEASUREMENT IS WHY IT CAN BE. 2026-09-29, every live entry in the
+    # eleven docs: 30 local .html mentions, 8 of them existing files named by unfinished
+    # entries, and exactly ONE a page of local pictures - o10's D116, the page the human was
+    # complaining about. o10 was sent the block for it before this landed. o1's W25 names 22
+    # saved web pages that hold <img> tags; they draw their pictures from the web, so
+    # `page_pictures` finds none and they do not count.
+    #
+    # --- W-PICTURENOTSHOWN: the same failure one picture at a time. An entry on the human's plate
+    # names a picture file by its path and never shows it, so he has to go and open it.
+    # ⚠️ ADVISORY ON PURPOSE, per W-DEADCITE's precedent: measured the same day, 3 live
+    # entries do it, all in o10's doc (D111, D116, D123), written before the rule existed.
+    # o10 was sent the list. Promote to BLOCKING when the fleet count is zero. Scoped to
+    # entries the human owns: in an orchestrator's own work entry a picture path is often just a
+    # file reference (o10's W201 names a feedback attachment), not something put to him.
+    #
+    # Both fail open on anything they cannot read, like E-WAKESOTHERS below: one unreadable
+    # page must not take `check` down for every orchestrator.
+    #
+    # ⭐ ONE FINDING PER PICTURE (o9, 2026-10-02). E-IMAGEBYPATH (`copy_guard_findings`, run
+    # here, before this loop) names a picture with its fix; W-PICTURENOTSHOWN does not name
+    # the same picture file in the same entry again. It still names what E-IMAGEBYPATH does
+    # not read, such as a picture in the human's own note.
+    _pic_reported = {}
+    _guard_found = (copy_guard_findings(_copy_guard_doc, entries, lines, reported=_pic_reported)
+                    if _wants("E-COPYBYLINK", "E-IMAGEBYPATH", "W-PASTEDRIFT",
+                              "W-PICTURENOTSHOWN") else [])
+    for e in (entries if _wants("E-PICTUREPAGE", "W-PICTURENOTSHOWN") else ()):
+        if e.get("archived") or status_of(e["body"]) in TERMINAL_STATUS:
+            continue
+        try:
+            _live = without_attestations(e["body"])
+            _pages = [] if pictures_blocks(_live) else picture_pages(_live)
+            _bare = pictures_not_shown(_live) if owner_is_drew(e["body"]) else []
+            _named = _pic_reported.get(e["line"], set())
+            _bare = [(w, p) for w, p in _bare if os.path.normcase(str(p)) not in _named]
+        except Exception as _e:
+            sys.stderr.write("[orchdoc] E-PICTUREPAGE could not run on %s %s: %s\n"
+                             % (path.name, e["id"], str(_e)[:160]))
+            continue
+        for _raw, _page, _pics in _pages[:1]:
+            findings.append(Finding(
+                "E-PICTUREPAGE", e["line"],
+                "%s sends the human to a separate page of %d picture%s instead of showing them in "
+                "the entry: %s" % (e["id"], len(_pics), "" if len(_pics) == 1 else "s", _raw),
+                "put them in a **Pictures:** block; `orchdoc.py pictures <page>` prints it"))
+        if _bare:
+            findings.append(Finding(
+                "W-PICTURENOTSHOWN", e["line"],
+                "%s names %d picture%s for the human by path without showing %s: %s"
+                % (e["id"], len(_bare), "" if len(_bare) == 1 else "s",
+                   "it" if len(_bare) == 1 else "them", _bare[0][0]),
+                "show it: ![what it shows](path), or several in a **Pictures:** block"))
+
+    # --- W-PICUNTRACKED (o9 W133, ruled 2026-10-21 02:28 PT): an embed of a picture that git
+    # neither tracks nor ignores. The Reader shows it from disk, but a commit of the doc does
+    # not take it, so it never reaches main; only the autosave ref holds it. ADVISORY. One git
+    # call per doc (`_untracked_embeds`); fails open like the checks around it.
+    if _wants("W-PICUNTRACKED"):
+        try:
+            _by_line = sorted(entries, key=lambda x: x["line"])
+            for _i, _u, _rel in _untracked_embeds(PROJECTS, lines):
+                _own = [x for x in _by_line if x["line"] - 1 <= _i]
+                _eid = _own[-1]["id"] if _own else "<entry id>"
+                _p = (Path(PROJECTS).resolve() / _rel)
+                findings.append(Finding(
+                    "W-PICUNTRACKED", _i + 1,
+                    "%s embeds %s, a picture git neither tracks nor ignores, so it will not "
+                    "land on main with this doc (only the hourly autosave ref holds it)"
+                    % (_eid, _rel),
+                    "%s; or keep the file where it is and commit it: git add %s"
+                    % (_command_or_why(_doc_slug(_copy_guard_doc.name), _eid, _p), _rel)))
+        except Exception as _e:
+            sys.stderr.write("[orchdoc] W-PICUNTRACKED could not run on %s: %s\n"
+                             % (_copy_guard_doc.name, str(_e)[:160]))
+
+    # --- W-ORCHNOTE (o9:W258): a `**NOTE from o<N>**` line. Notes are the human's channel to the
+    # orchestrators; `note` now refuses an orchestrator, so each one left is for its owner to
+    # clean up (`note --note <id> --delete` is allowed for a note an orchestrator wrote).
+    # ADVISORY. Fence-aware, as `parse_notes` is.
+    if _wants("W-ORCHNOTE"):
+        try:
+            for _n in parse_notes("\n".join(lines)):
+                if _ORCH_CALLER_RE.match(_n["who"]):
+                    findings.append(Finding(
+                        "W-ORCHNOTE", _n["line"],
+                        "note %s is labelled from %s; notes are the human's, not a session's"
+                        % (_n["nid"], _n["who"]),
+                        "move any status into the entry body (ticked box or dated line), any "
+                        "question into its own Q entry (`add --kind question`), then: "
+                        "orchdoc.py note --doc %s --note %s --delete"
+                        % (_copy_guard_doc.name, _n["nid"])))
+        except Exception as _e:
+            sys.stderr.write("[orchdoc] W-ORCHNOTE could not run on %s: %s\n"
+                             % (_copy_guard_doc.name, str(_e)[:160]))
+
+    # --- E-COPYBYLINK, E-IMAGEBYPATH, W-PASTEDRIFT (o9 W126, W127): see `copy_guard_findings`,
+    # run above W-PICTURENOTSHOWN so the two name each picture once.
+    findings.extend(_guard_found)
+
+    # --- E-WAKESOTHERS: a new mention of an id other docs cite (see wake_violations) ---
+    # ⚠️ A FAILURE HERE MUST NOT TAKE `check` DOWN - it did once, for every orchestrator, over a
+    # crash in one edge of E-STALEPROSE. So it reports on stderr and the rest of the check stands.
+    try:
+        findings.extend(wake_findings(path))
+    except Exception as _e:
+        sys.stderr.write("[orchdoc] E-WAKESOTHERS could not run on %s: %s\n"
+                         % (path.name, str(_e)[:160]))
+
+    # --- E-PRELABEL (o9:W210): a bare SC-1 / AT-3 in text this landing adds. Fails open too.
+    try:
+        findings.extend(prelabel_findings(path))
+    except Exception as _e:
+        sys.stderr.write("[orchdoc] E-PRELABEL could not run on %s: %s\n"
+                         % (path.name, str(_e)[:160]))
+
+    # --- E-BURIEDASK (o9:W219): a question for the human as an unchecked sub-item of a work entry.
+    try:
+        findings.extend(buried_ask_findings(path))
+    except Exception as _e:
+        sys.stderr.write("[orchdoc] E-BURIEDASK could not run on %s: %s\n"
+                         % (path.name, str(_e)[:160]))
+
+    if _upkeep is not None and (CHECK_ONLY is None
+                                or any(c.startswith("W-") for c in CHECK_ONLY)):  # the W- upkeep checks (orchdoc_upkeep.CODES) - all advisory, never blocking
+        findings.extend(_upkeep.check(path, lines, entries, sys.modules[__name__]))
     findings.sort(key=lambda f: (f.line, f.code))
     return findings
 
@@ -4051,11 +9564,135 @@ def git(args, cwd=PROJECTS):
     # Always-unknown is no more useful than always-current.
     cwd = PROJECTS if cwd is None else cwd
     try:
+        # `errors="replace"`: one byte the decoder cannot read, in a diff or a subject, raised
+        # UnicodeDecodeError and turned the whole answer into a failure (o9:W88 review).
         p = subprocess.run(["git", "-C", str(cwd)] + args,
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, errors="replace", timeout=60,
+                           creationflags=flags())
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
+
+
+#: Where this tool lives in the workspace, as `_refuse_if_tool_is_stale` compares it.
+TOOL_PATH = ".shared/scripts/orchdoc.py"
+#: Where its parts live (W136, see `_include`).
+_PARTS_REL = TOOL_PATH.rsplit("/", 1)[0] + "/" + PARTS_DIR_NAME
+
+
+def _part_blobs(tool, ref):
+    """[(path in the repo, this copy's blob, the ref's blob)] for each part the file at `tool`
+    includes, in include order. A blob is None where that side has no such file. When the file
+    includes no part, no git runs."""
+    try:
+        names = _INCLUDE_RE.findall(Path(tool).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return []
+    if not names:
+        return []
+    rels = ["%s/%s.py" % (_PARTS_REL, n) for n in names]
+    files = [Path(tool).parent / PARTS_DIR_NAME / (n + ".py") for n in names]
+    have = [f for f in files if f.is_file()]
+    rc, out, _e = (git(["hash-object", "--path", rels[0]] + [str(f) for f in have],
+                       cwd=PROJECTS) if have else (1, "", ""))
+    mine = dict(zip(have, out.split())) if rc == 0 else {}
+    rc, listing, _e = git(["ls-tree", "--full-name", ref, "--", _PARTS_REL + "/"],
+                          cwd=PROJECTS)
+    theirs = {}
+    for ln in listing.splitlines() if rc == 0 else []:
+        meta, _tab, path = ln.partition("\t")
+        if len(meta.split()) == 3:
+            theirs[path] = meta.split()[2]
+    return [(r, mine.get(f), theirs.get(r)) for r, f in zip(rels, files)]
+
+
+def _ref_has_parts(ref):
+    """True when `ref` holds at least one part file, so updating this tool means its parts
+    folder too."""
+    rc, out, _e = git(["ls-tree", "--name-only", "--full-name", ref, "--", _PARTS_REL + "/"],
+                      cwd=PROJECTS)
+    return rc == 0 and any(ln.endswith(".py") for ln in out.splitlines())
+
+
+def _refuse_if_tool_is_stale(ref=None, tool=None):
+    """None when this copy of the tool may land; otherwise why not, and what to run instead.
+
+    ⛔ A GUARD ONLY PROTECTS LANDINGS THAT RUN IT. On 2026-09-24 at 21:21 a lane landing
+    removed six of the human's notes from o8's doc; the fix that stops a landing doing that arrived
+    at 21:38 - and a lane in a worktree cut before 21:38 still runs the code from before it,
+    because each worktree carries its own copy of this file. Nothing compared that copy with
+    the one on the ref, so every fix to the landing path protected only the sessions that
+    happened to have it.
+
+    So the copy about to land is compared with `<ref>:.shared/scripts/orchdoc.py`:
+      * the same blob             -> None.
+      * a blob that is somewhere in the ref's history of that path, i.e. an OLDER version
+                                  -> the reason and the command to run instead.
+      * a blob on no commit of the ref - someone developing this file on a branch, which is
+        how builders test it       -> None, with a one-line note on stderr.
+      * nothing to compare (not a git workspace, or the ref has no such file) -> None.
+    When the two are the same blob, each part it includes (`_include`, W136) is compared with
+    the ref's part the same way, so a current file running a stale part is refused too.
+
+    `ref` is the caller's pinned commit, taken right after the caller's own fetch. This never
+    fetches: a `git fetch` to an unreachable host ignored a 5 s timeout and took 21 s on Windows
+    (o9 review, 2026-09-25). Git runs in PROJECTS, where every other landing git call runs;
+    notes go to stderr, never stdout, because `note --json` prints its answer there.
+
+    What the caller does with a stale copy is its own decision: `cmd_commit` refuses, and
+    `land_note` warns and lands anyway - its path builds from the canonical text behind a pinned
+    ref and a line-loss gate, and blocking the human's notes for minutes after every change to this
+    file cost more than it protected (71 of 100 worktrees held an older copy).
+    """
+    tool = Path(tool or __file__).resolve()
+    ref = ref or CANONICAL_REF
+    rc1, mine, _e1 = git(["hash-object", "--path", TOOL_PATH, str(tool)], cwd=PROJECTS)
+    rc2, tip, _e2 = git(["rev-parse", "--verify", "--quiet", "%s:%s" % (ref, TOOL_PATH)],
+                        cwd=PROJECTS)
+    if rc1 or rc2 or not mine or not tip:
+        return None
+    rel, what = TOOL_PATH, "this orchdoc.py"
+    if mine == tip:
+        # W136: the same orchdoc.py includes the same parts, so every part this copy runs must
+        # be the ref's too. The first that is not is judged below exactly as orchdoc.py is.
+        for prel, pmine, ptip in _part_blobs(tool, ref):
+            if pmine and ptip and pmine != ptip:
+                rel, mine, tip = prel, pmine, ptip
+                what = "this orchdoc.py's part %s" % prel.split("/", 2)[-1]
+                break
+        else:
+            return None
+    # Every blob this path has had on the ref, merges included. One call, ~0.4s.
+    rc3, raw, _e3 = git(["log", "-m", "--format=", "--raw", "--no-abbrev", "--no-renames",
+                         ref, "--", rel], cwd=PROJECTS)
+    seen = set()
+    for ln in raw.splitlines() if rc3 == 0 else []:
+        bits = ln.split()
+        if ln.startswith(":") and len(bits) >= 4:
+            seen.update(bits[2:4])
+    if mine not in seen:
+        sys.stderr.write("[orchdoc] note: %s (%s) is on no commit of %s - a branch "
+                         "copy, so it is not refused.\n" % (what, mine[:10], ref))
+        return None
+    tree = tool.parents[2]
+    _rc, common, _e = git(["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                          cwd=PROJECTS)
+    shared = Path(common).parent if common else None
+    lines = ["%s is an OLDER version than the one on %s (this copy %s, %s has %s):"
+             % (what, CANONICAL_REF, mine[:10], CANONICAL_REF, tip[:10]),
+             "the landing code has changed since this copy was taken."]
+    if shared and shared.resolve() != tree.resolve():
+        lines.append("Run the shared checkout's copy instead:  python %s %s" % (
+            (shared / TOOL_PATH).as_posix(), subprocess.list2cmdline(sys.argv[1:])))
+        # W136: a current orchdoc.py without its current parts fails at import, so once the
+        # ref has parts the command brings the folder too.
+        lines.append("or bring this tree's copy up to date:  git -C %s checkout %s -- %s"
+                     % (tree.as_posix(), CANONICAL_REF, TOOL_PATH + (
+                         " " + _PARTS_REL if rel != TOOL_PATH or _ref_has_parts(ref) else "")))
+    else:
+        lines.append("Bring the shared checkout up to date:  python %s --apply"
+                     % (tree / ".shared" / "scripts" / "deliver.py").as_posix())
+    return "\n".join(lines)
 
 
 def behind_canonical(cwd, fetch=True):
@@ -4105,7 +9742,7 @@ def git_stdin(args, payload, cwd=PROJECTS):
     """git with stdin, for batch verification in a single process."""
     try:
         p = subprocess.run(["git", "-C", str(cwd)] + args, input=payload,
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, timeout=60, creationflags=flags())
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
@@ -4168,8 +9805,10 @@ def check_freshness(path, ref=CANONICAL_REF):
     _, head_blob, _ = git(["rev-parse", "HEAD:%s" % rel])
     work_blob = ""
     try:
-        p = subprocess.run(["git", "-C", str(PROJECTS), "hash-object", str(path)],
-                           capture_output=True, text=True, timeout=30)
+        # `--path rel`: git looks .gitattributes up by the path it is given, and HEAD's blob
+        # was stored with the attributes of `rel`, not of an absolute path.
+        p = subprocess.run(["git", "-C", str(PROJECTS), "hash-object", "--path", rel, str(path)],
+                           capture_output=True, text=True, timeout=30, creationflags=flags())
         work_blob = p.stdout.strip()
     except Exception:
         pass
@@ -4197,7 +9836,8 @@ def report(path, findings, quiet=False, strict=False):
     o1: "an advisory finding in this system is a finding that does not exist" - 374
     advisory hits in its own doc, never acted on, and it only moved when the gate
     refused. The damage is not that advisory findings are ignored; it is that printing
-    them beside blocking ones trains the reader to scroll past the whole report\1The human's own rule, which o9 had not applied to its own output: failures at the top.
+    them beside blocking ones trains the reader to scroll past the whole report.
+    The human's own rule, which o9 had not applied to its own output: failures at the top.
     """
     name = path.name
     counts = defaultdict(int)
@@ -4213,11 +9853,21 @@ def report(path, findings, quiet=False, strict=False):
 
     if blocking:
         print("  [BLOCK] %s  -  %d blocking" % (name, len(blocking)))
+        _nn_shown = 0
         for f in blocking:
+            # o9:W88 - under --strict, W-PRODUCTNONEEDLE is capped: dozens of identical
+            # suggestions hide the findings around them. Only the display is cut.
+            if f.code == "W-PRODUCTNONEEDLE":
+                _nn_shown += 1
+                if _nn_shown > PRODUCT_NONEEDLE_STRICT_CAP:
+                    continue
             loc = ("line %d" % f.line) if f.line else "doc"
             print("          %-16s %-9s %s" % (f.code, loc, f.msg))
             if f.detail:
                 print("          %-16s %-9s   -> %s" % ("", "", f.detail[:100]))
+        if _nn_shown > PRODUCT_NONEEDLE_STRICT_CAP:
+            print("          %-16s %-9s and %d more W-PRODUCTNONEEDLE entries"
+                  % ("", "", _nn_shown - PRODUCT_NONEEDLE_STRICT_CAP))
         # ⛔ ONCE PER RUN, OUTSIDE THE TRUNCATED DETAIL. The hint was first appended to the
         # E-STALEPROSE remedy string - and `f.detail[:100]` above cut it off every time, so it
         # existed and reached nobody. That is the SAME defect the comment above `moved.append`
@@ -4228,15 +9878,34 @@ def report(path, findings, quiet=False, strict=False):
         # printed once and in full.
         if any(f.code == "E-STALEPROSE" and "#" not in (f.detail or "") for f in blocking):
             print("          note: an E-STALEPROSE above cites a FILE with no `#needle`, so ANY")
-            print("                commit to that file restales the entry. You CAN narrow it -")
-            print("                `**Depends:** path/to/doc.md#<id>` counts only commits")
-            print("                touching a line naming that id.")
+            print("                commit to that file restales the entry. You CAN narrow it:")
+            print("                     **Depends:** `path/to/doc.md#<id>`")
+            print("                counts only commits touching a line naming that id.")
+            print("          \u26d4 THE BACKTICKS GO ROUND THE PATH AND THEY ARE LOAD-BEARING.")
+            print("                A citation outside backticks does not parse. It is not a")
+            print("                narrowed edge and not a whole-file edge - it is NO edge, so")
+            print("                the entry can never restale and nothing ever says so.")
+            print("                This hint used to wrap the WHOLE LINE in backticks, so an")
+            print("                author following it exactly wrote the dead form. Measured")
+            print("                2026-09-21 over LIVE entries: 8 of 66 Depends lines naming")
+            print("                a file produced no citation at all.")
             print("          ⛔ BUT WORK THE ENTRY FIRST, AND NARROW ONLY WHAT STAYS NOISY.")
             print("                o10 worked nine of these on 2026-09-14 instead of narrowing")
             print("                or overriding: SEVEN carried a sentence that had gone FALSE.")
             print("                A ~78% hit rate on a check their doc had overridden 183")
             print("                times. Narrowing a high-hit-rate entry trades away the")
             print("                fires that were right.")
+        # Once per run and in full, for the reason given above the E-STALEPROSE note: the
+        # detail line is cut at 100 characters, and a page path does not fit in what is left.
+        if any(f.code == "E-PICTUREPAGE" for f in blocking):
+            print("          note: E-PICTUREPAGE - the human looks at pictures IN the entry, folded,")
+            print("                never on a page of their own (his rule, 2026-09-29). Print")
+            print("                the block to paste into the entry with:")
+            print('                  python .shared/scripts/orchdoc.py pictures "<the page named'
+                  ' above>" --what "<what they show>"')
+            print("                A link to the page may stay beside the block.")
+        print_copy_guard_remedies(blocking)   # o9 W126, W127: each command in full
+        print_wakes_refusal([f for f in blocking if f.code == "E-WAKESOTHERS"])
     else:
         print("  [warn]  %s  -  nothing blocking" % name)
 
@@ -4256,6 +9925,23 @@ def report(path, findings, quiet=False, strict=False):
         # the path OUT was.**
         print("          %d advisory finding(s) have LINE NUMBERS - see them with:  "
               "orchdoc.py check --doc <doc> --strict" % len(advisory))
+        # ⛔ ONCE PER RUN, FOR THE REASON THE E-STALEPROSE NOTE ABOVE GIVES: a per-finding
+        # detail is cut at 100 characters, so the ONE thing the reader has to know - that
+        # these are not findings about the document - cannot live there.
+        _cloudref = [f for f in advisory if f.code == "W-CLOUDREF"]
+        if _cloudref:
+            print("          note: %d citation(s) were downgraded from E-DEADREF because THIS"
+                  % len(_cloudref))
+            print("                environment cannot settle them, not because they are alive:")
+            print("                     %s" % (_cloudref[0].detail.split(" - ", 1)[-1]))
+            print("                They still block on the laptop, where the sibling repos and")
+            print("                the full history are present. A cloud session cannot clear")
+            print("                them and must not pretend it did.")
+        # o9:W88 - the one line a reader of `check` sees about product citations nobody can
+        # track. The per-entry suggestion prints on `restamp` and `commit`.
+        if adv.get("W-PRODUCTNONEEDLE"):
+            print("          %d entries cite product files with no #needle - staleness cannot"
+                  " be tracked for them" % adv["W-PRODUCTNONEEDLE"])
 
     return 1 if blocking else 0
 
@@ -4265,11 +9951,18 @@ def cmd_check(args):
     if not docs:
         print("no OrchDocs found", file=sys.stderr)
         return 2
-    print("orchdoc check - %d doc(s)%s" % (len(docs), "  [STRICT]" if args.strict else ""))
+    global CHECK_ONLY
+    only = getattr(args, "codes", None)
+    CHECK_ONLY = ({c.strip() for c in only.split(",") if c.strip()} or None) if only else None
+    print("orchdoc check - %d doc(s)%s%s" % (
+        len(docs), "  [STRICT]" if args.strict else "",
+        "  [CODES %s]" % ",".join(sorted(CHECK_ONLY)) if CHECK_ONLY else ""))
     worst = 0
     totals = defaultdict(int)
     for d in docs:
         f = check_doc(d)
+        if CHECK_ONLY is not None:
+            f = [x for x in f if x.code in CHECK_ONLY]
         for x in f:
             totals[x.code] += 1
         worst |= report(d, f, quiet=args.quiet, strict=args.strict)
@@ -4290,8 +9983,12 @@ def cmd_check(args):
     # 13 days old, so they stayed inside the window while being just as unfixable. **Age was
     # the wrong axis.** The question is not how old a commit is, it is whether the author can
     # still change it - and that is decided by whether it has landed, not by when.
-    _, _bad_local = touches_since(None, None, rev="%s..HEAD" % CANONICAL_REF)
-    _, _bad_all = touches_since(None, None)
+    # Narrowed by --codes: the trailer report below is not a finding with a code, so skip it.
+    if CHECK_ONLY is not None:
+        _bad_local, _bad_all = {}, {}
+    else:
+        _, _bad_local = touches_since(None, None, rev="%s..HEAD" % CANONICAL_REF)
+        _, _bad_all = touches_since(None, None)
     _unq = {t: v for t, v in _bad_local.items() if "unqualified" in v[2]}
     _old = {t: v for t, v in _bad_all.items()
             if "unqualified" in v[2] and t not in _unq}
@@ -4312,6 +10009,14 @@ def cmd_check(args):
         print("          rewriting shared history. Reported, not blocking.")
         for t, (when, subject, _why) in sorted(_old.items()):
             print("            %s  %s  (%s)" % (when[:10], t, subject[:52]))
+
+    # o9:W88 - product-repo citations that could not be checked, once each. Not blocking.
+    if PRODUCT_NOTES:
+        print()
+        print("  [note]  product-repo citations not checked for staleness:")
+        for (doc, label, why), n in sorted(PRODUCT_NOTES.items()):
+            print("            %s: %s - %s (%d cited path%s)"
+                  % (doc, label, why, n, "" if n == 1 else "s"))
 
     blk = {c: n for c, n in totals.items() if c in BLOCKING}
     adv = {c: n for c, n in totals.items() if c not in BLOCKING}
@@ -4362,11 +10067,29 @@ def resolve_docs(args):
 def cmd_selftest(args):
     """Synthetic fixtures. Each must produce exactly the code it is built to trip."""
     import tempfile
+    # E-NEEDLESPACE reports a citation only when the file it names exists in the workspace (a path
+    # that resolves to nothing is an ellipsis, not a citation). The author's workspace holds o10's
+    # OrchDoc. A copy used in another folder holds that folder's own OrchDocs, so the fixture cites
+    # one of those. With none to cite, the fixture is skipped and says so.
+    _ws_docs = sorted(p.name for p in Path(_find_workspace()).glob("ORCHESTRATOR-DECISIONS-o*.md"))
+    _needle_doc = ("ORCHESTRATOR-DECISIONS-o10.md" if "ORCHESTRATOR-DECISIONS-o10.md" in _ws_docs
+                   else (_ws_docs[0] if _ws_docs else None))
     cases = [
         ("E-DUPID",
          "## DECISIONS\n\n### D1 - first\n**Status:** OPEN\n\ntext\n\n"
          "### D1 - same id again\n**Status:** RESOLVED\n\ntext\n"),
         ("E-SELFCLAIM", "## DECISIONS - none open\n\nnothing here\n"),
+        # ⛔ THE FIXTURE IS THE WHOLE POINT HERE, because the shape of this defect is
+        # that it looks EXACTLY like a legitimate example - a heading, correctly formed,
+        # inside a fence. The fence below is what hid seventeen of the human's rulings and then
+        # D41. `parse_entries` will not return the entry; the raw scan will see the
+        # heading; the check is the disagreement between them.
+        ("E-HIDDENENTRY",
+         "## DECISIONS\n\n### D1 - a live one\n**Status:** OPEN\n\ntext\n\n"
+         "## §99 ARCHIVE\n\n```\n"
+         "### DONE - swallowed by the fence above  _(was D2 - RESOLVED)_\n"
+         "**Status:** RESOLVED\n\nthis entry is in the file and reachable by nothing\n"
+         "```\n"),
         # the human's D5 shape: the container says done, one sub-item says otherwise. This is what
         # o8 meant by "burying the majority of what is actually still owed" - it looks finished.
         ("E-CLOSEDWITHOPENSUBS",
@@ -4501,6 +10224,22 @@ def cmd_selftest(args):
         # and the entry is still OPEN, the work landed and the record did not. `cmd:` with a
         # command that exits 0 is the smallest condition that is true anywhere, so the fixture
         # tests the CHECK rather than the environment.
+        # \u26d4 BLOCKED AND SEQUENCED BOTH ASSERT THAT SOMETHING ELSE COMES FIRST. A status
+        # that never says WHAT is unfalsifiable - nobody can tell when it stops being true, so
+        # it rots in place looking current. Measured on o9:W25, 2026-09-18.
+        ("W-NOBLOCKER",
+         "## ON CLAUDE'S PLATE\n\n### W1 - blocked on nothing anyone can name\n"
+         "**Status:** BLOCKED - **Owner:** o9 - **Opened:** 2026-08-01\n\nbody\n"),
+        # \u26d4 W-NOPROV SHIPPED BLOCKING WITH NO FIXTURE and this meta-guard caught it the
+        # same day. Nothing distinguished it from E-ARCHIVEDMARKER, which shipped DEAD for a
+        # revision - visible in the file, permanently false. The case is o7's D4, which the
+        # rule was written from: a decision that closed by deciding to DEFER the work, leaving
+        # a sub-item that looks stale and is not.
+        ("W-NOPROV",
+         "## DECISIONS - need your call\n\n"
+         "### D1 - ruled, and the work it deferred is still owed\n"
+         "**Status:** RESOLVED - **Owner:** the human - **Opened:** 2026-08-01\n\n"
+         "- [ ] revisit the tax line as a CR test\n"),
         ("E-DONEBUTOPEN",
          "## DECISIONS - need your call\n\n### D1 - the work landed, the entry did not move\n"
          "**Status:** OPEN - **Owner:** the human - **Opened:** 2026-08-01\n\n"
@@ -4519,9 +10258,17 @@ def cmd_selftest(args):
         ("E-NEEDLESPACE",
          "## FINDINGS\n\n### F1 - a needle with a space\n"
          "**Status:** CONFIRMED - **Owner:** o9\n\n"
-         "narrowed to `ORCHESTRATOR-DECISIONS-o10.md#W6 -` which parses as nothing\n"),
+         "narrowed to `%s#W6 -` which parses as nothing\n"
+         % (_needle_doc or "ORCHESTRATOR-DECISIONS-o10.md")),
         ("E-BADTOUCH", None),
         ("E-NOFETCH", None),
+        # A new line naming an id that ANOTHER doc cites - needs a real repo holding both docs,
+        # so it is built in the loop below rather than written as a single document.
+        ("E-WAKESOTHERS", None),
+        # A bare SC-1 / AT-3 on a line this landing adds (o9:W210); a pure text fixture.
+        ("E-PRELABEL", None),
+        # A question for the human as an unchecked sub-item of a work entry (o9:W219); text fixture.
+        ("E-BURIEDASK", None),
         # o5: a bare date is only unanswerable when the contending work is same-day.
         ("E-AMBIGUOUSDATE",
          "## DECISIONS\n\n### D1 - verdict\n"
@@ -4571,6 +10318,10 @@ def cmd_selftest(args):
         ("W-BADLINEREF",
          "# t\n\n\n\n\n\n| blocking | **A1** (line 2) |\n\n## DECISIONS\n\n"
          "### A1 - the real location\n**Status:** OPEN - **Owner:** the human\n\nbody\n"),
+        # o9:W258: a note labelled from an orchestrator.
+        ("W-ORCHNOTE",
+         "## DECISIONS\n\n### D1 - a decision\n**Status:** OPEN - **Owner:** the human\n\nbody\n\n"
+         + render_note("D1.n1", "o7", "2026-10-24 10:00", "a status from a session") + "\n"),
         ("E-CONFLICT",
          "## DECISIONS\n\n### D1 - a decision\n<<<<<<< HEAD\n**Status:** OPEN\n"
          "=======\n**Status:** RESOLVED\n>>>>>>> other\n\nbody\n"),
@@ -4602,6 +10353,13 @@ def cmd_selftest(args):
     ]
     ok = True
     print("orchdoc selftest")
+    # ⛔ THE FIXTURES BELOW ARE THE LAPTOP'S ANSWERS, AND ONE OF THEM MOVES IN A CLOUD
+    # SESSION. `E-DEADREF`'s fixture cites `deadbeef1234567`, which a cloud session cannot
+    # settle and therefore reports as W-CLOUDREF - so `selftest` would FAIL here, on a
+    # correct tool, for the same reason `check` reported 263 dead pointers. The variable is
+    # cleared for the whole loop and the cloud behaviour gets its own paired cell below,
+    # which is the only shape that can assert BOTH answers in one run.
+    _saved_remote = os.environ.pop("CLAUDE_CODE_REMOTE", None)
     for want, body in cases:
         if body is None and want == "E-NOFETCH":
             # FUNCTIONAL assertion, not a document fixture: E-NOFETCH is emitted when the
@@ -4609,14 +10367,38 @@ def cmd_selftest(args):
             # bogus remote is the only honest test, and the meta-guard is right to demand
             # one - an untestable blocking code is indistinguishable from a dead one.
             d = Path(tempfile.mkdtemp())
-            git(["init", "-q", "."], cwd=d)
-            git(["remote", "add", "origin",
-                 "https://o9-nonexistent-host.invalid/x.git"], cwd=d)
-            reached, _why = fetch_ok(cwd=d)
+            try:
+                git(["init", "-q", "."], cwd=d)
+                git(["remote", "add", "origin",
+                     "https://o9-nonexistent-host.invalid/x.git"], cwd=d)
+                reached, _why = fetch_ok(cwd=d)
+            finally:
+                _remove_tree(str(d))
             good = (reached is False)      # an unreachable remote must report FAILURE
             ok &= good
             print("  [%s] %-12s -> unreachable remote reports FAILURE, not success"
                   % ("OK" if good else "FAIL", want))
+            continue
+
+        if body is None and want == "E-PRELABEL":
+            good = _selftest_prelabel()
+            ok &= good
+            print("  [%s] %-12s -> an added bare pre-label fires; an old one, or one in "
+                  "inline code, does not" % ("OK" if good else "FAIL", want))
+            continue
+
+        if body is None and want == "E-BURIEDASK":
+            good = _selftest_buried_ask()
+            ok &= good
+            print("  [%s] %-12s -> an added unchecked sub-item asking the human fires; a pointer to a "
+                  "Q entry, a checked box and an old sub-item do not" % ("OK" if good else "FAIL", want))
+            continue
+
+        if body is None and want == "E-WAKESOTHERS":
+            good = _selftest_wakes()
+            ok &= good
+            print("  [%s] %-12s -> a new quoted mention of a cited id fires; one of an id "
+                  "nobody cites does not" % ("OK" if good else "FAIL", want))
             continue
 
         if body is None:
@@ -4635,13 +10417,17 @@ def cmd_selftest(args):
             print("  [%s] %-12s -> %s" % ("OK" if good else "FAIL", want,
                                           "qualified/unqualified/invalid all classified"))
             continue
+        if want == "E-NEEDLESPACE" and _needle_doc is None:
+            print("  [SKIP] %-12s -> needs an OrchDoc in the workspace to cite; this folder has "
+                  "none" % want)
+            continue
         # The fixture file must be NAMED canonically or E-TITLE can never apply: the
         # check reads the EXPECTED identity from the filename, which is the whole point
         # of it. A random temp name made the check unreachable and the fixture green -
         # the same false-pass shape the meta-guard exists to catch.
         tmp = Path(tempfile.mkdtemp()) / "ORCHESTRATOR-DECISIONS-o99.md"
-        tmp.write_text(body, encoding="utf-8")
         try:
+            tmp.write_text(body, encoding="utf-8")
             codes = {f.code for f in check_doc(tmp)}
             # A fixture whose check CANNOT run here is SKIPPED, visibly - not failed, and
             # never silently passed. E-DEADREF settles SHAs against real git repos and
@@ -4663,10 +10449,43 @@ def cmd_selftest(args):
             print("  [%s] %-12s -> %s" % ("OK" if good else "FAIL", want,
                                           ",".join(sorted(codes)) or "none"))
         finally:
+            _remove_tree(str(tmp.parent))  # the fixture and the folder mkdtemp made for it
+    if _saved_remote is not None:
+        os.environ["CLAUDE_CODE_REMOTE"] = _saved_remote
+
+    # ⭐ THE SAME FIXTURE, BOTH WAYS, IN ONE CELL. A cloud relaxation is only safe if the
+    # laptop answer provably did not move, and the only way to show that is to run the one
+    # document under both settings and compare. Asserting the cloud half alone would pass
+    # just as happily if the demotion had leaked into every environment.
+    _dead = "## NOTES\n\nLanded in `deadbeef1234567` last week.\n"
+    tmp = Path(tempfile.mkdtemp()) / "ORCHESTRATOR-DECISIONS-o99.md"
+    tmp.write_text(_dead, encoding="utf-8")
+    try:
+        if not any((r / ".git").exists() for r in citable_repos()):
+            print("  [SKIP] %-12s -> needs a git repo to settle SHAs; not verifiable "
+                  "in this environment" % "cloud-ref")
+        else:
+            _was = os.environ.pop("CLAUDE_CODE_REMOTE", None)
+            laptop = {f.code for f in check_doc(tmp)}
+            os.environ["CLAUDE_CODE_REMOTE"] = "true"
             try:
-                tmp.unlink()
-            except (OSError, UnicodeDecodeError):
-                pass
+                cloud = {f.code for f in check_doc(tmp)}
+            finally:
+                os.environ.pop("CLAUDE_CODE_REMOTE", None)
+                if _was is not None:
+                    os.environ["CLAUDE_CODE_REMOTE"] = _was
+            # In the cloud the demotion only applies when the environment REALLY cannot
+            # settle a citation. A deep clone standing beside its siblings gets E-DEADREF
+            # in both columns, correctly, and that is a pass - not a silent skip.
+            want_cloud = "W-CLOUDREF" if ref_settle_limits() else "E-DEADREF"
+            good = ("E-DEADREF" in laptop and "W-CLOUDREF" not in laptop
+                    and want_cloud in cloud
+                    and (want_cloud == "E-DEADREF" or "E-DEADREF" not in cloud))
+            ok &= good
+            print("  [%s] %-12s -> unset=E-DEADREF, CLAUDE_CODE_REMOTE=true -> %s"
+                  % ("OK" if good else "FAIL", "cloud-ref", want_cloud))
+    finally:
+        _remove_tree(str(tmp.parent))  # the fixture and the folder mkdtemp made for it
 
     # ⛔ o11's FALSE POSITIVE, PINNED. An entry with checked AND unchecked boxes must NOT report
     # E-ALLSUBSDONE. It did, because the counter recognised `[x]` and had no way to recognise
@@ -4695,6 +10514,71 @@ def cmd_selftest(args):
         except (OSError, UnicodeDecodeError):
             pass
 
+    # ⭐ E-PICTUREPAGE, DRIVEN BOTH WAYS. It needs a real page with real pictures beside it,
+    # which a doc-string fixture cannot carry, so it gets its own block: the refusal first,
+    # then the same entry with the **Pictures:** block (the human's fix), a saved web page whose
+    # pictures come from the web, a finished entry, and a block joined to the paragraph above
+    # it, which the Reader would not fold and so must not clear the gate.
+    _fixtured_apart = set()    # blocking codes driven outside `cases`; the meta-guard counts them
+    _pd = Path(tempfile.mkdtemp(prefix="orchdoc-pics-"))
+    try:
+        (_pd / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (_pd / "shots.html").write_text('<img src="a.png" alt="version A">', encoding="utf-8")
+        (_pd / "saved.html").write_text('<img src="https://example.com/a.png">',
+                                        encoding="utf-8")
+
+        def _pic_codes(body, status="OPEN", owner="the human"):
+            # "the human" in the list below stands for the human this workspace is for. The check reads
+            # that person's configured name, so a copy used by anyone else has to write theirs.
+            if owner == "the human":
+                owner = human_name().title()
+            tmp = _pd / "ORCHESTRATOR-DECISIONS-o99.md"
+            tmp.write_text(canonical_title("o99", "a role") + "\n\n## DECISIONS\n\n"
+                           "### D7 - pick a card layout\n**Status:** %s - **Owner:** %s\n\n"
+                           "%s\n" % (status, owner, body), encoding="utf-8")
+            return {f.code for f in check_doc(tmp)}
+
+        _page = (_pd / "shots.html").as_posix()
+        _png = (_pd / "a.png").as_posix()
+        _block = "**Pictures:** the card\n![version A](%s)" % _png
+        # W-PICTURENOTSHOWN fires on a path in the human's own note, which E-IMAGEBYPATH does not
+        # read; on a path E-IMAGEBYPATH reports it is silent: one finding per picture (o9,
+        # 2026-10-02).
+        _drew_note = render_note("D7.n1", "the human", "2026-10-02 03:00", "the card is %s" % _png)
+        for _code, _label, _body, _st, _own, _want in [
+                ("E-PICTUREPAGE", "refuses a page", "See all of them: `%s`." % _page,
+                 "OPEN", "the human", True),
+                ("E-PICTUREPAGE", "block clears it",
+                 "See all of them: `%s`.\n\n%s" % (_page, _block), "OPEN", "the human", False),
+                ("E-PICTUREPAGE", "web page silent",
+                 "Saved: `%s`." % (_pd / "saved.html").as_posix(), "OPEN", "the human", False),
+                ("E-PICTUREPAGE", "finished silent", "See all of them: `%s`." % _page,
+                 "RESOLVED", "the human", False),
+                ("E-PICTUREPAGE", "joined block",
+                 "See all of them: `%s`.\nprose above\n%s" % (_page, _block), "OPEN", "the human",
+                 True),
+                ("W-PICTURENOTSHOWN", "path in the human's note", "The card.\n\n%s" % _drew_note,
+                 "OPEN", "the human", True),
+                ("W-PICTURENOTSHOWN", "shown clears it",
+                 "The card.\n\n%s\n\n![the card](%s)" % (_drew_note, _png), "OPEN", "the human",
+                 False),
+                ("W-PICTURENOTSHOWN", "not his: silent", "The card.\n\n%s" % _drew_note,
+                 "OPEN", "o99", False),
+                ("W-PICTURENOTSHOWN", "E-IMAGEBYPATH names it: silent",
+                 "The card: `%s`." % _png, "OPEN", "the human", False)]:
+            _fired = _code in _pic_codes(_body, _st, _own)
+            if _fired and _label == "refuses a page":
+                _fixtured_apart.add("E-PICTUREPAGE")   # only a refusal SEEN counts as cover
+            good = _fired == _want
+            ok &= good
+            print("  [%s] %-12s -> %s: %s" % ("OK" if good else "FAIL", _code,
+                                              _label, "fired" if _fired else "silent"))
+    finally:
+        _remove_tree(str(_pd))
+
+    ok &= _selftest_last_moved()        # o9 2026-10-01: a date still to come is not a move
+    ok &= _selftest_copy_guards(_fixtured_apart)   # o9 W126, W127: text and pictures in the entry
+
     # ⛔ THE COMMIT-ROLE CASE, WHICH SHIPPED WITH NO FIXTURE AND SHOULD NOT HAVE. o7 measured
     # E-STALEPROSE flagging entries for their own creation commits three times in twenty minutes;
     # the fix landed verified only by counts across six live docs.
@@ -4716,7 +10600,7 @@ def cmd_selftest(args):
 
                 def _g(*a):
                     return subprocess.run(["git", "-C", str(_repo)] + list(a),
-                                          capture_output=True, text=True)
+                                          capture_output=True, text=True, creationflags=flags())
 
                 _g("init", "-q")
                 _g("config", "user.email", "fixture@example.com")
@@ -4764,7 +10648,7 @@ def cmd_selftest(args):
                 print("  [SKIP] %-12s -> %s" % (_label, str(_e)[:60]))
             finally:
                 if _repo is not None:
-                    shutil.rmtree(str(_repo), ignore_errors=True)
+                    _remove_tree(str(_repo))    # the repo's object files are read-only
 
     # \u26d4 restamp's WRITE PATH, which cannot be honestly tested in a live document.
     # o1 tried and stopped: every entry in their doc is stamped and the gate passes, so
@@ -4960,7 +10844,9 @@ def cmd_selftest(args):
     # compares them mechanically, which is the same argument as the fixture meta-guard below -
     # the tool's own TEXT is an artifact, so it can be checked against the tool.
     try:
-        _src = pathlib.Path(__file__).read_text(encoding="utf-8", errors="replace")
+        # W136: this file AND its parts, in include order - a remedy moved into a part is
+        # still a remedy this file prints, and reading __file__ alone would pass it unchecked.
+        _src = tool_source()
         # ⛔ STRIP COMMENT LINES FIRST. This guard fired on its OWN comment - the
         # sentence explaining that a remedy named a nonexistent command reads, to a
         # matcher, exactly like a remedy naming it. Fourteenth description-vs-instance in
@@ -4989,7 +10875,7 @@ def cmd_selftest(args):
     # exactly how `orchdoc_stop_check.py` failed. A check with no fixture is presumed
     # dead, so an unfixtured blocking code now fails the selftest rather than being
     # trusted because it is visible in the file.
-    covered = {want for want, _ in cases}
+    covered = {want for want, _ in cases} | _fixtured_apart
     missing = sorted(BLOCKING - covered - {"E-IO", "E-STALE"})
     if missing:
         ok = False
@@ -5126,20 +11012,32 @@ def derived_spans(lines):
             spans.append(span)
     return spans, None
 
+# ⛔ `question` WAS MISSING, AND THAT IS WHY A QUESTION LANDED IN THE DECISIONS LIST.
+# The schema has a §2.2 Questions section and KIND_SECTION_NUM routes prefix Q to it, but
+# no --kind produced a Q - so `add` could FILE a question and not CREATE one. On
+# 2026-09-21 an orchestrator reached for `--kind decision --id Q2`, which was the only
+# command that yielded a Q id, and it routed by KIND into §2.1. The human saw it and asked
+# whether there was a guard.
+#
+# ⭐ The guard below it was worth adding, but this line is the cause. A tool that offers
+# no correct way to do a thing the schema describes has not made the mistake unlikely, it
+# has made it the only option.
 KIND_SECTION = {
     "decision": "DECISIONS",
+    "question": "QUESTIONS",
     "finding": "FINDINGS",
     "todo": "TO-DOS",
     "specimen": "SPECIMENS",
     "work": "ON CLAUDE'S PLATE",
+    "today": "DO TODAY",
 }
 # "todo" files to the HUMAN's plate (2.3). There was no kind meaning "my own work", so an
 # orchestrator capturing its own next step had only the kind that puts it in front of the
 # human - and the default silently pushed orchestrator work onto the plate, which is the exact
 # direction this schema exists to prevent. Found by using the tool: two of o9's own build items
 # landed in 2.3 within a minute of the sweep telling it 2.3 was correctly empty.
-KIND_PREFIX = {"decision": "D", "finding": "F", "todo": "T", "specimen": "S",
-               "work": "W"}
+KIND_PREFIX = {"decision": "D", "question": "Q", "finding": "F", "todo": "T",
+               "specimen": "S", "work": "W", "today": "N"}
 
 
 def _now_iso():
@@ -5197,7 +11095,7 @@ def resolve_doc_arg(val):
 
 
 
-def sanitize_field(text, limit=400):
+def sanitize_field(text, limit=400, strip_lead=True):
     """Narrow caller-supplied text so it cannot impersonate generated structure.
 
     Not an escape - a NARROWING. The result must be safe to place inside a heading or a
@@ -5221,7 +11119,10 @@ def sanitize_field(text, limit=400):
     # unicode escape at all - re rejects it as a bad escape - and ASCII also keeps this
     # safe on a cp1252 Windows console, where a stray glyph is its own crash.
     t = (text or "")
-    t = re.sub(r"[\r\n\t]+", " ", t)                       # a title is ONE line
+    # o9L1439: every character str.splitlines() breaks on, not only \r and \n. A U+2028 in
+    # pasted web copy left the file line whole to `split("\n")` and split it in two for every
+    # reader that uses splitlines().
+    t = re.sub(r"[\r\n\t\v\f\x1c-\x1e\x85  ]+", " ", t)   # a title is ONE line
     t = re.sub(r"ORCHDOC:([A-Z]+):(BEGIN|END)",             # cannot forge a marker
                r"ORCHDOC_\1_\2", t)
     t = t.replace("<!--", "<!- ").replace("-->", " -!>")    # cannot open/close a comment
@@ -5229,7 +11130,7 @@ def sanitize_field(text, limit=400):
     # This required `**Status:**` with both bold markers. `STATUS_RE` (244),
     # `REVIEWED_LABEL_RE` (509) and `DONE_WHEN_RE` (980) all spell the asterisks `\*{0,2}`,
     # so a plain `status: done` was not a field to the sanitiser and WAS a field to the
-    # parser.\1The human typed "this looks finished to me, status: done, ship it" into the reader's
+    # parser. The human typed "this looks finished to me, status: done, ship it" into the reader's
     # note box and the entry's Status became DONE - in the reader, in his plate, and in every
     # check. F192, reproduced in process against these functions.
     t = re.sub(r"\*{0,2}(Status|Owner|Opened|Depends|Touches|Attested-by|Reviewed|Resolved|"
@@ -5249,16 +11150,131 @@ def sanitize_field(text, limit=400):
             if _c < 0:
                 break
             t = t[:_c] + " -" + t[_c + 1:]
-    t = re.sub(r"^[\s#>*\-]+", "", t)                       # cannot become a heading
+    if strip_lead:
+        t = re.sub(r"^[\s#>*\-]+", "", t)                   # cannot become a heading
     t = re.sub(r"\s{2,}", " ", t).strip()
-    if len(t) > limit:
+    if limit is not None and len(t) > limit:
         t = t[:limit].rstrip() + "..."
     return t
 
 
+def refuse_if_too_long(text, limit, what):
+    """Return `text`, or exit with a message naming the field and both lengths.
 
-def write_doc(path, text):
+    ⛔ THE POINT IS THAT THE CALLER FINDS OUT. A cap is a legitimate design choice - a title
+    is an index entry and an unbounded one is a denial of service on a document meant to be read.
+    **What is never legitimate is applying it silently and reporting success**, because the writer
+    has no way to know and the loss surfaces weeks later as an unexplained gap.
+
+    ⭐ the human, via o10, 2026-09-17: *"We need to stop losing data."* The general rule, o10's
+    wording: a tool that stores what a human wrote must never silently shorten it - refuse, or
+    store it whole. **A refusal costs one retry.**
+    """
+    t = (text or "")
+    if len(t) <= limit:
+        return t
+    print("REFUSING: --%s is %d characters and the limit is %d." % (what, len(t), limit),
+          file=sys.stderr)
+    print(file=sys.stderr)
+    print("    Nothing was written. This field is capped because it renders as a single",
+          file=sys.stderr)
+    print("    line a reader scans, not because your text is unwelcome - put the detail in",
+          file=sys.stderr)
+    print("    the entry body, which has no limit.", file=sys.stderr)
+    print(file=sys.stderr)
+    print("    It used to CUT at %d and report success. 138 rulings and 96 override reasons"
+          % limit, file=sys.stderr)
+    print("    across the fleet were shortened that way before anybody noticed.",
+          file=sys.stderr)
+    print(file=sys.stderr)
+    print("    The last %d characters, so you can see what would have gone:" % min(len(t) - limit, 160),
+          file=sys.stderr)
+    print("      ...%s" % t[limit:][:160], file=sys.stderr)
+    sys.exit(2)
+
+
+def sanitize_body(text):
+    """The same NARROWING as `sanitize_field`, for prose that must survive whole.
+
+    ⛔ WHY THIS EXISTS - o7 FOUND IT IN THEIR OWN RECORD, 2026-09-17. `resolve --ruling` called
+    the TITLE sanitiser, so a ruling was cut at 400 characters and given a trailing "...".
+    o7's D29 ended mid-sentence on the literal word "because"; my own D30 was cut the same way.
+    **Neither caller was told.**
+
+    ⭐ THE LENGTH CAP IS RIGHT FOR A TITLE AND WRONG FOR A RULING, and reusing one function for
+    both is what made a reasonable rule apply where it does harm. A title is an index entry, and
+    an unbounded one is a denial of service on a document meant to be read. A ruling is the
+    RECORD - the thing the document exists to hold.
+
+    ⛔ AND WHAT GETS CUT IS THE WORST HALF. A ruling is written decision-first, reasoning-after,
+    so a tail truncation keeps WHAT was decided and destroys WHY - which is precisely what
+    `E-STALEPROSE` and every `--because` in this tool exist to preserve. The loss is silent at
+    write time and surfaces weeks later as an unexplained gap between an instruction and the code.
+
+    ⚠️ NEWLINES ARE KEPT HERE, so the per-line heading strip is not optional. `sanitize_field`
+    collapses newlines and can therefore strip a leading `#` once; a body keeps its lines, so a
+    LATER line beginning with `#` would become a heading. Every line is narrowed, not just the
+    first.
+    """
+    t = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"ORCHDOC:([A-Z]+):(BEGIN|END)", r"ORCHDOC_\1_\2", t)
+    t = t.replace("<!--", "<!- ").replace("-->", " -!>")
+    t = re.sub(r"\*{0,2}(Status|Owner|Opened|Depends|Touches|Attested-by|Reviewed|Resolved|"
+               r"Recorded|Enriched|Done-when)\*{0,2}\s*:", r"(\1:)", t, flags=re.IGNORECASE)
+    for _rx in (STATUS_RE, REVIEWED_LABEL_RE, DONE_WHEN_RE):
+        for _ in range(64):                                 # bounded: never loop on input
+            _m = _rx.search(t)
+            if not _m:
+                break
+            _c = t.find(":", _m.start())
+            if _c < 0:
+                break
+            t = t[:_c] + " -" + t[_c + 1:]
+    # Per line, because a body keeps its newlines. A blank line stays blank so paragraphs survive.
+    out = []
+    for line in t.split("\n"):
+        out.append(re.sub(r"^[\s#>]+", "", line).rstrip())
+    t = "\n".join(out).strip()
+    return t
+
+
+
+#: o9cL1: how often `write_doc` tries os.replace again when Windows refuses it because another
+#: process (the Reader reading the doc for a page, an editor, a virus scanner) has the file open.
+REPLACE_RETRIES = 5
+
+
+def _replace_retry(src, dst, tries=None, pause=0.05):
+    """os.replace, tried again a few times, 50 ms, 100 ms, ... apart, on PermissionError only.
+    On Windows a replace fails with PermissionError while any process holds the target open
+    without FILE_SHARE_DELETE; that hold lasts milliseconds, and a save should not fail on it."""
+    tries = REPLACE_RETRIES if tries is None else tries
+    for i in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(pause * (i + 1))
+
+
+def write_doc(path, text, expect=None):
     """Write atomically. A partial OrchDoc is worse than a failed command.
+
+    ⛔ `expect` IS THE TEXT THE CALLER READ, AND PASSING IT TURNS A LOST UPDATE INTO A REFUSAL.
+    Several callers read the whole document, edit lines in memory, and write the whole thing
+    back. A landing that arrives between that read and this write is ERASED - not merged over,
+    erased, because the caller's copy never contained it. Eleven sessions write these documents
+    concurrently and one of them commits every two to three minutes.
+
+    When `expect` is given and the file on disk no longer matches it, the caller is holding a
+    stale copy and has nothing correct left to write, so this refuses rather than overwriting.
+    Re-running reads the current file.
+
+    ⚠️ THIS DETECTS THE RACE; IT DOES NOT PREVENT IT. Prevention is `with _lock(doc):` around
+    the whole read-modify-write, which seven writers already do. `expect` is what the long
+    functions can adopt without re-indenting a 690-line body to fix a race.
 
     Every write here was read-modify-write straight onto the real file, so an interrupt, a
     full disk or a crash mid-write left a TRUNCATED document - and the document is the
@@ -5269,13 +11285,23 @@ def write_doc(path, text):
     Beside the target, not in $TMP, because a cross-volume replace is not atomic.
     """
     path = Path(path)
+    if expect is not None:
+        try:
+            _current = path.read_text(encoding="utf-8")
+        except OSError:
+            _current = None
+        if _current is not None and _current != expect:
+            raise DocPathError(
+                "%s changed on disk while this command was working on it. Another session "
+                "landed between the read and the write, so writing now would erase it. "
+                "Nothing was written - re-run, and the rebuild will carry both." % path.name)
     tmp = path.with_name(path.name + ".orchdoc-tmp-%d" % os.getpid())
     try:
         with open(tmp, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(str(tmp), str(path))
+        _replace_retry(str(tmp), str(path))
     except OSError as e:
         try:
             tmp.unlink()
@@ -5422,7 +11448,7 @@ def cmd_sessions(args):
 
     ⭐ THE ALARM FOR A FAILURE THAT IS OTHERWISE SILENT. The Stop hook identifies a session
     from its NAME, so a rename the matcher cannot parse makes that session invisible to the
-    hook - and invisible looks exactly like "not an orchestrator".\1The human, 2026-09-04, having
+    hook - and invisible looks exactly like "not an orchestrator". The human, 2026-09-04, having
     prefixed his session names with hyphens and periods: *"there may be others later."*
 
     Widening the matcher covers the prefixes anyone thought of. This covers the one nobody did,
@@ -5438,10 +11464,9 @@ def cmd_sessions(args):
 
     seen = {}
     try:
-        for f in APP_SESSIONS.rglob("local_*.json"):
-            try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
+        for f in _app_session_files():
+            d = session_head(f)
+            if d is None:
                 continue
             title = (d.get("title") or "").strip()
             m = TITLE_ID.match(title)
@@ -5569,10 +11594,14 @@ def cmd_registry(args):
                 else:
                     claims.setdefault(repo, []).append(oid)
     clash = {r: sorted(set(o)) for r, o in claims.items() if len(set(o)) > 1}
+    # Every ERROR is also collected for the one-line summary printed last. See the end of
+    # this function for why the LAST line has to carry it.
+    errors = []
     if clash:
         rc = 1
         print()
         for repo, owners in sorted(clash.items()):
+            errors.append("%s is claimed by %s" % (repo, " and ".join(owners)))
             print("  [ERROR] %s is claimed by %s" % (repo, " and ".join(owners)))
         print("          Two rows naming one repo is a conflict, not a division of labour -")
         print("          a lane reading either row concludes it owns the whole thing.")
@@ -5596,6 +11625,7 @@ def cmd_registry(args):
     if dead:
         rc = 1
         for oid, t_ in dead:
+            errors.append("%s is terminal and points at %s, which has no OrchDoc" % (oid, t_))
             print("  [ERROR] %s is terminal and points at %s, which has no OrchDoc" % (oid, t_))
     else:
         print("  [ok] every terminal row points at a doc that exists")
@@ -5609,12 +11639,30 @@ def cmd_registry(args):
         repos = []
     low = text.lower()
     unowned = [r for r in repos if r.lower() not in low]
+    # Every name, not the first six: the old `[:6]` printed "7 of 12" beside six names and no
+    # word that one was missing.
     print("  [note] %d of %d declared product repo(s) are named in no row: %s"
-          % (len(unowned), len(repos), ", ".join(sorted(unowned)[:6]) or "-"))
+          % (len(unowned), len(repos), ", ".join(sorted(unowned)) or "-"))
     print("         Not an error - most should not have one. It is the number to watch when a")
     print("         repo starts getting real work and nobody has said whose it is.")
     if unowned and getattr(args, "strict", False):
         rc = 1
+        errors.append("--strict: %d declared repo(s) named in no row" % len(unowned))
+
+    # ⛔ THE LAST LINE IS THE ONE A ROUTINE RUN SHOWS. `morning_self_heal.py` runs this daily
+    # (o9:W82) and records only the final line of its output, in its log and status file.
+    # Before this summary, that line was the note above - so a real conflict would have
+    # reached the log as "repo starts getting real work and nobody has said whose it is",
+    # with the ERROR itself further up and never read. The notes stay notes: they do not
+    # change the exit code and they are not in this line.
+    # The COUNT goes first: the worker keeps 200 characters of this line, so with three or
+    # more errors the list is cut and only what comes before it survives (o9's review).
+    if errors:
+        print("registry: FAILED - %d error%s - %s"
+              % (len(errors), "" if len(errors) == 1 else "s", "; ".join(errors)))
+    else:
+        print("registry: ok - no repo claimed twice, every terminal row points at a doc "
+              "(%d handover note(s), %d repo(s) with no row)" % (len(notes), len(unowned)))
     return rc
 
 
@@ -5706,6 +11754,20 @@ def cmd_add(args):
     if refuse_if_not_mine(doc, "add", getattr(args, "not_mine", False)):
         return 1
 
+    # ⛔ NO BARE PRE-LABEL IN A TITLE (the human, 2026-10-13, o9:W210). See E-PRELABEL. Checked first:
+    # it needs no git or network, and nothing has been written yet.
+    import orchdoc_ids
+    _pl = orchdoc_ids.bare_pre_labels(getattr(args, "title", "") or "")
+    if _pl:
+        print("[REFUSE] E-PRELABEL: the title names a script by pre-label %s."
+              % ", ".join(sorted({lab for lab, _o in _pl})), file=sys.stderr)
+        for _lab in sorted({lab for lab, _o in _pl}):
+            print("         %s -> %s" % (_lab, prelabel_advice(_lab)), file=sys.stderr)
+        print("         the human reads OrchDocs in the Reader and cannot tell which script a"
+              " pre-label means.\n         Keep it inside inline code if it is for your own"
+              " notes. Nothing was written.", file=sys.stderr)
+        return 1
+
     # ⛔ THE ALLOCATOR COUNTS FROM THE FILE IT CAN SEE, SO A STALE TREE MINTS COLLIDING IDS.
     #
     # Measured 2026-09-06. Two lanes wrote the human's personal scripts on the same day. Each ran
@@ -5730,8 +11792,25 @@ def cmd_add(args):
                   " already\n         belongs to someone else, and nothing downstream would"
                   " catch it.", file=sys.stderr)
             print("\n         Nothing was written.", file=sys.stderr)
-            print("\n         DO THIS:  git -C %s pull --ff-only" % doc.parent, file=sys.stderr)
-            print("         Then run the same `add` again.", file=sys.stderr)
+            # \u26d4 DO NOT RECOMMEND A PULL HERE. o11 measured the shared checkout at 406
+            # commits behind with `git pull --ff-only` ABORTING - 252 dirty paths, and files
+            # that exist both untracked on disk and committed on the ref, so git refuses rather
+            # than clobbering. Telling a reader to pull hands them a second error and no way
+            # forward, leaving --allow-stale as the only remaining door: the exact escape this
+            # message exists to steer them away from.
+            #
+            # \u2b50 A fresh worktree at the ref needs no pull, is unaffected by whatever is
+            # dirty in the shared tree, and cannot touch a neighbour's uncommitted work - which
+            # is why it succeeds where the pull refuses.
+            print("\n         DO THIS - a worktree at the ref, which needs no pull:",
+                  file=sys.stderr)
+            print("           git -C %s worktree add --detach /tmp/od %s"
+                  % (doc.parent, CANONICAL_REF), file=sys.stderr)
+            print("           cd /tmp/od   # then run the same `add` here", file=sys.stderr)
+            print("\n         A pull is NOT the fix and will usually abort: the shared"
+                  " checkout carries\n         other sessions' uncommitted work, and"
+                  " `--ff-only` refuses rather than\n         clobbering it. Do not move their"
+                  " files to unblock it.", file=sys.stderr)
             print("\n         Genuinely need to capture from this tree - offline, or a"
                   " deliberate\n         historical entry? Pass --allow-stale. Then VERIFY the"
                   " id it returns is\n         free on %s before you write it anywhere."
@@ -5771,26 +11850,23 @@ def cmd_add(args):
     # So: generic names in code, the workspace's own aliases from the vocabulary. Both copies
     # are then correct, and the sanitised default is already in the generic half.
     if args.kind == "decision":
-        human_owners = {"human", "the human", "user", "owner"}
-        try:
-            import json as _json
-            _voc = Path(__file__).resolve().parent / "facets_vocabulary.json"
-            human_owners |= {str(n).lower()
-                             for n in _json.loads(_voc.read_text(encoding="utf-8"))
-                             .get("human_owner_aliases", [])}
-        except Exception:
-            pass                      # no vocabulary: the generic names still work
-        owner = (args.owner or "the human").strip()
+        # The generic words, plus the names `human_owner_names()` gives the human (the name in
+        # `.orchdoc-config.json` or on the Claude Code account, and the vocabulary's aliases).
+        # The DEFAULT owner is the same `human_name()` the entry is written with below, so the
+        # default always passes this test, in the author's workspace and in anyone else's.
+        human_owners = {"human", "the human", "user", "owner"} | human_owner_names()
+        owner = (args.owner or human_name().title()).strip()
         if owner.lower() not in human_owners:
-            print("[REFUSE] --kind decision puts this in §2, which is THE HUMAN'S PLATE - but "
-                  "you set --owner %s." % owner, file=sys.stderr)
+            _who = human_name()
+            print("[REFUSE] --kind decision puts this in §2, which is %s'S PLATE - but "
+                  "you set --owner %s." % (_who, owner), file=sys.stderr)
             print("         The namespace follows the OWNER, not the word 'decision'. A call "
                   "you made\n         and shipped is your WORK, even though deciding it felt "
                   "like a decision.", file=sys.stderr)
-            print("         D<n> = the human has to rule on it.  W<n> = you own it.",
+            print("         D<n> = %s has to rule on it.  W<n> = you own it." % _who.title(),
                   file=sys.stderr)
             print("\n         Use:  --kind work --owner %s" % owner, file=sys.stderr)
-            print("         Or drop --owner if the human genuinely has to rule on this.",
+            print("         Or drop --owner if %s genuinely has to rule on this." % _who.title(),
                   file=sys.stderr)
             return 1
 
@@ -5833,15 +11909,62 @@ def cmd_add(args):
             print("         Pass --id %s<n> instead if you want that exact id in the section\n"
                   "         --kind %s routes to." % (args.prefix, args.kind), file=sys.stderr)
             return 1
+        # ⛔ AND --id IS THE DOOR THE --prefix GUARD ABOVE POINTS AT. Its own refusal says
+        # *"Pass --id <prefix><n> instead if you want that exact id in the section --kind
+        # routes to"* - so the guarded path recommended the unguarded one, and on
+        # 2026-09-21 an orchestrator ran `add --kind decision --id Q2`, which routed by
+        # KIND to §2.1 while the id said Q. The human saw a question sitting in his decisions
+        # list and asked whether there was a guard. There was one, for the other flag.
+        #
+        # ⭐ REFUSED ONLY WHEN A KIND OWNS THE PREFIX, which is what makes this decidable
+        # without judgement: `Q` belongs to --kind question, so naming a different kind is
+        # a mistake rather than a choice. A prefix no kind owns is still allowed through -
+        # that is the genuine "custom id in this section" case the message offers.
+        #
+        # ⚠️ IT HAS TO BE HERE RATHER THAN IN `check`. I measured the checking version
+        # first: over the whole fleet a "prefix disagrees with its §2 subsection" rule
+        # produced exactly one hit, and it was FALSE - o1's T11 in a §2.4 they built on
+        # purpose. A check reads structure and cannot tell misfiled from deliberately
+        # organised; `add` has the author's stated intent in front of it. Same reason
+        # E-WRONGSECTION is scoped to the human's T namespace and nothing wider.
+        if args.id:
+            _im = re.match(r"^([A-Z]{1,2})\d", args.id)
+            _ip = _im.group(1) if _im else None
+            if _ip and _ip != prefix:
+                _owner = [k for k, p in KIND_PREFIX.items() if p == _ip]
+                if _owner:
+                    print("[REFUSE] --id %s starts with %s, but --kind %s files into the "
+                          "section for\n         prefix %s. The entry would be NUMBERED %s "
+                          "and PLACED where %s belongs."
+                          % (args.id, _ip, args.kind, prefix, args.id, prefix),
+                          file=sys.stderr)
+                    print("         That is how a question lands in the decisions list, "
+                          "which the human reads\n         as things needing his ruling.",
+                          file=sys.stderr)
+                    print("         Prefix %s belongs to --kind %s - use that kind, and the "
+                          "id and the\n         section will agree."
+                          % (_ip, "|".join(_owner)), file=sys.stderr)
+                    return 1
         eid = args.id or next_id(entries, prefix, text)
         if any(e["id"] == eid for e in entries):
             print("[REFUSE] id %s already exists in %s - ids are never reused"
                   % (eid, doc.name), file=sys.stderr)
             return 1
 
-        today = args.date or _today()
+        # ⛔ THE FULL TIME, NOT THE DATE. The human, 2026-09-17: *"add time stamps to all
+        # §2 and §3 items in the Orchdoc moving forward."* An item has an AGE and
+        # nothing recorded it - o1 measured a sub-item whose figure sat unchanged for five
+        # weeks, read as current, and was wrong in both directions when re-run.
+        # `--date` still wins, for a deliberate historical capture.
+        today = args.date or _now_iso()
         # Whoever this install belongs to, not a hardcoded name.
-        owner = args.owner or (human_name().title() if args.kind == "decision"
+        # ⛔ EVERY KIND THAT LANDS IN THE HUMAN'S SECTIONS (§2.1 decisions, §2.2 questions, §2.3
+        # to-dos) DEFAULTS TO HIM. Only decisions did, so `add --kind todo` filed an item in
+        # §2.3 owned by "orchestrator" - and the plate selects on Owner, so it never reached
+        # him. o8's W-sweep found T17 and T18 created that way to lift items onto his plate;
+        # the upkeep check (W-PLATEOWNER) then found o1:T22 and o9:T9 (o9:W76).
+        owner = args.owner or (human_name().title()
+                               if args.kind in ("decision", "question", "todo", "today")
                                else "orchestrator")
 
         entry = [
@@ -5855,7 +11978,7 @@ def cmd_add(args):
             # it teaches the user that red means "normal", and then it cannot warn them
             # about anything. Emit the correct state; do not report the wrong one.
             "### %s %s - %s" % (STATUS_MARKER["OPEN"], eid,
-                                sanitize_field(args.title, 200)),
+                                sanitize_field(refuse_if_too_long(args.title, 200, "title"), 200)),
             "",
             "**Status:** OPEN - **Owner:** %s - **Opened:** %s - **Enriched:** NO"
             % (owner, today),
@@ -5866,62 +11989,77 @@ def cmd_add(args):
         ]
 
         want = KIND_SECTION[args.kind]
-        target = None
-
-        # ⛔ RESOLVE BY SECTION NUMBER FIRST. The schema deliberately gives the live and
-        # completed sections the SAME titles - "§2.1 Decisions" and "§99.1 Decisions" -
-        # because that symmetry is what makes `archive` a mechanical MOVE rather than a
-        # judgement call. But it also made the title ambiguous, and this loop took the
-        # LAST match with no break, so every newly captured OPEN decision was filed under
-        # §99 COMPLETED: invisible on the plate, and not flagged by `check`, because a
-        # decision sitting in a completed section is exactly what that section is for.
-        #
-        # ⭐ The symmetry that made archiving mechanical made filing ambiguous. A design
-        # that removes one judgement call can silently create another somewhere else.
-        live_num = KIND_SECTION_NUM.get(prefix[0], (None, None))[0]
-        if live_num:
-            for s in sections:
-                if s["level"] == 2 and re.match(r"^\W*\s*§?\s*%s\b" % re.escape(live_num),
-                                                s["title"]):
-                    target = s
-                    break
-
-        if target is None:
-            for s in sections:
-                # level 2 only. Matching any heading let the h1 "Orchestrator DECISION
-                # Doc" capture every decision and file it at the top of the document.
-                # FIRST match, not last: on a schema doc the live section always precedes
-                # its §99 counterpart.
-                if s["level"] == 2 and want.rstrip("S") in s["title"].upper():
-                    target = s
-                    break
-        if target is None:
-            lines += ["", "## %s" % want, ""]
-            insert_at = len(lines)
-        else:
-            # ⛔ A SECTION ENDS AT THE NEXT SCHEMA SECTION, NOT AT THE NEXT `##`. `parse_entries`
-            # calls every heading of level <= 2 a section, and entry BODIES in this doc use `##`
-            # sub-headings freely - 19 of the 32 `##` lines in o9's doc are inside an entry. So
-            # the old scan inserted the new stub in the MIDDLE of the last entry, and every
-            # sub-heading below the split silently became the new entry's body.
-            #
-            # Measured 2026-09-08: adding F121 reparented six of F120's sub-sections. The gate
-            # did not object - both entries still parsed, both still had a status line - so the
-            # only signal was reading the file.
-            #
-            # ⭐ Schema sections all carry `§`; body sub-headings never do. Fall back to the old
-            # scan when no later `§` section exists, so a doc that does not use the schema is
-            # placed exactly as before rather than dumped at EOF.
-            insert_at = len(lines)
-            later = [s for s in sections if s["line"] > target["line"]]
-            schema = [s for s in later if "§" in s["title"]]
-            for s in (schema or later):
-                insert_at = s["line"] - 1
-                break
-
+        insert_at, target = _section_insert_at(lines, sections, args.kind, prefix)
         out = lines[:insert_at] + entry + lines[insert_at:]
+        # o9 W126, W127: a title that sends the human to a file or URL for text he copies, or names
+        # a picture by its path, is refused here, with the command to run instead.
+        if _write_guard_refuses(doc, text, "\n".join(out) + "\n", "add"):
+            return 1
         write_doc(doc, "\n".join(out) + "\n")
 
+    return _add_report(args, doc, eid, target, want)
+
+
+def _section_insert_at(lines, sections, kind, prefix):
+    """(insert_at, target_section) for a new entry of `kind`, 0-indexed. Appends a `##`
+    heading to `lines` when the doc has no section for it. Shared by `add` and `instruct`."""
+    want = KIND_SECTION[kind]
+    target = None
+    # ⛔ RESOLVE BY SECTION NUMBER FIRST. The schema deliberately gives the live and
+    # completed sections the SAME titles - "§2.1 Decisions" and "§99.1 Decisions" -
+    # because that symmetry is what makes `archive` a mechanical MOVE rather than a
+    # judgement call. But it also made the title ambiguous, and this loop took the
+    # LAST match with no break, so every newly captured OPEN decision was filed under
+    # §99 COMPLETED: invisible on the plate, and not flagged by `check`, because a
+    # decision sitting in a completed section is exactly what that section is for.
+    #
+    # ⭐ The symmetry that made archiving mechanical made filing ambiguous. A design
+    # that removes one judgement call can silently create another somewhere else.
+    live_num = KIND_SECTION_NUM.get(prefix[0], (None, None))[0]
+    if live_num:
+        for s in sections:
+            if s["level"] == 2 and re.match(r"^\W*\s*§?\s*%s\b" % re.escape(live_num),
+                                            s["title"]):
+                target = s
+                break
+
+    if target is None:
+        for s in sections:
+            # level 2 only. Matching any heading let the h1 "Orchestrator DECISION
+            # Doc" capture every decision and file it at the top of the document.
+            # FIRST match, not last: on a schema doc the live section always precedes
+            # its §99 counterpart.
+            if s["level"] == 2 and want.rstrip("S") in s["title"].upper():
+                target = s
+                break
+    if target is None:
+        lines += ["", "## %s" % want, ""]
+        insert_at = len(lines)
+    else:
+        # ⛔ A SECTION ENDS AT THE NEXT SCHEMA SECTION, NOT AT THE NEXT `##`. `parse_entries`
+        # calls every heading of level <= 2 a section, and entry BODIES in this doc use `##`
+        # sub-headings freely - 19 of the 32 `##` lines in o9's doc are inside an entry. So
+        # the old scan inserted the new stub in the MIDDLE of the last entry, and every
+        # sub-heading below the split silently became the new entry's body.
+        #
+        # Measured 2026-09-08: adding F121 reparented six of F120's sub-sections. The gate
+        # did not object - both entries still parsed, both still had a status line - so the
+        # only signal was reading the file.
+        #
+        # ⭐ Schema sections all carry `§`; body sub-headings never do. Fall back to the old
+        # scan when no later `§` section exists, so a doc that does not use the schema is
+        # placed exactly as before rather than dumped at EOF.
+        insert_at = len(lines)
+        later = [s for s in sections if s["line"] > target["line"]]
+        schema = [s for s in later if "§" in s["title"]]
+        for s in (schema or later):
+            insert_at = s["line"] - 1
+            break
+    return insert_at, target
+
+
+def _add_report(args, doc, eid, target, want):
+    """`add`'s read-back and receipt, after the write."""
     # ⛔ READ IT BACK BEFORE CLAIMING IT EXISTS. o10 reported 2026-09-16 that a lane ran
     # `add --doc o10` , was handed a paste-ready `T45` anchor, and NOTHING WAS WRITTEN - the
     # highest T id on origin/main was T44. The lane reported the anchor to o10 as fact.
@@ -5954,15 +12092,20 @@ def cmd_add(args):
     print("  section  : %s" % (target["title"] if target else want))
     print("  status   : OPEN (unenriched)  (verified by re-reading the file)")
     print()
-    print("PASTE THIS TO THE HUMAN (an ID anchor, which cannot rot - never a line number):")
-    print("  %s - %s, section \"%s\"" % (eid, doc.name, target["title"] if target else want))
+    # ⛔ THE LINK IS THE ONLY THING TO PASTE. The human, 2026-09-26, on a reply that pointed him at
+    # a file and line: "This format tells me nothing ... It's not a link to the OrchDoc
+    # Reader." This block used to print the plain "<id> - <doc>, section" form FIRST and the
+    # link second, so an agent pasting the first line gave him the form he rejected.
     _lnk = reader_link(doc.name, eid)
     if _lnk:
-        # ⭐ CLICKABLE, because an id he has to go and find costs a search every time.
-        print("  markdown: [%s](%s)" % (eid, _lnk))
+        print("PASTE THIS TO THE HUMAN (a Reader link - never a bare id, a path or a line number):")
+        print("  [%s](%s)" % (eid, _lnk))
+    else:
+        print("PASTE THIS TO THE HUMAN (no Reader link could be built for this doc):")
+        print("  %s - %s, section \"%s\"" % (eid, doc.name, target["title"] if target else want))
     if args.kind == "decision":
         print()
-        # ⛔ THE MOTION TWIN IS RETIRED.\1The human ruled 2026-08-19 (o11:Q1): Motion is being
+        # ⛔ THE MOTION TWIN IS RETIRED. The human ruled 2026-08-19 (o11:Q1): Motion is being
         # deprecated - "its core benefit was AI powered scheduling. Placing the process in your
         # hands supersedes that. Everything that needs to be done and tracked is currently
         # tracked in the Orch's OrchDocs - and that is typically where I work out of anyway."
@@ -5979,8 +12122,53 @@ def cmd_add(args):
     return 0
 
 
+def own_note_rows(lines, entry):
+    """0-based rows of the notes that are `entry`'s OWN, oldest first: the notes the reader
+    shows in its span (`parse_notes`, so never one inside a fence), less any whose id names a
+    different entry.
+
+    ⛔ A QUOTE OF ANOTHER ENTRY IS NOT THIS ENTRY'S NOTES. o5's T4 quotes o8:T9 whole, T9's two
+    notes included, so "the last note line in T4's section" was T9.n2, and the writer put
+    the human's T4 note after it, inside the quote (o9:W153, 2026-10-05). A scoped id names its
+    entry (`T9.n2` is T9's), so it never counts as T4's, fenced or not. A legacy bare id (`n3`)
+    names none and counts as the entry's, as it always has. With no `id` in `entry`, every note
+    in the span counts."""
+    start = entry["line"] - 1
+    end = min(start + len(entry["body"].splitlines()), len(lines))
+    eid = entry.get("id")
+    return [n["line"] - 1 for n in parse_notes("\n".join(lines))
+            if start <= n["line"] - 1 < end
+            and not (eid and "." in n["nid"] and n["nid"].split(".", 1)[0] != eid)]
+
+
+def note_slot(lines, entry):
+    """(row, stacks): where a new note goes inside `entry`, 0-indexed, and whether it joins a
+    run of the entry's own notes (then no blank line goes under it). By the reader's rules:
+    straight under the entry's last own note (`own_note_rows`); with none, the slot a note-less
+    entry gets (`note_anchor`'s docstring), and never inside a fence.
+
+    ⛔ ONE PLACEMENT FOR EVERY WRITER. `cmd_note`'s add path and `_place_note_line` (the lander
+    and `commit`'s merge) both call this, so a note cannot land in one place on this computer
+    and in another on main.
+    """
+    own = own_note_rows(lines, entry)
+    if own:
+        return own[-1] + 1, True             # notes stack, oldest first
+    at = _noteless_slot(lines, entry)
+    # ⛔ NEVER INSIDE A FENCE. The note-less slot is found by blank lines and field lines, and a
+    # fence can hold both: an entry with no fields and a fence straight under its heading put
+    # the slot after the first blank line INSIDE that fence. The note goes above the line that
+    # opened the fence instead, which is inside the entry because a heading is never fenced.
+    st = fence_states(lines)
+    if 0 < at <= len(lines) and st[at - 1][1]:
+        at = max((i for i in range(entry["line"] - 1, at) if is_fence_line(lines[i])),
+                 default=at)
+    return at, False
+
+
 def note_anchor(lines, entry):
-    """Where a new note goes inside `entry`, 0-indexed. Beneath the fields, above the prose.
+    """Where a new note goes inside `entry`, 0-indexed: `note_slot`'s row. Under the entry's
+    own last note when it has one; else beneath the fields, above the prose.
 
     ⛔ NOT AT THE END OF THE ENTRY. An entry's span runs to the next heading, so the LAST
     entry in a section carries the following `## §3` line inside its own body - appending
@@ -5990,15 +12178,18 @@ def note_anchor(lines, entry):
     ⭐ AND NOT INSIDE THE FIELD BLOCK EITHER. `write_restamp` rewrites the run of bold fields
     directly under `**Status:**`, ending at the first blank line - so a note placed above that
     blank line would be inside the region an attestation replaces. It goes after it.
+
+    ⛔ AND NEVER INSIDE A FENCE OR AFTER ANOTHER ENTRY'S NOTES - see `note_slot` and
+    `own_note_rows` (o9:W153).
     """
+    return note_slot(lines, entry)[0]
+
+
+def _noteless_slot(lines, entry):
+    """The slot an entry with no note of its own gets: beneath the field block, above the prose.
+    `note_slot` moves it out of a fence when it falls in one."""
     start = entry["line"] - 1
     end = min(start + len(entry["body"].splitlines()), len(lines))
-    last = None
-    for i in range(start, end):
-        if NOTE_LINE_RE.match(lines[i]):
-            last = i
-    if last is not None:
-        return last + 1                      # notes stack, oldest first
 
     # ⛔ THE FIRST BLANK LINE IS THE ONE UNDER THE HEADING, NOT THE ONE UNDER THE FIELDS.
     # This scanned from `start + 1` for the first blank and returned `i + 1`. `start` is the
@@ -6027,6 +12218,998 @@ def note_anchor(lines, entry):
             return j + 1
     return end
 
+
+# ==========================================================================================
+# PUTTING A NOTE LINE INTO A COPY THAT DOES NOT HAVE IT
+#
+# Two callers need this and they must agree on where a note goes:
+#   * `cmd_commit` (B1), which merges a note that is on the canonical ref but missing from the
+#     copy an orchestrator is about to land, so a landing can never delete one of the human's notes;
+#   * `land_note` (A1), which builds the Reader's landing from the CANONICAL text when the
+#     disk copy is behind, so one stale copy cannot block every later note.
+# ==========================================================================================
+
+#: The trailer every landing writes, naming who landed it: `oN` from `orchdoc.py commit`,
+#: `reader-note` from `land_note`. B2 reads it to tell an orchestrator's own landings from
+#: everyone else's. Subjects alone could not do that: measured 2026-09-24, 208 of the last 300
+#: subjects touching OrchDocs carried no orchestrator prefix at all.
+LANDER_TRAILER = "Orchdoc-Lander"
+READER_LANDER = "reader-note"
+#: The subject `cmd_note` gives a Reader note landing: "Added D999.n2 on <doc> (<who>)".
+READER_NOTE_SUBJECT_RE = re.compile(
+    r"^(?:Added|Edited|Deleted)\s+(?:[A-Z]{1,3}\d{1,4}[a-z]?\.)?n\d{1,4}\s+on\s+\S+\s+\(.*\)\s*$")
+
+
+def _note_entry_id(note, entries):
+    """Which entry a note belongs to, or None.
+
+    A scoped id names its entry (`D999.n2` -> D999) - when that entry is in `entries`.
+
+    ⛔ AN ID PREFIX CAN OUTLIVE ITS ENTRY. Measured 2026-09-24: two of o1's notes carry prefixes
+    that name no heading any more. Trusting the prefix sent a merge to an entry that does not
+    exist. So when the prefix names no entry, and for a legacy bare id (`n3`), the innermost
+    entry whose span holds the note's line answers instead.
+    """
+    nid = note["nid"]
+    if "." in nid:
+        pre = nid.split(".", 1)[0]
+        if any(e["id"] == pre for e in entries):
+            return pre
+    best = None
+    for e in entries:
+        lo = e["line"]
+        hi = lo + len(e["body"].splitlines())
+        if lo <= note["line"] < hi and (best is None or lo > best["line"]):
+            best = e
+    return best["id"] if best else None
+
+
+def _place_note_line(lines, eid, line, prev_nids=(), next_nids=()):
+    """Insert one note line into entry `eid` of `lines` (a list, changed in place).
+
+    Returns None when it was placed, or a sentence saying why it could not be.
+
+    Where it goes, in order of preference:
+      1. straight after the nearest note that preceded it in the copy it came from,
+      2. straight before the nearest note that followed it there,
+      3. where `cmd_note` puts a new note (`note_slot`), with the same blank-line rule.
+    The first two keep a merged note in the order the human wrote it; the third is the add path.
+    A neighbour counts only when it is one of the entry's own notes (`own_note_rows`): one
+    that a quote of another entry holds would put the note inside the quote (o9:W153).
+    """
+    entries = parse_entries(lines)[0]
+    match = [e for e in entries if e["id"] == eid]
+    if not match:
+        return "entry %s is not in this copy" % eid
+    if len(match) > 1:
+        return "entry %s appears %d times in this copy" % (eid, len(match))
+    e = match[0]
+    own = set(own_note_rows(lines, e))
+    where = {n["nid"]: n["line"] - 1 for n in parse_notes("\n".join(lines))
+             if n["line"] - 1 in own}
+    for p in reversed(list(prev_nids)):
+        if p in where:
+            lines.insert(where[p] + 1, line)
+            return None
+    for q in next_nids:
+        if q in where:
+            lines.insert(where[q], line)
+            return None
+    at, stacks = note_slot(lines, e)
+    # Same rule as `cmd_note`'s add path: a trailing blank keeps a first note from being
+    # absorbed into the paragraph below it.
+    lines[at:at] = [line] if stacks else [line, ""]
+    return None
+
+
+def _free_note_id(lines, nid, avoid=()):
+    """The next free id in the same scheme as `nid`, on `lines`, skipping anything in `avoid`.
+
+    `avoid` holds the ids a disk copy is using, so a note renumbered on the way to the ref can
+    never take an id that some OTHER note on that disk copy still carries.
+    """
+    pre = nid.split(".", 1)[0] if "." in nid else None
+    cand = next_note_id(lines, pre)
+    while cand in avoid:
+        head, num = cand.rsplit("n", 1)
+        cand = "%sn%d" % (head, int(num) + 1)
+    return cand
+
+
+def _note_pairs(text):
+    """{(nid, text)} of every note in `text`. `parse_notes` without the per-line dicts.
+
+    Fence-aware for the same reason `parse_notes` is. Fast on a 2 MB document because only a
+    line holding the marker word is matched against the full pattern.
+    """
+    out, in_fence = set(), False
+    for raw in text.split("\n"):
+        if raw.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or NOTE_MARK not in raw:
+            continue
+        m = NOTE_LINE_RE.match(raw)
+        if m:
+            out.add((m.group("nid"), m.group("text").strip()))
+    return out
+
+
+def _without_notes(text):
+    """`text` with every note line removed, trailing spaces dropped and blank runs collapsed.
+
+    The unit A2 compares whole documents in. A note is added with a blank line after it when it
+    is the first in its entry, so removing notes can leave an extra blank line behind; collapsing
+    blank runs makes the note-free text of "a version plus some notes" equal the version itself.
+    """
+    kept = [l.rstrip() for l in text.replace("\r\n", "\n").split("\n")
+            if not (NOTE_MARK in l and NOTE_LINE_RE.match(l))]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+
+def _past_versions(rel, commit, depth=80):
+    """Yield the text of each version of `rel` at or before `commit`, newest first, up to `depth`.
+
+    Through one `cat-file --batch` per few versions, so a caller that stops early reads little:
+    an OrchDoc can be two megabytes.
+
+    ⚠️ DEPTH IS A LIMIT ON WHAT CAN BE KNOWN. Anything older than the last `depth` versions of
+    the file reads as never having been on the ref. On the busiest docs that is a day or two.
+    """
+    import subprocess as _sp
+    rc, log, _ = git(["log", "--format=%H", "-n", str(depth), commit, "--", rel])
+    if rc != 0:
+        return
+    shas = [s for s in log.split() if s]
+    for i in range(0, len(shas), 8):
+        names = "".join("%s:%s\n" % (s, rel) for s in shas[i:i + 8])
+        p = _sp.run(["git", "-C", str(PROJECTS), "cat-file", "--batch"], input=names.encode(),
+                    capture_output=True, timeout=120, creationflags=flags())
+        if p.returncode != 0:
+            return
+        buf, pos = p.stdout, 0
+        while pos < len(buf):
+            nl = buf.find(b"\n", pos)
+            if nl < 0:
+                return
+            head = buf[pos:nl].split()
+            pos = nl + 1
+            if len(head) != 3 or head[1] != b"blob":
+                continue                              # "<name> missing"
+            size = int(head[2])
+            body = buf[pos:pos + size].decode("utf-8", errors="replace")
+            pos += size + 1
+            yield body.replace("\r\n", "\n")
+
+
+def _notes_on_past_versions(rel, commit, pairs, depth=80):
+    """Which (nid, text) pairs were a note in some version of `rel` at or before `commit`."""
+    left, found = set(pairs), set()
+    if not left:
+        return found
+    for text in _past_versions(rel, commit, depth):
+        if NOTE_MARK not in text:
+            continue
+        hit = left & _note_pairs(text)
+        found |= hit
+        left -= hit
+        if not left:
+            break
+    return found
+
+
+def merge_canonical_notes(canon_txt, mine_txt, landed_before=frozenset()):
+    """B1: every note on the canonical copy must be in the copy about to land. -> (text, changes, refusals)
+
+    ⛔ NOTES ARE NEVER REMOVABLE BY A LANDING. Measured 2026-09-24: one landing dropped five of
+    the human's notes while gate 1 printed "[ok] ... all present before your copy was written",
+    because gate 1's clock (the file's mtime) marks the END of an edit window, and his notes
+    arrived through the Reader during it. The same happened on 2026-09-23. A note is additive
+    and addressed to the doc's owner, so the answer is not a better guess about who saw it -
+    it is that a landing never deletes one. Only `orchdoc.py note --delete` does, and that
+    lands through `land_note`, never through here.
+
+    For each note on `canon_txt`, keyed by id:
+      * missing from `mine_txt`        -> MERGED in, at its entry, in the order it was written
+      * same id, different TEXT, and the copy's text is in `landed_before` (it was on the ref
+        once, so the copy is simply out of date) -> the canonical line is TAKEN, and said so
+      * same id, different TEXT never on the ref -> REFUSED. That is an edit of the human's that has
+        not landed; taking the ref's line would revert his words, so it is never suggested
+      * same id and text, ack differs  -> the landing copy's line wins, since that is how an
+                                          ack lands - EXCEPT that an ack already on the canonical
+                                          copy is kept. Acking is one-way, so a copy without it is
+                                          simply older, and dropping it would bring the human's note
+                                          back as unread.
+      * its entry is not in `mine_txt` -> REFUSED, never dropped
+
+    `landed_before` is a set of (nid, text) known to have been on the ref; see
+    `_notes_on_past_versions`. Returns (None, [], []) when nothing needs doing, (text, changes,
+    []) when the copy must be rewritten, and (None, [], refusals) when it must not land.
+    `changes` is a list of (nid, entry, what) with what in {"note", "ack", "text"}; each refusal
+    is a dict with "kind" ("unlanded", "entry"), "nid", "entry", "canon" and "mine" texts.
+    """
+    canon_notes = parse_notes(canon_txt)
+    if not canon_notes:
+        return None, [], []
+    mine_by = defaultdict(list)
+    for n in parse_notes(mine_txt):
+        mine_by[n["nid"]].append(n)
+    canon_lines = canon_txt.split("\n")
+    lines = mine_txt.split("\n")
+    c_entries = parse_entries(canon_lines)[0]
+    eid_of = [_note_entry_id(cn, c_entries) for cn in canon_notes]
+
+    refusals, missing, replace = [], [], []
+    for k, cn in enumerate(canon_notes):
+        hits = mine_by.get(cn["nid"], [])
+        if not hits:
+            missing.append(k)
+            continue
+        same = [h for h in hits if h["text"] == cn["text"]]
+        if not same:
+            h = hits[0]
+            if (cn["nid"], h["text"]) in landed_before:
+                replace.append((k, h, "text"))
+            else:
+                refusals.append({"kind": "unlanded", "nid": cn["nid"], "entry": eid_of[k],
+                                 "canon": cn["text"], "mine": h["text"]})
+            continue
+        if cn["ack"] and not any(h["ack"] for h in same):
+            replace.append((k, same[0], "ack"))
+    if refusals:
+        return None, [], refusals
+
+    changes = []
+    # Replacements first: a line replaced in place moves nothing, so the line numbers parsed
+    # above still hold for it.
+    for k, h, what in replace:
+        cn = canon_notes[k]
+        lines[h["line"] - 1] = canon_lines[cn["line"] - 1]
+        changes.append((cn["nid"], eid_of[k] or "?", what))
+
+    for k in missing:
+        cn = canon_notes[k]
+        eid = eid_of[k]
+        if not eid:
+            refusals.append({"kind": "entry", "nid": cn["nid"], "entry": None,
+                             "canon": cn["text"], "mine": ""})
+            continue
+        sib = [j for j in range(len(canon_notes)) if eid_of[j] == eid]
+        pos = sib.index(k)
+        prev = [canon_notes[j]["nid"] for j in sib[:pos]]
+        nxt = [canon_notes[j]["nid"] for j in sib[pos + 1:]]
+        why = _place_note_line(lines, eid, canon_lines[cn["line"] - 1], prev, nxt)
+        if why:
+            refusals.append({"kind": "entry", "nid": cn["nid"], "entry": eid,
+                             "canon": cn["text"], "mine": "", "why": why})
+            continue
+        changes.append((cn["nid"], eid, "note"))
+    if refusals:
+        return None, [], refusals
+    if not changes:
+        return None, [], []
+    return "\n".join(lines), changes, []
+
+
+def _b1_refusal_lines(refusals, ref, doc):
+    """What B1 prints for each refusal - the advice differs by kind, and one kind must never be
+    told to take the ref's line."""
+    out = []
+    for r in refusals[:6]:
+        if r["kind"] == "unlanded":
+            out.append("- note %s in your copy has text that was never on %s:" % (r["nid"], ref))
+            out.append("    on %s: %s" % (ref, r["canon"][:150]))
+            out.append("    in your copy:  %s" % r["mine"][:150])
+            out.append("  That is an edit of the human's that has not landed. Do NOT take the line from")
+            out.append("  %s - that would revert his words - and do not rewrite it yourself: a"
+                       % ref)
+            # o9:W258 (lane o9L1480): this used to say "land the edit with `orchdoc.py note
+            # --text`", which every session is refused since W258. A note's words land only
+            # through the Reader (the human's save, or its landing queue). test_orchdoc_note_loss.py
+            # runs every orchdoc.py command named here as a session to prove none is refused.
+            out.append("  session cannot write a note. Only the Reader lands his words:")
+            out.append("    1. If the Reader's landing queue (%s) holds a save for %s,"
+                       % (READER_LANDING_REL, doc.name))
+            out.append("       it lands the edit on its own. Wait for it, then land again.")
+            out.append("    2. Otherwise copy the text exactly, put it in your report to the human and")
+            out.append("       the doc's owner, and ask him to save the note again from %s:"
+                       % (reader_link(doc.name, r["entry"]) if r.get("entry") else "the Reader"))
+            out.append("         python .shared/scripts/orchdoc.py note --doc %s --show %s"
+                       % (doc.name, r["nid"]))
+            out.append("       Leave this copy as it is until his save has landed.")
+        else:
+            where = ("entry %s" % r["entry"]) if r.get("entry") else "no entry"
+            out.append("- note %s belongs to %s on %s, and your copy cannot hold it%s."
+                       % (r["nid"], where, ref, (": " + r["why"]) if r.get("why") else ""))
+            out.append("    note text: %s" % r["canon"][:150])
+            out.append("  Put the entry back in your copy with the note under it, exactly as it")
+            out.append("  is on %s:  git show %s:%s" % (ref, ref, doc.name))
+    return out
+
+
+def _merge_notes_before_landing(doc, rel, ref, dry_run=False):
+    """B1 inside `cmd_commit`: put back every canonical note the landing copy lacks. -> (ok, dry_text).
+
+    `ref` is the PINNED commit id, not a branch name: the same object gate 1 reads. `ok` False
+    means REFUSE (it has already said why). `dry_text` is the merged text on a dry run - which
+    writes nothing, so the caller hashes that text instead of the file.
+
+    ⛔ NO OVERRIDE REACHES THIS. `--override GATE1-REWORD` switches gate 1 off; it does not
+    switch this off, because a note is the one thing a landing never has a reason to delete.
+    """
+    rc, canon, _ = git(["show", "%s:%s" % (ref, rel)])
+    if rc != 0:
+        # Not on the ref yet (a first landing has no notes to keep), or unreadable - and gate 1
+        # refuses an unreadable canonical copy on its own, a few lines further on.
+        return True, None
+    label = CANONICAL_REF
+    # The history is read OUTSIDE the lock: it can take seconds, and every other writer of
+    # this doc waits on the lock with a 10-second limit.
+    try:
+        first = doc.read_text(encoding="utf-8")
+    except OSError as ex:
+        print("  [REFUSE] B1 - could not read %s (%s)." % (doc.name, ex))
+        return False, None
+    _n, _c, pre = merge_canonical_notes(canon, first)
+    pairs = [(r["nid"], r["mine"]) for r in pre if r["kind"] == "unlanded"]
+    past = _notes_on_past_versions(rel, ref, pairs) if pairs else set()
+    try:
+        with _lock(doc):
+            mine = doc.read_text(encoding="utf-8")
+            new, changes, refusals = merge_canonical_notes(canon, mine, past)
+            if not refusals and new is not None and not dry_run:
+                write_doc(doc, new, expect=mine)
+    except DocPathError as ex:
+        print("  [REFUSE] B1 - %s changed while its notes were being merged, so nothing was"
+              % doc.name)
+        print("           written or pushed. Re-run the landing. (%s)" % str(ex)[:160])
+        return False, None
+    if refusals:
+        print("  [REFUSE] B1 - the human's notes on %s cannot all be kept by this landing, and a"
+              % label)
+        print("           landing never deletes a note. Nothing was written or pushed.")
+        for line in _b1_refusal_lines(refusals, label, doc):
+            print("           %s" % line)
+        print("           A note is removed only by `orchdoc.py note --delete`.")
+        try:
+            log_refusal(doc, [Finding("E-NOTELOSS", 0, "%s %s" % (r["kind"], r["nid"]))
+                              for r in refusals])
+        except Exception:
+            pass
+        return False, None
+    for nid, eid, what in changes:
+        if what == "ack":
+            print("  [merged] the ack on note %s from %s - your copy had the note without it"
+                  % (nid, label))
+        elif what == "text":
+            print("  [merged] note %s: your copy had an older text that was on %s before;"
+                  % (nid, label))
+            print("           took the current text from %s." % label)
+        else:
+            print("  [merged] note %s (on %s) from %s - it was not in your copy"
+                  % (nid, eid, label))
+    if changes and dry_run:
+        print("           (dry run: merged in memory only; your file was not written)")
+    return True, (new if (dry_run and new is not None) else None)
+
+
+def _renumber_note_line(line, old, new):
+    """The same note line with its id changed in the machine half, and nothing else."""
+    out = re.sub(r"(<!--\s*" + re.escape(NOTE_MARK) + r"\s+)" + re.escape(old)
+                 + r"(?=[\s-])", lambda m: m.group(1) + new, line, count=1)
+    got = NOTE_LINE_RE.match(out)
+    if not got or got.group("nid") != new:
+        raise ValueError("could not renumber %s to %s" % (old, new))
+    return out
+
+
+def _item_lines(block):
+    """An entry's lines as the "retire" landing compares them: blank lines out, acks out.
+
+    An ack is an orchestrator saying it read a note, not a change to the item (see
+    `note_without_ack`), and blank lines move about when notes are placed. Any other
+    difference means the two copies are not the same item."""
+    return [note_without_ack(l).rstrip() if NOTE_LINE_RE.match(l) else l.rstrip()
+            for l in block if l.strip()]
+
+
+def _catch_up_next(eid):
+    """What makes a delete possible that main refused because main's `eid` is not this
+    computer's, in words for the page. ⛔ NOT "reload the page": a reload shows this computer's
+    copy again, which is still the one behind (o9's review of W116, fix round 2). The copy
+    catches up when deliver.py next refreshes it, after an orchestrator's landing, or when
+    the human's next note on the doc lands."""
+    branch = CANONICAL_REF.split("/", 1)[-1]
+    return ("This computer's copy normally catches up with %s within a few minutes. Reload the "
+            "page then to see %s as %s has it, and delete it again if you still want to"
+            % (branch, eid, branch))
+
+
+def _heading_after_id(line, eid):
+    """What an entry heading says after its id, or None. The same for an entry whose status
+    marker changed since, which is the same entry (o9:W123)."""
+    m = re.search(r"(?<![\w.])%s(?!\w)" % re.escape(eid), line or "")
+    return line[m.end():].strip() if m else None
+
+
+def _rename_heading(line, old, new):
+    """An entry heading line with its id changed from `old` to `new`, and nothing else."""
+    out = re.sub(r"(?<![\w.])%s(?!\w)" % re.escape(old), new, line, count=1)
+    if out == line:
+        raise ValueError("could not rename %s to %s in its heading" % (old, new))
+    return out
+
+
+def _rename_entry(text, old, new, head):
+    """`text` with the entry whose heading line is `head` renamed from `old` to `new`: the
+    heading, and each note in that entry whose id is `old.nK` (o9:W123). Unchanged when that
+    heading is not in `text` exactly once, so an entry of the same id written by someone else
+    is never touched."""
+    lines = text.split("\n")
+    hits = [i for i, l in enumerate(lines) if l.strip() == head.strip()]
+    if len(hits) != 1:
+        return text
+    i = hits[0]
+    ents = [e for e in parse_entries(lines)[0] if e["line"] == i + 1]
+    end = _entry_end(ents[0]) if ents else i + 1
+    lines[i] = _rename_heading(lines[i], old, new)
+    pref = old + "."
+    for k in range(i + 1, min(end, len(lines))):
+        m = NOTE_LINE_RE.match(lines[k]) if NOTE_MARK in lines[k] else None
+        if m and m.group("nid").startswith(pref):
+            lines[k] = _renumber_note_line(lines[k], m.group("nid"),
+                                           new + m.group("nid")[len(old):])
+    return "\n".join(lines)
+
+
+def _rename_op(op, old, new):
+    """Rename entry `old` to `new` in one queued change's operation, in place (o9:W123).
+    -> True when the operation acted on that entry or one of its notes."""
+    if not isinstance(op, dict):
+        return False
+    hit, pref = False, old + "."
+    if op.get("entry") == old:
+        op["entry"], hit = new, True
+    nid = op.get("nid")
+    if isinstance(nid, str) and nid.startswith(pref):
+        nn = new + nid[len(old):]
+        for k in ("line", "prev"):
+            if op.get(k):
+                op[k] = _renumber_note_line(op[k], nid, nn)
+        op["nid"], hit = nn, True
+    blk = op.get("block")
+    if hit and blk and len(blk) > 1 and op.get("entry") == new:
+        op["block"] = [_rename_heading(l, old, new) if k == 1 else l for k, l in enumerate(blk)]
+    t = op.get("today")
+    if isinstance(t, dict) and t.get("eid") == old:
+        t["eid"], hit = new, True
+        if t.get("block") and len(t["block"]) > 1:
+            t["block"] = [_rename_heading(l, old, new) if k == 1 else l
+                          for k, l in enumerate(t["block"])]
+    return hit
+
+
+def _note_onto_canonical(canon, mine, op, landed_before=frozenset(), avoid=(), skip=()):
+    """A1: build the landing FROM THE CANONICAL TEXT, plus the one note operation.
+
+    -> dict(text, nid, carried, skipped, stuck, removed, renumbered), or dict(error=...).
+
+    ⛔ LAND THE NOTE, NOT THE COPY. The Reader writes into the shared checkout, and that copy
+    can be behind the canonical ref - an orchestrator landed from its worktree a minute before
+    the human typed. Landing the whole copy would revert that landing, so `land_note` refused, and
+    refused every note after it: measured 2026-09-24, one doc stuck for hours while the Reader
+    showed the human a stale page. The canonical text already holds everything that must survive,
+    so start from it and apply only what the human did.
+
+    `op` is {"op": "add"|"edit"|"delete", "nid", "line" (the rendered note, not for delete),
+    "prev" (the line as it was on disk BEFORE an edit or delete), "entry"}. A deleted
+    instruction is "withdraw" (its note still on the item) or "retire" (none left; "item" is the
+    item's lines as they were before the delete), both with "who" and "when".
+
+    ⛔ AN EDIT OR DELETE ACTS ON MAIN'S NOTE ONLY IF IT IS THE SAME NOTE. Ids are allocated
+    per copy, so a note stuck on this disk and a different note landed elsewhere can share one.
+    Matching by id alone let the human's edit overwrite, or his delete remove, the other note. So
+    main's line must equal `prev`, ack aside. If it does not, an edit lands as a new note under
+    the next free id, and a delete leaves main's note alone.
+
+    Also carried: the OTHER disk notes that never reached the ref. Which ones, by what
+    `landed_before` (a set of (nid, text) that were on the ref once) says about each:
+      * the same note, same text, on the ref       -> nothing to do (an ack on disk is carried)
+      * never on the ref, id free there            -> carried
+      * never on the ref, id taken by another note -> carried under the next free id
+      * WAS on the ref and the ref now has the same id with other text -> an older text of a
+        note someone has since edited: skipped, and A2 may replace it
+      * WAS on the ref and the ref no longer has it -> deleted there, perhaps on purpose:
+        NOT put back, and listed in `stuck` so the Reader shows it rather than either
+        resurrecting or erasing it
+
+    Two arguments only the Reader's landing queue passes (o9:W123), both empty by default:
+      * `avoid`: more ids no renumbered note OR ENTRY may take - the ones on the disk copy and
+        in the other queued changes, which this copy (an older snapshot) cannot see. Note ids
+        (`W5.n1`) and entry ids (`W5`) never look alike, so one set holds both;
+      * `skip`: note ids another queued change will land itself. They are not carried here,
+        so one note can never be landed twice under two ids.
+
+    ⛔ AN ENTRY THIS CHANGE CREATES, WHOSE ID MAIN HAS SINCE GIVEN TO A DIFFERENT ENTRY, LANDS
+    UNDER THE NEXT FREE ID (o9:W123). Measured 2026-10-01: the human's 18:15 instruction was W127 on
+    this computer, it did not land, and at 19:01 main gave W127 to another entry. Refusing it
+    would park his instruction for good. `entries` in the result lists each such renaming as
+    (old id, new id, old heading line, new heading line); the caller renames the entry on this
+    computer to match, as it does for a renumbered note.
+    """
+    lines = canon.split("\n")
+    kind, nid = op.get("op"), op.get("nid")
+    newline, eid, prev = op.get("line"), op.get("entry"), op.get("prev")
+    carried, skipped, stuck, removed, renumbered = [], [], [], [], []
+
+    d_lines = mine.split("\n")
+    d_entries = parse_entries(d_lines)[0]
+    d_notes = parse_notes(mine)
+    d_eid = [_note_entry_id(dn, d_entries) for dn in d_notes]
+    avoid = set(n["nid"] for n in d_notes) | set(e["id"] for e in d_entries) | set(avoid)
+    skip = set(skip)
+    # ⛔ ENTRIES IN §99 HERE THAT ARE STILL LIVE ON THE REF (o9's review of W116, 2026-10-01).
+    # A delete the ref never took left W2 in §99 on this computer; the next unrelated note then
+    # carried W2's deletion note, and the "deleted by" ack, onto the ref's LIVE W2, which said
+    # "Act on it" and "the human deleted this instruction" at once. A note whose entry is filed away
+    # here belongs to that filing, not to the live entry, so it stays here and is listed in
+    # `stuck`. The entry this operation itself deletes is the exception: step 2 moves it.
+    # The ref's entries are parsed only when such a note would change the ref, which is rare,
+    # so an ordinary landing does not pay for this check.
+    d_live = set(e["id"] for e in d_entries if not e.get("archived"))
+    filed = set(e["id"] for e in d_entries if e.get("archived")) - d_live
+    if kind in ("withdraw", "retire"):
+        filed.discard(eid)
+    c_live = None
+
+    # 0. The entry this change creates (an `instruct` W item, a §2.0 add), when main has since
+    # given its id to a different entry: rename it to the next id free on main and here.
+    own_nid = nid
+    entries = []
+    block = op.get("block")
+    t_op = op.get("today") if kind == "today" else None
+    made = None
+    if block and eid and len(block) > 1:
+        made, made_head = eid, block[1]
+    elif isinstance(t_op, dict) and t_op.get("act") == "add" and t_op.get("eid") \
+            and len(t_op.get("block") or ()) > 1:
+        made, made_head = t_op["eid"], t_op["block"][1]
+    if made:
+        c_ents0 = parse_entries(lines)[0]
+        have = [e for e in c_ents0 if e["id"] == made]
+        main_head = lines[have[0]["line"] - 1] if have else ""
+        own_there = bool(have) and bool(own_nid) and bool(newline) and any(
+            c["nid"] == own_nid and c["text"] == _note_text(newline)
+            for c in parse_notes(canon))
+        if have and main_head.strip() != made_head.strip() \
+                and (own_there or (not have[0].get("archived") and
+                     _heading_after_id(main_head, made) == _heading_after_id(made_head, made))):
+            # The SAME entry, landed before, whose status marker has changed on main since (a
+            # retry of a change that is already there): never renamed, or it would land twice.
+            # ⛔ IN §99 TOO, when it holds this change's own note (o9's review of W123, part E6):
+            # an instruction landed, its job left behind (the Reader stopped before deleting
+            # it), and the item then deleted or resolved on main came back as a new live W item.
+            if block and eid:
+                block = [main_head if k == 1 else l for k, l in enumerate(block)]
+            else:
+                t_op = dict(t_op, block=[main_head if k == 1 else l
+                                         for k, l in enumerate(t_op["block"])])
+        elif have and main_head.strip() != made_head.strip():
+            pre = re.match(r"[A-Z]+", made).group(0)
+            new_id = next_id(c_ents0, pre, canon)
+            while new_id in avoid:
+                new_id = "%s%d" % (pre, int(new_id[len(pre):]) + 1)
+            new_head = _rename_heading(made_head, made, new_id)
+            entries.append((made, new_id, made_head, new_head))
+            if block and eid:
+                block = [new_head if k == 1 else l for k, l in enumerate(block)]
+                if nid and nid.startswith(eid + "."):
+                    new_nid = new_id + nid[len(eid):]
+                    if newline:
+                        newline = _renumber_note_line(newline, nid, new_nid)
+                    nid = new_nid
+                eid = new_id
+            else:
+                t_op = dict(t_op, eid=new_id,
+                            block=[new_head if k == 1 else l for k, l in enumerate(t_op["block"])])
+
+    # 1. Earlier stuck notes first, so the new one lands after them, as it was written.
+    for k, dn in enumerate(d_notes):
+        if dn["nid"] == own_nid:
+            continue                                  # the operation itself, below
+        if dn["nid"] in skip:
+            continue                                  # its own queued landing carries it
+        if kind == "withdraw" and d_eid[k] == eid:
+            continue                                  # its deletion note: the op writes it
+        if entries and d_eid[k] == entries[0][0]:
+            # In the entry being renamed: main's entry of that id is someone else's, so the
+            # note must not go there. Its own queued change lands it once the entry is renamed.
+            stuck.append({"nid": dn["nid"], "text": dn["text"],
+                          "why": "its entry %s lands as %s, and the note is not on main yet"
+                                 % (entries[0][0], entries[0][1])})
+            continue
+        here = [c for c in parse_notes("\n".join(lines)) if c["nid"] == dn["nid"]]
+        same = [c for c in here if c["text"] == dn["text"]]
+        acts = not same or (dn["ack"] and not any(c["ack"] for c in same))
+        if acts and d_eid[k] in filed:
+            if c_live is None:
+                c_live = set(e["id"] for e in parse_entries(canon.split("\n"))[0]
+                             if not e.get("archived"))
+            if d_eid[k] in c_live:
+                if not same:
+                    stuck.append({"nid": dn["nid"], "text": dn["text"],
+                                  "why": "%s is in §99 on this computer but still live on %s, "
+                                         "so this note was not put on it"
+                                         % (d_eid[k], CANONICAL_REF)})
+                continue
+        if same:
+            if dn["ack"] and not any(c["ack"] for c in same):
+                i = same[0]["line"] - 1
+                removed.append(lines[i])
+                lines[i] = d_lines[dn["line"] - 1]
+                carried.append(dn["nid"] + " (ack)")
+            continue
+        if (dn["nid"], dn["text"]) in landed_before:
+            if here:
+                skipped.append("%s (an older text of a note that has since been edited on %s)"
+                               % (dn["nid"], CANONICAL_REF))
+            else:
+                stuck.append({"nid": dn["nid"], "text": dn["text"],
+                              "why": "it was on %s and has been removed there; it was not put "
+                                     "back" % CANONICAL_REF})
+            continue
+        e = d_eid[k]
+        if not e:
+            stuck.append({"nid": dn["nid"], "text": dn["text"], "why": "it sits in no entry"})
+            continue
+        line, new_id = d_lines[dn["line"] - 1], dn["nid"]
+        if here:
+            new_id = _free_note_id(lines, dn["nid"], avoid)
+            line = _renumber_note_line(line, dn["nid"], new_id)
+        sib = [j for j in range(len(d_notes)) if d_eid[j] == e]
+        pos = sib.index(k)
+        why = _place_note_line(lines, e, line,
+                               [d_notes[j]["nid"] for j in sib[:pos]],
+                               [d_notes[j]["nid"] for j in sib[pos + 1:]])
+        if why:
+            stuck.append({"nid": dn["nid"], "text": dn["text"], "why": why})
+            continue
+        carried.append(new_id if new_id == dn["nid"] else "%s (as %s)" % (dn["nid"], new_id))
+        avoid.add(new_id)
+        if new_id != dn["nid"]:
+            renumbered.append((dn["nid"], new_id, dn["text"]))
+
+    # 1b. `instruct`: the note's entry is NEW, so the ref does not have it yet. Put the entry's
+    # stub (heading, fields, prose - the note goes in below) into the same section on the ref.
+    # ⛔ AN ID THE REF ALREADY GIVES TO A DIFFERENT ENTRY IS NEVER SHARED: placing the human's
+    # instruction there would put it on someone else's work item. Step 0 has renamed the entry
+    # when that is so; the refusal below is what is left if it still collides.
+    if block and eid:
+        c_ents, c_secs = parse_entries(lines)
+        have = [e for e in c_ents if e["id"] == eid]
+        if have:
+            if lines[have[0]["line"] - 1].strip() != block[1].strip():
+                return {"error": "%s is already a different entry on %s" % (eid, CANONICAL_REF)}
+        else:
+            at, _t = _section_insert_at(lines, c_secs, op.get("block_kind") or "work",
+                                        re.match(r"[A-Z]+", eid).group(0))
+            lines[at:at] = list(block)
+
+    # 2. The operation.
+    final = nid
+    hits = [c for c in parse_notes("\n".join(lines)) if c["nid"] == nid]
+    if len(hits) > 1:
+        return {"error": "note %s appears %d times on %s - fix that by hand first"
+                         % (nid, len(hits), CANONICAL_REF)}
+    main_line = lines[hits[0]["line"] - 1] if hits else None
+    same_note = bool(hits) and prev is not None \
+        and note_without_ack(main_line) == note_without_ack(prev)
+    if kind == "today":
+        # A §2.0 change: the same change, made on the ref's text (under its new id when step 0
+        # renamed the item it adds).
+        before = list(lines)
+        why = apply_today(lines, t_op or {})
+        if why:
+            return {"error": "§2.0 on %s: %s" % (CANONICAL_REF, why)}
+        now = set(lines)
+        removed.extend(l for l in before if l.strip() and l not in now)
+    elif kind == "withdraw":
+        # The same move, made on the ref's text. Only when the ref's instruction is the one
+        # withdrawn here (same rule as an edit): otherwise nothing on the ref is touched.
+        # ⭐ Every refusal also says why in `plain`, words the Reader shows the human as they are.
+        # A refusal because main's item is not this computer's also says, in `next`, what will
+        # make the delete possible: see `_catch_up_next`.
+        branch = CANONICAL_REF.split("/", 1)[-1]
+        if not (hits and same_note):
+            return {"error": "instruction %s on %s is not the one deleted here" % (nid, CANONICAL_REF),
+                    "plain": ("instruction %s on %s is not the one on this page" % (nid, branch))
+                    if hits else ("instruction %s has not reached %s yet" % (nid, branch)),
+                    "next": _catch_up_next(eid or nid) if hits else None}
+        # ⛔ AND ONLY WHEN THE REF'S ITEM HOLDS EXACTLY THE INSTRUCTIONS THIS COPY'S DID. Every
+        # one of them is marked deleted, so one the ref has and this copy lacks would be filed
+        # away as "Deleted with no action" without the human ever having seen it.
+        item = instruction_item(lines, eid) if eid else "no entry for %s" % nid
+        if not isinstance(item, tuple):
+            return {"error": "%s on %s: %s" % (eid, CANONICAL_REF, item),
+                    "plain": "on %s, %s" % (branch, item)}
+        if op.get("ins") is not None:
+            theirs = set((x["nid"], x["text"]) for x in item[1])
+            mine_ins = set(tuple(x) for x in op["ins"])
+            extra = sorted(x[0] for x in theirs - mine_ins)
+            if extra:
+                return {"error": "%s on %s holds instruction %s, which this copy does not, so it "
+                                 "was not deleted there" % (eid, CANONICAL_REF, extra[0]),
+                        "plain": "%s has an instruction on %s (%s) that this page does not show"
+                                 % (branch, eid, ", ".join(extra)),
+                        "next": _catch_up_next(eid)}
+            lack = sorted(x[0] for x in mine_ins - theirs)
+            if lack:
+                return {"error": "instruction %s is not on %s's %s, so it was not deleted there"
+                                 % (lack[0], CANONICAL_REF, eid),
+                        "plain": "instruction %s has not reached %s yet" % (lack[0], branch)}
+        before = list(lines)
+        got = withdraw_doc_instruction(lines, nid, op.get("who") or "", op.get("when") or "")
+        if not isinstance(got, tuple):
+            return {"error": "instruction %s could not be moved to §99 on %s" % (nid, CANONICAL_REF),
+                    "plain": ("%s could not be moved to §99 on %s: %s" % (eid, branch, got))
+                    if isinstance(got, str) else None}
+        now = set(lines)
+        removed.extend(l for l in before if l.strip() and l not in now)
+    elif kind == "retire":
+        # An instruction item deleted with no instruction left on it: the same note and the
+        # same move, made on the ref's text. ⛔ ONLY WHEN THE REF'S ITEM IS THE ONE DELETED
+        # HERE. One that holds an instruction this copy does not, or that someone edited since
+        # this copy was read, is refused rather than guessed at: moving it would file away an
+        # order the human never saw, or work the orchestrator has started, as "Deleted with no action".
+        branch = CANONICAL_REF.split("/", 1)[-1]
+        if not newline or not NOTE_LINE_RE.match(newline) or not eid:
+            return {"error": "no note line to land for %s" % nid}
+        item = instruction_item(lines, eid)
+        if not isinstance(item, tuple):
+            return {"error": "%s on %s: %s" % (eid, CANONICAL_REF, item),
+                    "plain": "on %s, %s" % (branch, item)}
+        if item[1]:
+            return {"error": "%s on %s holds instruction %s, which this copy does not, so it was "
+                             "not deleted there" % (eid, CANONICAL_REF, item[1][0]["nid"]),
+                    "plain": "%s has an instruction on %s (%s) that this page does not show"
+                             % (branch, eid, ", ".join(x["nid"] for x in item[1])),
+                    "next": _catch_up_next(eid)}
+        theirs = lines[item[0]["line"] - 1:_entry_end(item[0])]
+        if _item_lines(theirs) != _item_lines(op.get("item") or []):
+            # ⛔ NOT "after this page was loaded" (o9's review of W116, fix round 2): the two
+            # copies differ, which is all this compares, and a reload does not change that.
+            return {"error": "%s on %s has changed since this copy was read, so it is not the "
+                             "item deleted here" % (eid, CANONICAL_REF),
+                    "plain": "%s on %s is not the same as %s on this computer, so deleting it "
+                             "here could file away work done on it" % (eid, branch, eid),
+                    "next": _catch_up_next(eid)}
+        if hits:
+            # The id is taken there by another note: land the deletion note under the next
+            # free one, as an added note would.
+            final = _free_note_id(lines, nid, avoid)
+            newline = _renumber_note_line(newline, nid, final)
+        before = list(lines)
+        why = withdraw_instruction_item(lines, eid, op.get("who") or "", newline)
+        if why:
+            return {"error": "%s could not be moved to §99 on %s: %s" % (eid, CANONICAL_REF, why)}
+        now = set(lines)
+        removed.extend(l for l in before if l.strip() and l not in now)
+    elif kind == "delete":
+        if hits and same_note:
+            i = hits[0]["line"] - 1
+            removed.append(lines[i])
+            del lines[i]
+            if 0 < i < len(lines) and not lines[i].strip() and not lines[i - 1].strip():
+                del lines[i]
+        elif hits:
+            skipped.append("%s on %s is a different note from the one deleted here, so it was "
+                           "left alone" % (nid, CANONICAL_REF))
+    elif kind in ("add", "edit"):
+        if not newline or not NOTE_LINE_RE.match(newline):
+            return {"error": "no note line to land for %s" % nid}
+        if hits and kind == "edit" and same_note:
+            i = hits[0]["line"] - 1
+            removed.append(lines[i])
+            lines[i] = newline
+        elif hits and note_without_ack(main_line) == note_without_ack(newline):
+            pass                                      # already there, word for word
+        else:
+            if hits:
+                # The id is taken on the canonical ref by a DIFFERENT note: the disk copy
+                # allocated it without seeing that one, or this is an edit of a note whose
+                # id now belongs to someone else's. Land the human's words under the next free id.
+                final = _free_note_id(lines, nid, avoid)
+                newline = _renumber_note_line(newline, nid, final)
+            if not eid:
+                return {"error": "cannot tell which entry note %s belongs to" % nid}
+            why = _place_note_line(lines, eid, newline)
+            if why:
+                return {"error": "note %s: %s on %s" % (nid, why, CANONICAL_REF)}
+    else:
+        return {"error": "unknown note operation %r" % kind}
+
+    text = "\n".join(lines)
+    gone = _lines_lost(canon, text, removed)
+    if gone:
+        return {"error": "building the landing from %s would still remove %d line(s) that are "
+                         "on it - first: %s" % (CANONICAL_REF, len(gone), gone[0].strip()[:80])}
+    return {"text": text, "nid": final, "carried": carried, "skipped": skipped,
+            "stuck": stuck, "removed": removed, "renumbered": renumbered, "entries": entries}
+
+
+def _lines_lost(before, after, allowed=()):
+    """Non-blank lines of `before` that `after` does not have, other than `allowed`.
+
+    A note line counts as present when the same note is there with or without an ack - acking
+    rewrites the line and is not a loss.
+    """
+    out = set(after.split("\n"))
+    out_norm = set(note_without_ack(l) for l in out if NOTE_MARK in l)
+    ok = set(allowed)
+    return [l for l in before.split("\n")
+            if l.strip() and l not in out and l not in ok
+            and not (NOTE_MARK in l and NOTE_LINE_RE.match(l)
+                     and note_without_ack(l) in out_norm)]
+
+
+def _hash_text(text, rel):
+    """`git hash-object -w` for text that is not a file on disk. -> (rc, blob, err).
+
+    Bytes in, not text: a text-mode pipe on Windows turns every newline into CRLF on the way
+    in, and the blob would then differ from the same text written by `write_doc`.
+    """
+    import subprocess as _sp
+    p = _sp.run(["git", "-C", str(PROJECTS), "hash-object", "-w", "--stdin", "--path", rel],
+                input=text.encode("utf-8"), capture_output=True, timeout=60,
+                creationflags=flags())
+    return (p.returncode, p.stdout.decode("utf-8", "replace").strip(),
+            p.stderr.decode("utf-8", "replace").strip())
+
+
+def _apply_note_fixes(text, fixes):
+    """`text` with each (old_nid, new_nid, note text) renumbering applied to the one note line
+    that has that id and that text. A fix that matches no line, or two, changes nothing."""
+    for old, new, ntext in fixes or ():
+        ids = [n for n in parse_notes(text) if n["nid"] == old and n["text"] == ntext]
+        if len(ids) == 1:
+            dl = text.split("\n")
+            i = ids[0]["line"] - 1
+            dl[i] = _renumber_note_line(dl[i], old, new)
+            text = "\n".join(dl)
+    return text
+
+
+def _a2_refusal(cur, landed, rel, commit, chain_base=None):
+    """Why A2 must NOT replace the disk copy `cur` with `landed` - or "" when it may.
+
+    Pure over its arguments except for reading the history of `rel`, which is why it is a
+    function of its own: that read can take seconds on a big doc, and it runs OUTSIDE the doc's
+    lock (o9:W123), so a save from the Reader never waits behind it.
+
+    `chain_base` (o9:W123): the blob the Reader's run of writes started from, when the copy is
+    still exactly what the Reader last wrote and every change of the run has landed. When that
+    blob is a version of the file, the copy is that version plus landed changes, so the whole-
+    text rule is met. A note on the copy that is not in `landed` must still be on some commit.
+
+    The refusal names one line as an example (o9:W153): first a line of the copy that no
+    version read here has had, which is the edit that has not landed. A line `landed` lacks
+    can be an older line of main instead - the copy's "Last updated" row, whenever another
+    landing came in a later minute - and the meta block sits above any hand edit, so naming
+    the first such line named the stamp. Those lines are found in the same pass over the
+    history as the whole-text test, so the history is still read once.
+    """
+    chain_ok = bool(chain_base) and chain_base in _version_blobs(rel, commit)
+    l_by = defaultdict(list)
+    for n in parse_notes(landed):
+        l_by[n["nid"]].append(n)
+    older = []
+    for n in parse_notes(cur):
+        there = l_by.get(n["nid"], [])
+        same = [x for x in there if x["text"] == n["text"]]
+        if same:
+            if n["ack"] and not any(x["ack"] for x in same):
+                return "the ack on note %s is on this computer only" % n["nid"]
+        elif there or chain_ok:
+            older.append((n["nid"], n["text"]))
+        else:
+            return "note %s on this computer is not in what landed" % n["nid"]
+    if older:
+        known = _notes_on_past_versions(rel, commit, older)
+        for pair in older:
+            if pair not in known:
+                return "note %s on this computer has text that is on no commit" % pair[0]
+    if chain_ok:
+        return ""
+    mine_bare = _without_notes(cur)
+    l_set = set(landed.split("\n"))
+    extra = [l for l in cur.split("\n") if l.strip() and l not in l_set
+             and not (NOTE_MARK in l and NOTE_LINE_RE.match(l))]
+    never = set(extra)                      # lines of `extra` no version read so far has had
+    for v in _past_versions(rel, commit):
+        if _without_notes(v) == mine_bare:
+            return ""
+        if never:
+            never.difference_update(v.split("\n"))
+    example = [l for l in extra if l in never] or extra
+    c_set = set(cur.split("\n"))
+    miss = [l for l in landed.split("\n") if l.strip() and l not in c_set
+            and not (NOTE_MARK in l and NOTE_LINE_RE.match(l))]
+    return ("this computer's copy, notes aside, matches no version on %s - it "
+            "holds an edit that has not landed%s"
+            % (CANONICAL_REF,
+               (" (for example the line: %s)" % example[0].strip()[:70]) if example
+               else " (for example it lacks: %s)" % miss[0].strip()[:70]
+               if miss else ""))
+
+
+def _refresh_disk_after_landing(doc, rel, landed, commit, fixes=(), only_if=None, chain=None,
+                                efixes=()):
+    """A2: after a note lands, make the copy on disk the landed text - only when that loses nothing.
+
+    -> (refreshed, why). `fixes` is a list of (old_nid, new_nid, text) renumberings to apply to
+    the disk copy whatever happens, so every note the human sees has the id it landed under.
+
+    The disk copy is replaced only when
+      * every note on it is in the landed text by id and text, ack included - or is an OLDER
+        text of a note the landed text still has under that id, and that older text was on the
+        ref once (so it is in the history, and the note itself is not going anywhere); and
+      * the disk copy with its note lines taken out equals, AS A WHOLE TEXT, some version of the
+        file at or before `commit`, also with note lines taken out.
+
+    ⛔ THE SECOND RULE IS A WHOLE-TEXT COMPARISON, NOT A LINE-BY-LINE ONE. The first version
+    asked whether each disk line was on some past version, which a pending DELETION passes
+    trivially: every line that is left was on main once. The refresh then put the deleted
+    paragraph back. A copy that is exactly an old version plus notes is safe to replace; any
+    other copy holds someone's unlanded edit, and is left alone with `why` saying so.
+
+    `only_if` (the Reader's landing queue, o9:W123): the text the disk copy must still be for
+    a refresh to happen at all - the text this landing was built from. A disk copy that has
+    moved on holds a later change still waiting in the queue; a pending DELETE passes both
+    rules above, so without this the refresh would put that note back.
+
+    ⛔ THE LOCK IS HELD ONLY TO READ AND WRITE THE FILE (o9:W123). The history reads in
+    `_a2_refusal` used to run inside it and took seconds on the big docs, and every save waits
+    on this lock. Now the decision is made outside it, and the final write passes `expect`, so a
+    copy that changed in between is refused rather than overwritten.
+
+    `efixes` (o9:W123): (old id, new id, old heading, new heading) for an entry this change
+    created that landed under a new id; the entry is renamed on disk like a renumbered note.
+    `chain()` -> (tip, base) or None: the Reader's run of writes (see `_tip_note`). Read under
+    the lock; it counts only when the copy is still `tip`.
+    """
+    try:
+        with _lock(doc):
+            try:
+                disk = doc.read_text(encoding="utf-8")
+            except OSError as ex:
+                return False, "could not re-read this computer's copy (%s)" % type(ex).__name__
+            cur = disk
+            for old, new, head, _new_head in efixes or ():
+                cur = _rename_entry(cur, old, new, head)
+            cur = _apply_note_fixes(cur, fixes)
+            if cur != disk:
+                write_doc(doc, cur, expect=disk)
+            base = None
+            if chain is not None:
+                try:
+                    got = chain()
+                except Exception:
+                    got = None
+                if got and got[0] and got[1] and got[0] in (_text_blob(disk), _text_blob(cur)):
+                    base = got[1]
+            if only_if is not None and cur.rstrip("\n") != only_if.rstrip("\n"):
+                return False, ("later changes on this computer are still waiting to land, and "
+                               "the copy is refreshed when the last of them lands")
+            if cur.rstrip("\n") == landed.rstrip("\n"):
+                return True, ""
+        why = _a2_refusal(cur, landed, rel, commit, chain_base=base)
+        if why:
+            return False, why
+        with _lock(doc):
+            write_doc(doc, landed if landed.endswith("\n") else landed + "\n", expect=cur)
+        return True, ""
+    except DocPathError as ex:
+        return False, "this computer's copy changed while it was being refreshed (%s)" % ex
 
 
 def _cmd_note_list(args, doc):
@@ -6104,7 +13287,7 @@ def _cmd_note_list(args, doc):
         for n in notes:
             where = n.get("entry") or "?"
             print("  %-5s %-6s %s (%s)" % (n["nid"], where, n["who"], n["when"]))
-            print("        %s" % n["text"])
+            print("        " + ("\n" + " " * 8).join(note_display(n).split("\n")))
             if n.get("ack"):
                 print("        seen: %s" % n["ack"])
             link = reader_link(d.name, where) if where != "?" else ""
@@ -6113,6 +13296,814 @@ def _cmd_note_list(args, doc):
                 print("        mark seen: orchdoc.py note --doc %s --note %s --ack"
                       % (slug, n["nid"]))
     return 0
+
+def _undo_unlanded_delete(doc, op, built):
+    """Main refused a deleted instruction: put this computer's copy back as it was. -> restored?
+
+    ⛔ A DELETE MAIN REFUSED MUST NOT STAY ON THIS COMPUTER (o9's review of W116, 2026-10-01).
+    It was left here, so the human's page showed the item deleted while main kept it live, and the
+    next unrelated note carried the leftover deletion note onto main's LIVE item, which then
+    said both "Act on it" and "the human deleted this instruction". So the file goes back to
+    `op["pre"]`, and only if it still holds exactly what the delete wrote (`op["post"]`): a
+    file that changed since is someone else's work, and is left alone. `op["plain"]` gets the
+    reason in words for the page, `op["next"]` what will make the delete possible when there is
+    something to say, and `op["restored"]` says whether the file went back.
+    """
+    branch = CANONICAL_REF.split("/", 1)[-1]
+    op["plain"] = built.get("plain") or ("it could not be applied to %s: %s"
+                                         % (branch, built.get("error")))
+    op["next"] = built.get("next")
+    if op.get("pre") is None or op.get("post") is None:
+        return False
+    try:
+        with _lock(doc):
+            write_doc(doc, op["pre"], expect=op["post"])
+    except (DocPathError, OSError, SystemExit):
+        return False
+    op["restored"] = True
+    return True
+
+
+def _has_origin():
+    """Whether the workspace is a git repo with a remote called origin, the one notes land on."""
+    import subprocess as _sp
+    try:
+        return _sp.run(["git", "-C", str(PROJECTS), "remote", "get-url", "origin"],
+                       capture_output=True, timeout=30, creationflags=flags()).returncode == 0
+    except Exception:
+        return False
+
+
+def _unlanded_delete_words(detail):
+    """A deleted instruction that did not reach main, for a reason other than main refusing it,
+    in words for the page. -> the dict `_undo_unlanded_delete` reads.
+
+    `detail` is what `land_note` said, or that it raised. A fetch that failed means main was
+    never reached, and the page says just that; anything else is rare enough that the lander's
+    own words go in brackets, for whoever is asked about it."""
+    branch = CANONICAL_REF.split("/", 1)[-1]
+    why = re.sub(r"\s+", " ", detail or "no reason given").strip()
+    why = re.sub(r"\s*(?:The note|It) is saved locally\.?$", "", why)
+    if why.startswith("could not fetch origin"):
+        plain = "%s could not be reached" % branch
+    else:
+        plain = "it could not be put on %s (%s)" % (branch, why)
+    return {"error": detail, "plain": plain,
+            "next": "Try again in a few minutes. If it fails the same way again, tell an "
+                    "orchestrator"}
+
+
+def land_note(doc, message, removed=(), op=None, mine_text=None, before_push=None, avoid=(),
+              skip=(), refresh_if=None, rebuild=False, chain=None):
+    """Put the human's note on the canonical ref. -> (ok, detail).
+
+    ⛔ NOT `cmd_commit`. That runs gate 0, which refuses on style findings belonging to
+    whatever an orchestrator left half-written in the doc. **the human's note must not fail to reach
+    main because somebody else's entry is untidy**, so this runs the one gate that is about a
+    note: nothing on the ref may disappear.
+
+    Two ways to build what lands:
+      * the disk copy already holds every line on the ref (bar what this call removed): land
+        the WHOLE disk copy, as this always did.
+      * the disk copy is BEHIND the ref (A1): land the canonical text plus the note operation in
+        `op` - see `_note_onto_canonical`. Before this existed, a copy one landing behind refused
+        every later note, and nothing told the human.
+    After a landing, the disk copy is replaced with what landed when that loses nothing (A2),
+    which is what clears a doc that got stuck. If it would lose something, the disk copy is left
+    alone and `detail` says why.
+
+    ⛔ THE REF IS PINNED TO ONE COMMIT ID PER ATTEMPT. Every worktree shares the
+    remote-tracking refs, and deliver.py and every orchdoc command fetch - so `origin/main` can
+    move between reading the canonical text and building on it. This read the text, then
+    resolved the ref again as the parent, and a landing built from the OLDER text on the NEWER
+    tip pushed as a fast-forward, removing whatever arrived in between (reproduced 2026-09-24).
+    Now the text, the parent and the checks all name one commit, so a moved remote rejects the
+    push, and the next attempt starts again from the new tip.
+
+    `op` is what `cmd_note` did: {"op": "add"|"edit"|"delete", "nid", "line", "prev", "entry"}.
+    On return it also carries `nid_final` when the note landed under a different id, and
+    `stuck`: notes on this computer that are still not on the ref, each with the reason. A
+    deleted instruction ("withdraw" or "retire") also carries `pre` and `post`, the file before
+    and after the delete: if the ref refuses the delete, the file goes back to `pre` and `op`
+    gets `restored` and `plain` (see `_undo_unlanded_delete`).
+
+    ⚠️ A FAILURE HERE IS NOT A LOST NOTE. The note is already written to the working
+    copy before this is called, which is exactly where it lived before this function existed. The
+    caller reports what happened rather than pretending either way.
+
+    The Reader's landing queue (`cmd_land_job`, o9:W123) passes the rest:
+      * `mine_text`: the text the write produced, used INSTEAD of the file on disk. The queue
+        lands changes some seconds after they were written, and by then the disk may hold
+        later ones; landing the file would put a later change under this one's commit subject.
+      * `before_push(fixes)`: called just before the push with the renumberings this landing
+        makes. It returns None to go on, or (kind, why) to stop without pushing.
+      * `avoid`, `skip`: passed to `_note_onto_canonical`.
+      * `refresh_if()`: the text the disk copy must still be for A2 to refresh it.
+      * `rebuild`: always build from the canonical text (A1), never land the copy whole. Passed
+        when an EARLIER change to the same doc is still queued: that change is in this copy,
+        and landing the copy whole would put it on main under this change's commit subject.
+      * `chain()`: the Reader's run of writes, for A2 (see `_tip_note`). The inline callers
+        pass the text they wrote and the text they wrote over.
+    `before_push(fixes, efixes)` also gets the entry renamings (see `_note_onto_canonical`);
+    `op["eid_final"]` is set when the entry this change created landed under a new id.
+    On a failure `op["fail"]` says what kind: "content" when retrying cannot help until main
+    or the change itself is different, the kind `before_push` named, and otherwise nothing
+    (a fetch, a push or a lock that may work next time).
+    """
+    import subprocess as _sp
+    import tempfile as _tf
+
+    rel = os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/")
+
+    def g(a, env=None):
+        p = _sp.run(["git", "-C", str(PROJECTS)] + a, capture_output=True, text=True,
+                    env=env, timeout=60, encoding="utf-8", errors="replace",
+                    creationflags=flags())
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+
+    def content_fail(why):
+        """A failure that the same inputs will hit again."""
+        if op is not None:
+            op["fail"] = "content"
+        return False, why
+
+    if op is not None:
+        op.pop("nid_final", None)
+        op.pop("eid_final", None)
+        op.pop("fail", None)
+        op["stuck"] = []
+    message0 = message
+    last = "no attempt was made"
+    for attempt in range(1, 4):
+        message = message0
+        rc, _, err = g(["fetch", "--quiet", "origin"])
+        if rc != 0:
+            return False, "could not fetch origin (%s)" % (err[:120] or "no reason given")
+        rc, pinned, err = g(["rev-parse", "--verify", "%s^{commit}" % CANONICAL_REF])
+        if rc != 0 or not pinned:
+            return False, "could not resolve %s" % CANONICAL_REF
+        # An older copy of this file WARNS and lands: see `_refuse_if_tool_is_stale`.
+        _stale = _refuse_if_tool_is_stale(pinned) if attempt == 1 else None
+        if _stale:
+            sys.stderr.write("[orchdoc] warning: %s The note lands anyway.\n"
+                             % _stale.replace("\n", " "))
+
+        # Not through `g`: that strips, and this text may become the file.
+        _p = _sp.run(["git", "-C", str(PROJECTS), "show", "%s:%s" % (pinned, rel)],
+                     capture_output=True, timeout=60, creationflags=flags())
+        if _p.returncode != 0:
+            return False, "could not read %s:%s (%s)" % (
+                CANONICAL_REF, rel, _p.stderr.decode("utf-8", "replace").strip()[:100])
+        canon = _p.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+
+        if mine_text is not None:
+            mine = mine_text
+        else:
+            try:
+                mine = doc.read_text(encoding="utf-8", errors="replace")
+            except Exception as ex:
+                return False, "could not read the working copy (%s)" % type(ex).__name__
+
+        # THE ONE GATE. Line-identity, same unit `cmd_commit`'s gate 1 uses.
+        # A DELETE IS A REMOVAL BY DEFINITION, so "nothing may disappear" can never land one.
+        # `removed` is exactly the line(s) THIS call took out, so everything else is still
+        # protected and a delete can still go.
+        allowed = set(l for l in removed if l and l.strip())
+        gone = _lines_lost(canon, mine, allowed)
+        built, fixes, efixes = None, [], []
+        if op is not None:
+            op.pop("nid_final", None)
+            op.pop("eid_final", None)
+        # Which OTHER notes on this computer are not on the ref, and which of those were on it
+        # once. The note being saved is left out: it is new, and asking the history about it
+        # would read up to 80 versions of the file on every save.
+        c_pairs = _note_pairs(canon)
+        own_id = (op or {}).get("nid")
+        ask = [p for p in _note_pairs(mine) if p not in c_pairs and p[0] != own_id]
+        try:
+            past = _notes_on_past_versions(rel, pinned, ask) if ask else set()
+        except Exception:
+            past = set(ask)                   # cannot tell: treat them as landed once (kept off)
+        # ⛔ A NOTE DELETED ON MAIN MUST NOT RIDE BACK IN ON A WHOLE-COPY LANDING. A copy
+        # holding every line on the ref would be landed whole, and that includes a note someone
+        # removed on main since this copy was written. Build from the ref instead (A1), which
+        # leaves it out and lists it in `stuck`.
+        c_ids = set(p[0] for p in c_pairs)
+        revived = [p for p in ask if p in past and p[0] not in c_ids]
+        # A note that another queued change of the Reader lands itself (`skip`, o9:W123) is not
+        # landed whole with this copy either: it would go out under this change's commit subject.
+        skipping = [p for p in ask if p[0] in skip] if skip else []
+        if gone or ((revived or skipping or rebuild) and op):
+            if not op:
+                return False, ("landing this copy would REMOVE %d line(s) that are on %s - so "
+                               "it holds more than a note. Reconcile it by hand; the note is "
+                               "saved locally." % (len(gone), CANONICAL_REF))
+            # ⛔ A1. The disk copy is behind the ref. Landing it whole would revert
+            # whatever landed since, so land the canonical text plus this one note instead.
+            try:
+                built = _note_onto_canonical(canon, mine, op, past, avoid=avoid, skip=skip)
+            except Exception as ex:
+                built = {"error": "the note could not be applied to %s (%s)"
+                                  % (CANONICAL_REF, type(ex).__name__)}
+            if built.get("error"):
+                if op.get("op") in ("withdraw", "retire") and _undo_unlanded_delete(doc, op, built):
+                    return content_fail("%s refused the delete, so this computer's copy was put "
+                                        "back as it was: %s" % (CANONICAL_REF, built["error"]))
+                return content_fail("this computer's copy is behind %s and the note could not "
+                                    "be moved onto it: %s. The note is saved locally."
+                                    % (CANONICAL_REF, built["error"]))
+            fixes = list(built["renumbered"])
+            # The entry this change created, under a new id because main gave its id to a
+            # different entry (o9:W123): the commit subject names the id it lands as, and the
+            # copy on this computer is renamed to match, its notes with it.
+            efixes = list(built.get("entries") or [])
+            for old_e, new_e, _h0, _h1 in efixes:
+                op["eid_final"] = new_e
+                message = re.sub(r"(?<![\w.])%s(?!\w)" % re.escape(old_e), new_e, message)
+            if built["nid"] != op.get("nid"):
+                op["nid_final"] = built["nid"]
+                message = re.sub(r"(?<![\w.])%s(?!\w)" % re.escape(op["nid"]), built["nid"],
+                                 message)
+                _m = NOTE_LINE_RE.match(op.get("line") or "")
+                if _m and not efixes:
+                    # (With an entry renamed, the renaming carries its notes.)
+                    fixes.append((op["nid"], built["nid"], _m.group("text").strip()))
+            op["stuck"] = list(built["stuck"])
+            landed_text = built["text"] if built["text"].endswith("\n") else built["text"] + "\n"
+            allowed_lost = set(built["removed"])
+            rc, blob, err = _hash_text(landed_text, rel)
+        elif mine_text is not None:
+            # The queue's snapshot is the text itself, so it is hashed as text: the file on
+            # disk may already hold a later change (o9:W123).
+            landed_text = mine
+            allowed_lost = allowed
+            rc, blob, err = _hash_text(mine, rel)
+        else:
+            landed_text = mine
+            allowed_lost = allowed
+            # `--path rel`, as `_hash_text` passes in the branch above: attributes are looked up
+            # by the path the blob lands at, not by the absolute path of the file on disk.
+            rc, blob, err = g(["hash-object", "-w", "--path", rel, str(doc)])
+            if rc == 0 and blob:
+                # What A2 compares the disk against must be what LANDED - the blob - not the
+                # earlier read, since the file can change between the two.
+                _b = _sp.run(["git", "-C", str(PROJECTS), "cat-file", "-p", blob],
+                             capture_output=True, timeout=60, creationflags=flags())
+                if _b.returncode == 0:
+                    landed_text = _b.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+        if rc != 0 or not blob:
+            return False, "could not hash the document (%s)" % (err[:100] or "no reason")
+
+        def _refresh(commit_sha, detail):
+            """A2, after the note is on the ref. Never turns a landing into a failure."""
+            try:
+                # With a `before_push`, the renumberings are on disk already: it made them,
+                # under the lock, before the push (`cmd_land_job`).
+                # A note this landing left `stuck` (removed on main, still here) keeps the old
+                # A2 rule: the copy is left alone and shows it, never erases it (o9:W123).
+                ok, why = _refresh_disk_after_landing(
+                    doc, rel, landed_text, commit_sha, () if before_push else fixes,
+                    only_if=refresh_if() if refresh_if else None,
+                    chain=None if (op or {}).get("stuck") else chain,
+                    efixes=() if before_push else efixes)
+            except (Exception, SystemExit) as ex:
+                # SystemExit too: `_lock` raises it when the doc stays locked, and the note is
+                # on the ref by now, so that must read as "landed, not refreshed".
+                ok, why = False, "the refresh raised %s" % type(ex).__name__
+            if ok:
+                return True, detail
+            return True, ("%s - this computer's copy was NOT refreshed to match, because %s"
+                          % (detail, why))
+
+        # Already there word for word (a retry, or a note an orchestrator's landing merged in):
+        # that is landed, not a failure to build a commit.
+        def _with_notes(detail):
+            """`detail`, plus what A1 carried or left behind, in words."""
+            if built and (built["carried"] or built["skipped"] or built.get("entries")):
+                bits = []
+                for old_e, new_e, _h0, _h1 in built.get("entries") or ():
+                    bits.append("landed as %s, because %s already names a different entry on %s"
+                                % (new_e, old_e, CANONICAL_REF))
+                if built["carried"]:
+                    bits.append("also landed %s, stuck on this computer until now"
+                                % ", ".join(built["carried"]))
+                if built["skipped"]:
+                    bits.append("not landed: %s" % "; ".join(built["skipped"]))
+                detail += " (" + "; ".join(bits) + ")"
+            return detail
+
+        rc, on_ref, _ = g(["rev-parse", "%s:%s" % (pinned, rel)])
+        if rc == 0 and on_ref == blob:
+            if before_push is not None and (fixes or efixes):
+                # Nothing is pushed, but the renumberings must still reach the disk copy and
+                # the later queued changes before this one is called landed.
+                stop = before_push(fixes, efixes)
+                if stop:
+                    if op is not None:
+                        op["fail"] = stop[0]
+                    return False, stop[1]
+            return _refresh(pinned, _with_notes("already on %s at %s"
+                                                % (CANONICAL_REF, pinned[:10])))
+
+        idx = pathlib.Path(_tf.gettempdir()) / ("orchdoc-note-%s.index" % os.getpid())
+        env = dict(os.environ, GIT_INDEX_FILE=str(idx))
+        try:
+            if idx.exists():
+                idx.unlink()
+            g(["read-tree", pinned], env)
+            g(["update-index", "--add", "--cacheinfo", "100644,%s,%s" % (blob, rel)], env)
+            rc, tree, err = g(["write-tree"], env)
+            if rc != 0 or not tree:
+                return False, "could not write the tree (%s)" % (err[:100] or "no reason")
+        finally:
+            try:
+                idx.unlink()
+            except OSError:
+                pass
+
+        # The lander trailer is what B2 reads to know this was a Reader note, not an
+        # orchestrator's own landing.
+        p = _sp.run(["git", "-C", str(PROJECTS), "commit-tree", tree, "-p", pinned],
+                    input=("%s\n\n%s: %s\n" % (message, LANDER_TRAILER, READER_LANDER))
+                    .encode("utf-8"),
+                    capture_output=True, timeout=60, creationflags=flags())
+        commit = p.stdout.decode("utf-8", "replace").strip()
+        if p.returncode != 0 or not commit:
+            return False, "could not build the commit"
+
+        # Touches exactly the one path, or it does not go.
+        rc, names, _ = g(["diff", "--name-only", pinned, commit])
+        touched = sorted(n for n in names.splitlines() if n.strip())
+        if touched != [rel]:
+            return content_fail("the commit would touch %s, not just %s"
+                                % (touched or "nothing", rel))
+
+        # ⛔ VERIFY THE COMMIT AGAINST ITS ACTUAL PARENT, from the objects, not from the
+        # variables that built it: the parent must be the pinned commit, and nothing on it may
+        # be missing from the commit except what this note operation removed.
+        rc, parent, _ = g(["rev-parse", "%s^" % commit])
+        _pt = _sp.run(["git", "-C", str(PROJECTS), "show", "%s:%s" % (parent, rel)],
+                      capture_output=True, timeout=60, creationflags=flags())
+        _bt = _sp.run(["git", "-C", str(PROJECTS), "show", "%s:%s" % (commit, rel)],
+                      capture_output=True, timeout=60, creationflags=flags())
+        if rc != 0 or parent != pinned or _pt.returncode != 0 or _bt.returncode != 0:
+            return False, "could not verify the commit against its parent"
+        lost = _lines_lost(_pt.stdout.decode("utf-8", "replace").replace("\r\n", "\n"),
+                           _bt.stdout.decode("utf-8", "replace").replace("\r\n", "\n"),
+                           allowed_lost)
+        if lost:
+            return content_fail("the commit would remove %d line(s) that are on its parent - "
+                                "first: %s" % (len(lost), lost[0].strip()[:80]))
+
+        if before_push is not None:
+            stop = before_push(fixes, efixes)
+            if stop:
+                if op is not None:
+                    op["fail"] = stop[0]
+                return False, stop[1]
+
+        branch = CANONICAL_REF.split("/", 1)[-1]
+        rc, _, err = g(["push", "origin", "%s:%s" % (commit, branch)])
+        if rc != 0:
+            last = err.splitlines()[-1][:120] if err else "no reason"
+            if ("rejected" in err or "fetch first" in err or "non-fast-forward" in err) \
+                    and attempt < 3:
+                if before_push is not None and (fixes or efixes):
+                    # `before_push` has renumbered the queue and the disk copy to match this
+                    # attempt, and the next attempt would start from the old ids in memory. The
+                    # next `land-job` run reads the renumbered job instead, at once.
+                    if op is not None:
+                        op["fail"] = "changed"
+                    return False, ("%s moved while this change was landing; it is tried again "
+                                   "(%s)" % (CANONICAL_REF, last))
+                continue                          # main moved: start again from the new tip
+            return False, "push refused (%s)" % last
+        return _refresh(commit, _with_notes(commit[:10]))
+    return False, ("%s moved during each of 3 attempts, so the note was not landed (%s). It is "
+                   "saved locally." % (CANONICAL_REF, last))
+
+
+def _dup_id_refusal(args, doc, eid, n, doing):
+    """Refusing a note or a delete on an id `n` entries carry. -> the reason.
+
+    A terminal gets the gate's name. The page gets what is wrong and who has to fix it, since
+    the human cannot fix it from there (o9's review of W116, fix round 2: "fix E-DUPID first" was
+    shown to him as it was). `doing` is what was asked, as "delete it"."""
+    if not args.json:
+        return "id %s appears %d times - fix E-DUPID first" % (eid, n)
+    return ("%s is the id of %d entries in this doc, so it is not clear which one you meant. %s "
+            "has to give one of them a new id before you can %s"
+            % (eid, n, _orchdoc_slug_or_none(doc) or "The orchestrator that owns this doc",
+               doing))
+
+
+# ==========================================================================================
+# ⭐ THE READER'S LANDING QUEUE (o9:W123). The human, 2026-10-01: *"Every time I add an instruction or
+# make a change there, the pause can last as long as 30 seconds ... It needs to be pushed to
+# whatever background process that can hold it while i continue to work with it."*
+#
+# Measured that day: a Reader save waited for `land_note` - a fetch, a commit and a push to
+# GitHub, up to three attempts - while writing the doc itself took under 0.12 s. With
+# `--queue-landing` (the Reader passes it) a save also writes ONE JOB FILE, inside the doc's lock
+# and just before the doc: the commit subject, the lines the change removed, the note operation
+# and the whole text the write produced. The Reader's landing worker (`reader_landing.py`) runs
+# `land-job` on the jobs one at a time, oldest first, and deletes a job only once its change is
+# on the canonical ref. A job left behind by a failed push, a crash or a restart is landed by the
+# next run, so a saved change is never dropped.
+#
+# ⛔ A JOB LANDS THE TEXT ITS SAVE WROTE, NOT THE FILE ON DISK. By the time it lands, the disk may
+# hold later changes, and landing the file would put them under this change's commit subject,
+# which other tools read.
+# ==========================================================================================
+READER_LANDING_REL = ".shared/state/reader-landing"
+JOB_NAME_RE = re.compile(r"^(\d{20})-[0-9a-f]{6}\.json$")
+
+
+def reader_landing_dir():
+    """Where this workspace's landing queue lives. Local state: never committed."""
+    return Path(PROJECTS) / READER_LANDING_REL
+
+
+def _job_retry(fn):
+    """`fn()`, retried for up to two seconds while Windows refuses a file that another process
+    (the worker, a virus scanner) has open for a moment."""
+    for k in range(40):
+        try:
+            return fn()
+        except PermissionError:
+            if k == 39:
+                raise
+            time.sleep(0.05)
+
+
+def _job_bytes(path):
+    """A job file's bytes, or None when there is no such file."""
+    def _r():
+        try:
+            with open(str(path), "rb") as fh:
+                return fh.read()
+        except FileNotFoundError:
+            return None
+    return _job_retry(_r)
+
+
+def _job_write(path, job):
+    """Write one job file atomically (temp file beside it, then os.replace). -> its bytes."""
+    path = Path(path)
+    body = json.dumps(job, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    tmp = path.with_name(".%s.tmp-%d" % (path.name, os.getpid()))
+
+    def _w():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(tmp), "wb") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(str(tmp), str(path))
+    try:
+        _job_retry(_w)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return body
+
+
+def _job_unlink(path):
+    """Delete a job file; one already gone is fine."""
+    def _u():
+        try:
+            os.unlink(str(path))
+        except FileNotFoundError:
+            pass
+    _job_retry(_u)
+
+
+def _jobs_for(doc):
+    """[(path, job, bytes)] for every queued job of `doc`, oldest first. A job file that cannot
+    be read is left out here; the worker reports it by name."""
+    d = reader_landing_dir()
+    rel = os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/")
+    try:
+        names = sorted(p.name for p in d.iterdir() if JOB_NAME_RE.match(p.name))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        raw = _job_bytes(d / name)
+        if raw is None:
+            continue
+        try:
+            job = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            continue
+        if isinstance(job, dict) and job.get("doc") == rel:
+            out.append((d / name, job, raw))
+    out.sort(key=lambda t: (int(t[1].get("seq") or 0), t[0].name))
+    return out
+
+
+def _queue_job(args, doc, message, removed, op, snapshot, pre=None):
+    """With `--queue-landing` (and no `--no-land`): journal one change. -> the job path, or None.
+
+    Called INSIDE the doc's lock and BEFORE the doc is written, so a change that reached the disk
+    always has its job. The caller deletes the job again if the write or its verification
+    fails, because a change it reports as failed must not land.
+
+    `pre` is the doc's text as this save read it, before its change: see `_tip_note`.
+    """
+    if getattr(args, "no_land", False) or not getattr(args, "queue_landing", False):
+        return None
+    d = reader_landing_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    last = 0
+    for p in d.iterdir():
+        m = JOB_NAME_RE.match(p.name)
+        if m:
+            last = max(last, int(m.group(1)))
+    # Ordered by the clock, and never at or before a job still queued, so the order the worker
+    # lands them in is the order they were saved even if the clock steps back.
+    seq = max(time.time_ns(), last + 1)
+    path = d / ("%020d-%s.json" % (seq, os.urandom(3).hex()))
+    _job_write(path, {"v": 1, "id": path.stem, "seq": seq,
+                      "doc": os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/"),
+                      "message": message, "removed": list(removed), "op": op,
+                      "snapshot": snapshot, "created": _now_iso()})
+    _tip_note(doc, path.name, pre, snapshot)
+    return path
+
+
+def _drop_job(path, doc=None):
+    """Delete a job whose change did not happen. Never raises: the caller is already failing."""
+    if path is not None:
+        try:
+            _job_unlink(path)
+        except OSError:
+            pass
+        if doc is not None:
+            _tip_forget(doc, path.name)
+
+
+# ==========================================================================================
+# ⭐ A COPY THE READER CHANGED IS REFRESHED ONCE ITS CHANGES ARE ALL ON MAIN (o9:W123).
+# Measured 2026-10-01: the human added a Do-today item at 17:57 to a copy one landing behind main.
+# The item was moved onto main's text (A1), but A2 then refused to make the disk copy match:
+# a copy is replaced only when, notes aside, it equals some past version of the file, and a
+# copy holding a new §2.0 item or a new W item never does. deliver.py does not refresh a copy
+# that holds an unlanded change either, so the copy stopped following main for good, and every
+# later save went into it.
+#
+# The fix keeps a record per doc, beside the landing queue: the blob id of the text the Reader
+# last wrote (`tip`), and the blob id of the text the FIRST of the still-queued changes was
+# written over (`base`). When the last queued change lands, the copy is refreshed if it is still
+# exactly `tip` (nothing else wrote it) and `base` is a version of the file on main: the copy is
+# then a version of main plus the Reader's changes, which have all landed, so replacing it loses
+# nothing. Any other writer breaks the run, and the old rules apply.
+# ==========================================================================================
+READER_TIPS_REL = READER_LANDING_REL + "/tips"
+
+
+def _text_blob(text):
+    """The git blob id of `text` as `write_doc` writes it: sha1 of the blob header and the UTF-8
+    bytes, CRLF read as LF. No git call. None for None."""
+    import hashlib
+    if text is None:
+        return None
+    data = text.replace("\r\n", "\n").encode("utf-8")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def _tip_path(doc):
+    return Path(PROJECTS) / READER_TIPS_REL / ("%s.json" % Path(doc).name)
+
+
+def _tip_read(doc):
+    """The doc's record of the Reader's run of writes, or None."""
+    raw = _job_bytes(_tip_path(doc))
+    if raw is None:
+        return None
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def _tip_write(doc, rec):
+    """Write the record. Never raises: without it the copy is not refreshed, nothing is lost."""
+    try:
+        _job_write(_tip_path(doc), rec)
+    except OSError as ex:
+        sys.stderr.write("[orchdoc] could not record the Reader's write to %s (%s)\n"
+                         % (Path(doc).name, type(ex).__name__))
+
+
+def _tip_note(doc, name, pre, snapshot):
+    """Inside the doc's lock, before the write: the Reader is writing `snapshot` over `pre`, as
+    queued change `name`. The run goes on when the copy is still what the Reader last wrote and
+    one of its changes is still queued; otherwise a new run starts at `pre`."""
+    old = _tip_read(doc) or {}
+    d = reader_landing_dir()
+    live = [n for n in (old.get("jobs") or [])
+            if isinstance(n, str) and JOB_NAME_RE.match(n) and (d / n).exists()]
+    pre_blob = _text_blob(pre)
+    if live and old.get("base") and old.get("tip") and old.get("tip") == pre_blob:
+        base = old["base"]
+    else:
+        base, live = pre_blob, []
+    _tip_write(doc, {"v": 1, "doc": os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/"),
+                     "tip": _text_blob(snapshot), "base": base, "jobs": live + [name],
+                     "at": _now_iso()})
+
+
+def _tip_forget(doc, name):
+    """A queued change that did not happen ends the run: the copy is no longer `tip` plus it."""
+    rec = _tip_read(doc)
+    if rec and name in (rec.get("jobs") or []):
+        rec["tip"] = None
+        rec["jobs"] = [n for n in rec["jobs"] if n != name]
+        _tip_write(doc, rec)
+
+
+def _version_blobs(rel, commit, depth=200):
+    """Blob ids `rel` has had at or before `commit`, as far back as `depth` commits that changed
+    it. One git call that reads no file contents: the raw diff lines name the blob before and
+    after each change, merges included."""
+    rc, log, _ = git(["log", "--format=%H", "-n", str(depth), "--raw", "-m", "--no-abbrev",
+                      "--no-renames", commit, "--", rel])
+    out = set()
+    if rc != 0:
+        return out
+    for line in log.splitlines():
+        if line.startswith(":"):
+            for b in line.split()[2:4]:
+                if re.match(r"^[0-9a-f]{40}$", b) and b.strip("0"):
+                    out.add(b)
+    return out
+
+
+QUEUED_DETAIL = ("queued: the Reader's landing worker puts it on %s in the background, and the "
+                 "page shows when it is there")
+
+
+# ==========================================================================================
+# ⭐ ONE SAVE IS WRITTEN ONCE, HOWEVER OFTEN IT IS SENT (o9:W123). The human, 2026-10-01 17:08: *"the
+# instruction never registers as sent and eventually shows a timeout message. I end up resending
+# the message trying to get it to register."* Measured that day on a test Reader: the note was on
+# disk about a second in, the Reader stopped the writer at 60 s while it was still pushing, the
+# page said NOT SENT, and the resend wrote the same note a second time.
+#
+# The Reader's page sends an id with each save and the Reader passes it as `--client-id`. Under
+# the doc's lock, before anything else, the save looks for a record of that id and that content.
+# When there is one, the change is already on disk: the earlier answer is printed again, marked
+# `duplicate`, and nothing is written. Otherwise the record is written in the same locked step
+# as the doc, so every save that reached the disk has one. Records are deleted after
+# SENT_KEEP_SECONDS.
+#
+# A record is keyed by the id AND what was asked (`what`), so text changed in the box after a
+# send that seemed to fail is a new save, never dropped as a repeat of the old text.
+# ==========================================================================================
+READER_SENT_REL = READER_LANDING_REL + "/sent"
+CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+SENT_KEEP_SECONDS = 14 * 86400
+
+
+def reader_sent_dir():
+    """Where the `--client-id` records live. Local state, like the landing queue."""
+    return Path(PROJECTS) / READER_SENT_REL
+
+
+def _sent_path(args, doc, what):
+    """-> the record path for this save (`<client id>.<content hash>.json`), or None without a
+    usable `--client-id`."""
+    import hashlib
+    cid = getattr(args, "client_id", None)
+    if not cid or not CLIENT_ID_RE.match(cid):
+        return None
+    key = dict(what, doc=os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/"))
+    h = hashlib.sha256(json.dumps(key, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    return reader_sent_dir() / ("%s.%s.json" % (cid, h))
+
+
+def _sent_check(args, doc, what):
+    """-> (record or None, refusal or None) for this call's `--client-id`. Call it inside the
+    doc's lock, so a repeat waits for the first save to finish writing."""
+    cid = getattr(args, "client_id", None)
+    if not cid:
+        return None, None
+    if not CLIENT_ID_RE.match(cid):
+        return None, "--client-id is 8 to 64 letters, digits, - or _"
+    raw = _job_bytes(_sent_path(args, doc, what))
+    if raw is None:
+        return None, None
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        rec = None
+    # A record that cannot be read still says this save reached the disk.
+    return (rec if isinstance(rec, dict) else {}), None
+
+
+def _sent_record(args, doc, what, reply):
+    """Record this call's `--client-id`, inside the doc's lock and right after the doc is
+    written. -> the record's path, or None. A record that cannot be written is reported, never
+    raised: the change is on disk already, and without the record only a resend could repeat it."""
+    path = _sent_path(args, doc, what)
+    if path is None:
+        return None
+    cid, d = args.client_id, path.parent
+    try:
+        _job_write(path, {"v": 1, "cid": cid, "at": _now_iso(), "reply": reply,
+                          "doc": os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/")})
+    except OSError as ex:
+        sys.stderr.write("[orchdoc] could not record client id %s (%s); a resend of this save "
+                         "would write it again\n" % (cid, type(ex).__name__))
+        return None
+    cutoff = time.time() - SENT_KEEP_SECONDS
+    try:
+        for p in d.iterdir():
+            if p.suffix == ".json" and p.name != path.name and p.stat().st_mtime < cutoff:
+                _job_unlink(p)
+    except OSError:
+        pass
+    return path
+
+
+def _sent_update(path, reply):
+    """Put the full answer into a record `_sent_record` wrote. Never raises."""
+    if path is None:
+        return
+    try:
+        raw = _job_bytes(path)
+        rec = json.loads(raw.decode("utf-8")) if raw else None
+        if isinstance(rec, dict):
+            rec["reply"] = dict((k, v) for k, v in reply.items() if k != "notes")
+            _job_write(path, rec)
+    except (OSError, ValueError):
+        pass
+
+
+def _sent_drop(path):
+    """Delete the record of a save that did not take, so sending it again writes it."""
+    if path is not None:
+        try:
+            _job_unlink(path)
+        except OSError:
+            pass
+
+
+def _ref_text(rel):
+    """`rel` as the canonical ref has it, or None when the ref cannot be read. One local
+    `git show`, no network."""
+    try:
+        p = subprocess.run(["git", "-C", str(PROJECTS), "show", "%s:%s" % (CANONICAL_REF, rel)],
+                           capture_output=True, timeout=60, creationflags=flags())
+        if p.returncode == 0:
+            return p.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+    except Exception:
+        pass
+    return None
+
+
+def _ref_next_id(rel, prefix):
+    """The next free `prefix` id (W, N) in `rel` as the canonical ref has it, or None when the
+    ref cannot be read."""
+    text = _ref_text(rel)
+    if text is None:
+        return None
+    return next_id(parse_entries(text.split("\n"))[0], prefix, text)
+
+
+def _sent_reply(args, rec):
+    """Answer a repeat of a save that is already on disk. Writes nothing."""
+    reply = dict(rec.get("reply") or {})
+    reply.update(ok=True, duplicate=True)
+    if args.json:
+        print(json.dumps(reply))
+    else:
+        print("[ALREADY SAVED] client id %s was saved before (%s %s in %s); nothing was written"
+              % (args.client_id, reply.get("action") or "?", reply.get("nid") or
+                 reply.get("id") or "?", reply.get("doc") or rec.get("doc") or "?"))
+    return 0
+
+
+def _undo_failed_write(doc, raw, post):
+    """Put `doc` back to `raw`, what it held before this command wrote `post`, once the
+    read-back has refused that write (o9:W153). Call it inside the lock the write was made in.
+    -> the words to add to the refusal.
+
+    Only when the file still holds exactly `post`: a file that changed since is someone else's
+    work, so it is left alone and the refusal says so. `raw` is the file's bytes decoded, and
+    `write_doc` writes it with no newline translation, so the bytes come back as they were."""
+    try:
+        write_doc(doc, raw, expect=post)
+    except (DocPathError, OSError) as ex:
+        return (". It could NOT be taken back out of the file (%s), so look at %s before "
+                "sending it again" % (ex, doc.name))
+    return ". Nothing was left in the file: it is back as it was before the write"
+
 
 def cmd_note(args):
     """Add, edit, delete or list a note THE HUMAN wrote on one entry.
@@ -6151,6 +14142,36 @@ def cmd_note(args):
     if getattr(args, "list_only", False):
         return _cmd_note_list(args, doc)
 
+    if getattr(args, "show", None):
+        # o9L1443: the human's copy exactly as he typed it. Only the decoded text goes to stdout, as
+        # bytes, so a Windows console cannot turn its line breaks into CRLF and nothing is
+        # added before or after it. `--list` and the Stop hook indent each line; this does not.
+        want = args.show.strip()
+
+        def _notes_in(p):
+            # Read exactly as `_cmd_note_list` reads, so --show and --list see the same notes.
+            return parse_notes("\n".join(
+                p.read_text(encoding="utf-8", errors="replace").splitlines()))
+
+        hit = [n for n in _notes_in(doc) if n.get("nid") == want]
+        # o9L1445: the Reader writes the human's notes into the main checkout's copy, which a
+        # worktree that has not merged main does not hold (the Stop hook reads both, o9:W161,
+        # and names this command). Read only: the same doc name in the shared checkout.
+        if not hit:
+            for root in _picture_roots()[1:]:
+                alt = root / doc.name
+                if alt.is_file() and alt.resolve() != doc.resolve():
+                    hit = [n for n in _notes_in(alt) if n.get("nid") == want]
+                    if hit:
+                        break
+        if not hit:
+            sys.stderr.write("no note %s in %s\n" % (want, doc.name))
+            return 1
+        sys.stdout.flush()
+        sys.stdout.buffer.write(note_display(hit[0]).encode("utf-8"))
+        sys.stdout.buffer.flush()
+        return 0
+
     if not args.id and not args.note:
         _note_fail(args, "say which entry (--id) or which note (--note)")
         return 2
@@ -6160,7 +14181,7 @@ def cmd_note(args):
         _note_fail(args, "--text is required unless --delete")
         return 2
     if args.note and not NOTE_ID_RE.match(args.note):
-        _note_fail(args, "a note id looks like n3, not %r" % args.note)
+        _note_fail(args, "a note id looks like D38.n2 (or a legacy n3), not %r" % args.note)
         return 2
     want_kind = (getattr(args, "kind", None) or "").upper() or None
     if want_kind and want_kind not in NOTE_KINDS:
@@ -6168,35 +14189,155 @@ def cmd_note(args):
                    % (", ".join(k.lower() for k in NOTE_KINDS), args.kind))
         return 2
 
-    who = args.by or human_name().title()
+    # o9:W258: an orchestrator writes or edits no note. (--ack, --list and --show returned above;
+    # a delete is judged below, once the note's label is known.)
+    if not args.delete and _orch_note_refusal(
+            args, "a new note" if not args.note else "an edit of note %s" % args.note):
+        return 1
+
+    # o9:W258 (o7's finding): a caller that is an orchestrator is recorded as that orchestrator in
+    # the note line, the commit subject and the landing marker, never as the human. `--delete`
+    # took its author from the default and committed "(the human)" when o7 ran it.
+    who = _orch_caller(args) or args.by or human_name().title()
     when = args.at or _stamp_human()
 
+    # ⭐ `--id W<N> --delete` WITH NO `--note` DELETES A WHOLE INSTRUCTION ITEM, AND NOTHING
+    # ELSE. The human, 2026-10-01: *"For any "the human's Instruction" item, I need to be able to delete
+    # the entire message."* Any other entry can hold several notes, so a delete there still has
+    # to name one.
+    item_level = bool(args.delete and not args.note)
+    # o9:W123: a save the Reader sent twice is written once (see `_sent_check`).
+    _what = {"cmd": "note", "id": args.id or "", "note": args.note or "", "text": args.text,
+             "delete": bool(args.delete), "kind": want_kind or ""}
+    # ⛔ A NEW NOTE'S NUMBER COUNTS THE CANONICAL REF TOO (o9:W123), as an entry id already did:
+    # this copy can be behind it, and the next number free here can be a note there. Read
+    # before the lock, as `cmd_instruct` reads the ref's next W id.
+    _ref_lines = None
+    if args.id and not args.note and not args.delete:
+        _rt = _ref_text(os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/"))
+        _ref_lines = _rt.split("\n") if _rt is not None else None
     with _lock(doc):
-        lines = doc.read_text(encoding="utf-8").splitlines()
+        _seen, _bad = _sent_check(args, doc, _what)
+        if _bad:
+            _note_fail(args, _bad)
+            return 2
+        if _seen is not None:
+            return _sent_reply(args, _seen)
+        # The file byte for byte, so a deleted instruction that main then refuses can be put
+        # back exactly as it was (see `_undo_unlanded_delete`). `lines` is what `read_text`
+        # gives: universal newlines, then split.
+        _raw = doc.read_bytes().decode("utf-8")
+        lines = _raw.replace("\r\n", "\n").replace("\r", "\n").splitlines()
         entries, _ = parse_entries(lines)
         existing = parse_notes("\n".join(lines))
+        _pre = "\n".join(lines)
+        note_id, retire, op_item, op_ins = args.note, None, None, None
 
-        if args.note:
-            hits = [n for n in existing if n["nid"] == args.note]
+        # o9:W258: an orchestrator may delete only a note an orchestrator wrote (so an owner can
+        # clean up its own), never the human's note or one of his instruction items.
+        # o9:W258 (o1's finding): an o1 lane meant W36.n1, named bare `n1`, and deleted the human's
+        # legacy note `n1` on T7. Ids match EXACTLY here (no suffix matching), so a bare id
+        # reaches the legacy note of that name; the refusal lists every note it could be.
+        if args.delete and _orch_caller(args):
+            _theirs = [n for n in existing if n["nid"] == args.note]
+            _cands = [n for n in existing if n["nid"] == args.note
+                      or n["nid"].endswith("." + (args.note or "-"))]
+            _list = "; ".join("%s (%s from %s, line %d)" % (n["nid"], n["kind"], n["who"],
+                                                          n["line"]) for n in _cands)
+            if item_level or not all(_ORCH_CALLER_RE.match(n["who"]) for n in _theirs):
+                _orch_note_refusal(args, "a delete of the human's note or instruction%s" % (
+                    " (candidates: %s)" % _list if _list else ""))
+                return 1
+            # o9:W258 review (o9L1477): a bare id such as `n1` that some scoped note (`W36.n1`)
+            # also ends with is ambiguous for a session, whoever labelled the legacy note; name
+            # the scoped id. The human's own deletes are unchanged.
+            if len(_cands) > len(_theirs):
+                _note_fail(args, "note id %s is ambiguous in %s; name the full id. Candidates: %s"
+                           % (args.note, doc.name, _list))
+                return 1
+
+        if item_level:
+            match = [e for e in entries if e["id"] == args.id]
+            if not match:
+                _note_fail(args, "no entry with id %s in %s" % (args.id, doc.name))
+                return 1
+            if len(match) > 1:
+                _note_fail(args, _dup_id_refusal(args, doc, args.id, len(match), "delete it"))
+                return 1
+            item = instruction_item(lines, args.id, entries, existing)
+            if not isinstance(item, tuple):
+                # ⛔ PLAIN WORDS FOR THE PAGE, THE FLAGS FOR A TERMINAL (o9's review of W116,
+                # 2026-10-01). The Reader shows `error` to the human as it is, and "--note" means
+                # nothing on a page that has no command line. The page offers no Delete on an
+                # entry in §99, so one reaches it only from a page loaded before the entry was
+                # filed away, and there a reload does show where it is.
+                if not args.json:
+                    why = ("%s. --delete with no --note deletes a whole entry only when it is a "
+                           "live instruction item, one `instruct` made. To delete one note, name "
+                           "it with --note; an entry can hold several" % item)
+                elif match[0].get("archived"):
+                    why = ("%s is already in §99 on this computer, so there is nothing to delete. "
+                           "Reload the page to see it there" % args.id)
+                else:
+                    why = "%s, so it cannot be deleted whole" % item
+                _note_fail(args, why)
+                return 2
+            if item[1]:
+                # Its instructions are still on it, so this is exactly what deleting one of
+                # them does: `withdraw_doc_instruction` marks every one of them deleted.
+                note_id = item[1][0]["nid"]
+            else:
+                retire = item[0]
+
+        if note_id:
+            hits = [n for n in existing if n["nid"] == note_id]
             if not hits:
-                _note_fail(args, "no note %s in %s" % (args.note, doc.name))
+                _note_fail(args, "no note %s in %s" % (note_id, doc.name))
                 return 1
             # ⛔ AN AMBIGUOUS ID IS REFUSED RATHER THAN GUESSED. Two notes sharing an id can
             # only happen if two trees allocated in parallel, and editing "one of them" is
             # how the wrong one gets deleted.
             if len(hits) > 1:
-                _note_fail(args, "note %s appears %d times in %s - fix that by hand first"
-                           % (args.note, len(hits), doc.name))
+                _note_fail(args, "note %s appears %d times in %s - fix that by hand first. "
+                                 "Candidates: %s"
+                           % (note_id, len(hits), doc.name, "; ".join(
+                               "line %d (%s from %s)" % (h["line"], h["kind"], h["who"])
+                               for h in hits)))
                 return 1
             i = hits[0]["line"] - 1
-            if args.delete:
+            # Which entry it is in, so the lander can redo this on the canonical text (A1).
+            op_entry = _note_entry_id(hits[0], entries)
+            # The line as it was BEFORE this edit or delete: the lander acts on main's note
+            # with this id only if main's line is this same note (an id can collide).
+            op_prev = lines[i]
+            if args.delete and op_entry:
+                # Every instruction on the item as this copy has it, so the lander deletes the
+                # item on main only when main's item holds exactly these.
+                _it = instruction_item(lines, op_entry, entries, existing)
+                op_ins = [(x["nid"], x["text"]) for x in _it[1]] if isinstance(_it, tuple) \
+                    else None
+            # ⭐ DELETING A DOC-LEVEL INSTRUCTION KEEPS THE RECORD - see
+            # `withdraw_doc_instruction`. Any other note is deleted as before.
+            withdrawn = withdraw_doc_instruction(lines, note_id, who, when) \
+                if args.delete else None
+            # ⛔ A WITHDRAWAL THAT FAILED IS NEVER TURNED INTO A PLAIN DELETE. That would erase
+            # the instruction the record exists to keep - and for the whole-item form, a plain
+            # delete is not what was asked for at all.
+            if isinstance(withdrawn, str) or (item_level and not isinstance(withdrawn, tuple)):
+                _note_fail(args, "instruction %s was NOT deleted: %s"
+                           % (note_id, withdrawn if isinstance(withdrawn, str) else
+                              "it could not be moved to §99"))
+                return 1
+            if isinstance(withdrawn, tuple):
+                nid, newline = note_id, None
+            elif args.delete:
                 del lines[i]
                 # A note removed from between two blank lines leaves a double gap.
                 if 0 < i < len(lines) and not lines[i].strip() and not lines[i - 1].strip():
                     del lines[i]
-                nid, newline = args.note, None
+                nid, newline = note_id, None
             else:
-                nid = args.note
+                nid = note_id
                 # ⛔ AN EDIT KEEPS THE KIND IT ALREADY HAS. The reader's Edit button sends
                 # no --kind, and defaulting to NOTE there would silently DEMOTE an
                 # instruction to a note the first time the human fixed a typo in it - the record
@@ -6204,65 +14345,1246 @@ def cmd_note(args):
                 kind = want_kind or hits[0].get("kind") or "NOTE"
                 newline = render_note(nid, who, when, args.text, kind)
                 lines[i] = newline
+        elif retire is not None:
+            # No instruction left on the item: a NOTE says the human deleted it, and the item moves
+            # to §99 the same way a withdrawn instruction's item does.
+            withdrawn = None
+            # ⛔ NEVER `<id>.n1`. `instruct` gave the instruction that id, and on an item with
+            # no instruction left it was deleted on its own (W114's shape), so the next free
+            # number IS n1 and the deletion note would carry the deleted instruction's id (o9's
+            # review of W116, 2026-10-01).
+            nid = _free_note_id(lines, "%s.n1" % args.id, avoid={"%s.n1" % args.id})
+            newline = render_note(nid, who, when, "%s deleted this instruction on %s."
+                                  % (who, when))
+            op_entry, op_prev = args.id, None
+            # The item as it stood, so the lander can tell whether the ref's copy is this one.
+            op_item = lines[retire["line"] - 1:_entry_end(retire)]
+            why = withdraw_instruction_item(lines, args.id, who, newline)
+            if why:
+                _note_fail(args, "%s was NOT deleted: %s" % (args.id, why))
+                return 1
         else:
+            withdrawn = None
             match = [e for e in entries if e["id"] == args.id]
             if not match:
                 _note_fail(args, "no entry with id %s in %s" % (args.id, doc.name))
                 return 1
             if len(match) > 1:
-                _note_fail(args, "id %s appears %d times - fix E-DUPID first"
-                           % (args.id, len(match)))
+                _note_fail(args, _dup_id_refusal(args, doc, args.id, len(match),
+                                                 "put a note on it"))
                 return 1
-            if args.delete:
-                _note_fail(args, "--delete needs --note n<N>; an entry can hold several")
-                return 2
-            nid = next_note_id(lines)
+            nid = next_note_id(lines, args.id)
+            if _ref_lines is not None:
+                _rn = next_note_id(_ref_lines, args.id)
+                if int(_rn.split(".", 1)[1][1:]) > int(nid.split(".", 1)[1][1:]):
+                    nid = _rn
+            op_entry, op_prev = args.id, None
             kind = want_kind or "NOTE"
             newline = render_note(nid, who, when, args.text, kind)
-            at = note_anchor(lines, match[0])
-            had_notes = any(NOTE_LINE_RE.match(l)
-                            for l in lines[match[0]["line"] - 1:at])
+            # ⛔ PLACED BY THE READER'S RULES (o9:W153): under the entry's own last note, never
+            # inside a fence, never after another entry's quoted notes - see `note_slot`.
+            at, stacks = note_slot(lines, match[0])
             # A trailing blank keeps the note from being absorbed into the paragraph below it
             # by a markdown renderer that continues a blockquote across a non-blank line.
-            block = [newline] if had_notes else [newline, ""]
+            block = [newline] if stacks else [newline, ""]
             lines[at:at] = block
 
-        write_doc(doc, "\n".join(lines) + "\n")
-
-    # ⛔ VERIFY BY RE-READING, NEVER BY THE WRITE'S OWN SAY-SO.
-    after = parse_notes(doc.read_text(encoding="utf-8"))
-    got = [n for n in after if n["nid"] == nid]
-    if args.delete:
-        if got:
-            _note_fail(args, "note %s is STILL in %s after the delete" % (nid, doc.name))
+        # o9 W126, W127: a session's note that sends the human to a file or URL for text he copies,
+        # or names a picture by its path, is refused with the command to run instead. The human's
+        # own notes (his name, or no --by) are never refused. Only a note added or edited:
+        # a delete or a withdrawn or retired instruction writes no text of the session's.
+        # Before anything below is queued or written.
+        if not args.delete and newline and not isinstance(withdrawn, tuple) \
+                and retire is None and _note_by_agent(who) and _write_guard_refuses(
+                    doc, _pre + "\n", "\n".join(lines) + "\n", "note",
+                    fail=lambda _m: _note_fail(args, _m)):
             return 1
-        verb, shown = "DELETED", ""
-    else:
-        if not got:
-            _note_fail(args, "note %s is NOT in %s after the write - it did NOT take"
-                       % (nid, doc.name))
-            return 1
-        verb, shown = ("EDITED" if args.note else "ADDED"), got[0]["text"]
-        # ⛔ READ BACK OFF DISK, not from what we meant to write. The caller decides
-        # whether to go on and DELIVER this, and it must decide on what is in the file.
-        kind = got[0].get("kind") or "NOTE"
 
+        _post = "\n".join(lines) + "\n"
+        # What was done, so the lander can redo exactly that on the canonical text when this
+        # copy is behind it (A1) instead of refusing every note until someone notices.
+        _op = {"op": "delete" if args.delete else ("edit" if args.note else "add"),
+               "nid": nid, "line": newline, "entry": op_entry, "prev": op_prev}
+        _subject = "%s %s on %s (%s)" % (
+            "Deleted" if (isinstance(withdrawn, tuple) or args.delete)
+            else ("Edited" if args.note else "Added"), nid, doc.name, sanitize_field(who, 40))
+        # `pre` and `post`: the file before and after this delete, so the lander can put it
+        # back if main refuses the delete (`_undo_unlanded_delete`).
+        if isinstance(withdrawn, tuple):
+            _op.update(op="withdraw", who=who, when=when, ins=op_ins, pre=_raw, post=_post)
+        elif retire is not None:
+            _op.update(op="retire", who=who, when=when, item=op_item, pre=_raw, post=_post)
+            # Not "Deleted <nid>": the note with that id was ADDED, and the subject would say
+            # the opposite. The Orchdoc-Lander trailer is what marks it as a Reader landing.
+            _subject = "Deleted instruction %s on %s (%s)" % (args.id, doc.name,
+                                                             sanitize_field(who, 40))
+        _new_set = set(_post.split("\n"))
+        # ⛔ A DELETED INSTRUCTION ITEM LANDED HERE, INLINE, UNTIL o9:W164 (merge of o9:W116 and
+        # o9:W123): when main refuses it, this computer's copy is put back and the human is told so.
+        # With `--queue-landing` it is now queued (below) and the worker does that; the checks
+        # that follow still run first, here, in the lock.
+        # ⛔ BUT CHANGES TO THIS DOC MAY STILL BE IN THE QUEUE, AND THIS COPY HOLDS THEM (o9's
+        # review of W123, lane o9L975, test_reader_background_landing.py part E). Read here, in
+        # the lock, where no save can add one:
+        #   * one TO THIS ITEM (the instruction that made it, a note on it) has not reached main,
+        #     so the delete waits for it. Landed first, the delete put the item on main already
+        #     filed away, and the queued instruction then landed as a NEW live item under the
+        #     next id, for the orchestrator to act on. Refused before anything is written.
+        #   * any other is left to its own job: the delete is built from main's text without it,
+        #     as the worker builds a later change (`rebuild`, `skip`, `avoid`). Landed with this
+        #     copy, a queued edit of a note went to main a second time, under the next id.
+        _queued = []
+        if _op["op"] in ("withdraw", "retire") and not getattr(args, "no_land", False):
+            _queued = [j for _p, j, _r in _jobs_for(doc)]
+            _held = [j for j in _queued if (j.get("op") or {}).get("entry") == _op["entry"]]
+            if _held:
+                _note_fail(args, "%s has a change that has not reached %s yet (%s), so it cannot "
+                                 "be deleted until that change has landed. Nothing was deleted. "
+                                 "Try again once the page shows it landed"
+                           % (_op["entry"], CANONICAL_REF.split("/", 1)[-1],
+                              _held[0].get("message") or "a queued change"))
+                return 1
+        # o9:W164: A DELETED INSTRUCTION ITEM IS QUEUED LIKE EVERY OTHER SAVE (with
+        # `--queue-landing`). It landed inline, so the page waited for the fetch and push. The
+        # worker lands it with `land-job`, which already puts this copy back and tells the page
+        # when main refuses it (`restored`). Without `--queue-landing` it still lands inline,
+        # as the tests and a command-line run expect.
+        _job = _queue_job(
+            args, doc, _subject,
+            [l for l in _pre.split("\n") if l.strip() and l not in _new_set], _op, _post,
+            pre=_raw)
+        try:
+            write_doc(doc, _post)
+        except BaseException:
+            _drop_job(_job, doc)
+            raise
+        _sent = _sent_record(args, doc, _what, {
+            "ok": True, "nid": nid, "doc": doc.name, "id": args.id or "",
+            "action": ("deleted" if (isinstance(withdrawn, tuple) or args.delete)
+                       else "edited" if args.note else "added"),
+            "queued": _job.stem if _job is not None else None})
+
+        # ⛔ VERIFY BY RE-READING, NEVER BY THE WRITE'S OWN SAY-SO - AND IN THE LOCK THE WRITE
+        # WAS MADE IN, SO A WRITE THAT DID NOT TAKE IS TAKEN BACK OUT (o9:W153). This check ran
+        # after the lock, refused, dropped the landing job and LEFT THE LINE IN THE FILE: on
+        # 2026-10-05 each of the human's five sends to o5:T4 added one more copy, all five with the
+        # id T4.n1, because `next_note_id` counts only the notes the reader sees. A refusal
+        # now puts the file back byte for byte, so its words are true and a retry cannot stack.
+        _back = doc.read_text(encoding="utf-8", errors="replace")
+        # What this call took OUT, so the lander can allow exactly that and nothing else.
+        _now = set(_back.split("\n"))
+        _removed_lines = [l for l in _pre.split("\n") if l.strip() and l not in _now]
+        after = parse_notes(_back)
+        got = [n for n in after if n["nid"] == nid]
+        _why = None
+        if isinstance(withdrawn, tuple):
+            _ents = parse_entries(_back.split("\n"))[0]
+            _ins = set(x[0] for x in (op_ins or [])) | {nid}
+            if not (len(got) == 1 and any(n["nid"] == withdrawn[1] for n in after)
+                    and all(n["ack"] for n in after if n["nid"] in _ins)
+                    and not any(e["id"] == withdrawn[0] and not e.get("archived")
+                                for e in _ents)):
+                _why = "instruction %s was NOT moved to §99 as written" % nid
+            verb, shown = "DELETED", ""
+        elif retire is not None:
+            # The NOTE saying so is there once, inside the item now archived under the label,
+            # and no live entry carries the id any more.
+            _ents = parse_entries(_back.split("\n"))[0]
+            _home = [e for e in _ents if e["id"] == args.id and e.get("archived")
+                     and WITHDRAWN_LABEL in e["title"] and len(got) == 1
+                     and e["line"] <= got[0]["line"] < e["line"] + len(e["body"].splitlines())]
+            if not _home or any(e["id"] == args.id and not e.get("archived") for e in _ents):
+                _why = "%s was NOT moved to §99 as written" % args.id
+            verb, shown = "DELETED", ""
+        elif args.delete:
+            if got:
+                _why = "note %s is STILL in %s after the delete" % (nid, doc.name)
+            verb, shown = "DELETED", ""
+        elif not got:
+            _why = "note %s is NOT in %s after the write - it did NOT take" % (nid, doc.name)
+        else:
+            verb, shown = ("EDITED" if args.note else "ADDED"), got[0]["text"]
+            # ⛔ READ BACK OFF DISK, not from what we meant to write. The caller decides
+            # whether to go on and DELIVER this, and it must decide on what is in the file.
+            kind = got[0].get("kind") or "NOTE"
+        if _why:
+            _drop_job(_job, doc)
+            _sent_drop(_sent)
+            _note_fail(args, _why + _undo_failed_write(doc, _raw, _post))
+            return 1
+
+    # \u26d4 A NOTE THAT IS NOT ON THE CANONICAL REF IS INVISIBLE TO EVERY ORCHESTRATOR.
+    # They work in worktrees at that ref; the reader writes here. On 2026-09-18 four of
+    # the human's notes sat in this copy while the answers to them sat on main, and he had to
+    # ask why. Landing it at write time is what removes the question.
+    landed, land_detail, stuck = (False, "not attempted", [])
+    if _job is not None:
+        # The Reader's landing worker lands it (o9:W123); `landed` is null, not false, because
+        # nothing has failed.
+        landed, land_detail = None, QUEUED_DETAIL % CANONICAL_REF
+    elif not getattr(args, "no_land", False):
+        # The queued changes this copy holds stay out of the delete (see `_queued` above).
+        _skip, _avoid = set(), set()
+        for _j in _queued:
+            _s = _j.get("snapshot") or ""
+            _skip.add((_j.get("op") or {}).get("nid"))
+            _avoid |= set(n["nid"] for n in parse_notes(_s))
+            _avoid |= set(e["id"] for e in parse_entries(_s.split("\n"))[0])
+        _skip.discard(None)
+        _skip.discard(nid)
+        try:
+            # `mine_text`: what THIS command wrote. The file on disk can hold a later save by
+            # now, made while this was fetching, and landing the file put that save on main
+            # under this command's subject (o9's review of W123, part E3).
+            landed, land_detail = land_note(
+                doc, _subject, removed=_removed_lines, op=_op, mine_text=_post,
+                rebuild=bool(_queued), skip=_skip, avoid=_avoid,
+                chain=lambda: (_text_blob(_post), _text_blob(_raw)))
+        except Exception as _ex:
+            landed, land_detail = False, "the lander raised %s" % type(_ex).__name__
+        # ⛔ A DELETED INSTRUCTION THAT DID NOT REACH MAIN FOR ANY OTHER REASON IS PUT BACK TOO
+        # (o9's review of W116, fix round 2). Only a refusal by main was. A delete that could
+        # not reach main at all, with origin unreachable, stayed here: the item was in §99 on
+        # this computer and live on main, so every later note kept its deletion note off main
+        # and listed it as not landed, and this computer's copy was never refreshed from main
+        # again. A workspace with no origin is left as it was, since nothing lands from it.
+        if (not landed and _op.get("op") in ("withdraw", "retire")
+                and not _op.get("restored") and _has_origin()):
+            _undo_unlanded_delete(doc, _op, _unlanded_delete_words(land_detail))
+        if _op.get("restored"):
+            # ⛔ THE DELETE DID NOT REACH MAIN AND THIS COPY IS BACK AS IT WAS, so this is a
+            # refusal, in words the human can act on (o9's review of W116, 2026-10-01). Reporting it
+            # as done here and "not landed" left an item deleted on this computer and live on
+            # main.
+            # And the client-id record goes with it: kept, it answered the same delete sent
+            # again as "deleted", a repeat, and wrote nothing (o9's review of W123, part E4).
+            _sent_drop(_sent)
+            _eid = withdrawn[0] if isinstance(withdrawn, tuple) else args.id
+            _next = _op.get("next")
+            if args.json:
+                print(json.dumps({"ok": False, "restored": True, "landed": False,
+                                  "land_detail": land_detail, "doc": doc.name, "id": _eid,
+                                  "error": "%s. Nothing was deleted, on this computer or on %s%s"
+                                           % (_op.get("plain"),
+                                              CANONICAL_REF.split("/", 1)[-1],
+                                              (". " + _next) if _next else "")}))
+            else:
+                print("[REFUSE] %s was NOT deleted: %s. This computer's copy is back as it was."
+                      % (_eid, _op.get("plain")), file=sys.stderr)
+                if _next:
+                    print("  %s." % _next, file=sys.stderr)
+                print("  Reason given by the lander: %s" % land_detail, file=sys.stderr)
+            return 1
+        if _op.get("nid_final"):
+            # The id was taken on the canonical ref, so the note landed under the next free
+            # one and this copy was renumbered to match. Report the id it actually has.
+            nid = _op["nid_final"]
+        # Notes on this computer that are still not on the canonical ref, and why - shown by
+        # the Reader even when THIS note landed, so a stuck one is never silent.
+        stuck = list(_op.get("stuck") or [])
+        # The lander may have refreshed this copy (A2), so what is reported is re-read.
+        after = parse_notes(doc.read_text(encoding="utf-8"))
+
+    _reply = {"ok": True, "action": verb.lower(), "nid": nid,
+              "landed": landed, "land_detail": land_detail, "stuck": stuck,
+              "queued": _job.stem if _job is not None else None,
+              "doc": doc.name, "id": args.id or "",
+              "kind": ("" if args.delete else kind),
+              "who": who, "when": when, "text": shown,
+              "notes": [n for n in after]}
+    _sent_update(_sent, _reply)
     if args.json:
-        print(json.dumps({"ok": True, "action": verb.lower(), "nid": nid,
-                          "doc": doc.name, "id": args.id or "",
-                          "kind": ("" if args.delete else kind),
-                          "who": who, "when": when, "text": shown,
-                          "notes": [n for n in after]}))
+        print(json.dumps(_reply))
         return 0
-    print("[%s %s] %s in %s"
-          % (("NOTE" if args.delete else kind), verb, nid, doc.name))
+    print("[%s %s] %s in %s%s"
+          % (("INSTRUCTION" if item_level else "NOTE" if args.delete else kind), verb,
+             args.id if item_level else nid, doc.name,
+             "" if landed or landed is None else
+             ("  \u26a0\ufe0f NOT ON %s: %s" % (CANONICAL_REF, land_detail))))
     if shown:
         print("  %s (%s): %s" % (who, when, shown[:100]))
+    if item_level:
+        print("  Kept for the record in \u00a799 as \"%s\"; note %s says %s deleted it."
+              % (WITHDRAWN_LABEL, withdrawn[1] if isinstance(withdrawn, tuple) else nid, who))
     print()
-    print("  It is IN THE DOCUMENT, so it reaches the orchestrator who owns this entry the")
-    print("  moment they open it. It is not yet on %s - land it with:" % CANONICAL_REF)
-    print("    python .shared/scripts/orchdoc.py commit --doc %s -m \"...\"" % doc.name)
+    if landed is None:
+        print("  %s (job %s)." % (land_detail[:1].upper() + land_detail[1:], _job.stem))
+    elif landed:
+        # \u2b50 SAY WHERE IT IS, NOT WHAT TO DO NEXT. This used to print "it is not yet on
+        # origin/main - land it with ..." and, once notes started landing themselves, that was
+        # simply false: it taught the reader to run a redundant command and implied the note
+        # was less durable than it is.
+        print("  It is on %s (%s), so every session sees it wherever they read from -"
+              % (CANONICAL_REF, land_detail))
+        print("  including an orchestrator working in a worktree, which is the case that")
+        print("  made four of the human's notes invisible on 2026-09-18.")
+    else:
+        print("  \u26a0\ufe0f IT IS IN THIS COPY ONLY, so a session reading %s will NOT see it."
+              % CANONICAL_REF)
+        print("  Reason: %s" % land_detail)
+        print("  Land it once that is resolved:")
+        print("    python .shared/scripts/orchdoc.py commit --doc %s -m \"...\"" % doc.name)
     return 0
+
+
+# ⭐ AN INSTRUCTION FOR THE WHOLE DOC, NOT FOR ONE ENTRY. The human, 2026-09-30: *"I need a way to
+# leave instructions that are not a part of any item ... Perhaps the instructions should be
+# turned into §3 'W' items, and then the Orch will take those and create the downstream §2
+# items for me."* So it becomes a §3 W item owned by the doc's orchestrator, and his words go
+# on it as an INSTRUCTION note - the kind the Stop hook already holds in front of that
+# orchestrator until it is acknowledged. Nothing new has to be learned to find it: it is a W
+# item in §3 and an unacknowledged instruction, which are the two places they already look.
+INSTRUCT_TITLE_LEN = 90
+INSTRUCT_PROSE = ("_%s left this instruction for the whole doc, not for one entry. Act on it: "
+                  "create the §2 items or the §3 work it calls for, link them here, then resolve "
+                  "this entry._")
+
+
+# The words of `INSTRUCT_PROSE`, for tests and searches. ⛔ NOT how an instruction item is
+# recognised: anything can quote these words. See `_instruct_prose_at`.
+INSTRUCT_MARK_RE = re.compile(r"left this instruction for the whole doc")
+WITHDRAWN_STATUS = "ARCHIVED"
+WITHDRAWN_INTO = "RESOLVED - kept for the record"
+# ⭐ the human, 2026-09-30: "the 'deleted' items should be marked as such. 'Deleted with no action'".
+# Leads the archived heading, so it shows in the rail and the entry title.
+WITHDRAWN_LABEL = "Deleted with no action"
+
+
+# The heading text `cmd_instruct` writes after the id and its separator.
+INSTRUCT_TITLE_RE = re.compile(r"^(?P<who>.{1,200}?)'s instruction: ")
+
+
+def _instruct_prose_at(lines, e):
+    """Index in `lines` of the "Act on it" line `cmd_instruct` wrote on entry `e`, or None
+    when `e` is not an instruction item.
+
+    ⛔ ONLY WHAT `cmd_instruct` WRITES MAKES AN INSTRUCTION ITEM: a W id, a heading reading
+    "<who>'s instruction: ...", and a line EXACTLY equal to `INSTRUCT_PROSE` filled in with
+    that same <who>. o9's review of W116, 2026-10-01: this used to accept any live entry whose
+    prose merely contained the words "left this instruction for the whole doc". An open
+    decision and a work item that QUOTED the line both offered "Delete this instruction", and
+    one click moved each to §99 and rewrote the quoting line. Every part of the test is
+    something only `cmd_instruct` writes, so a quote of any of them is not enough.
+    """
+    if e.get("archived") or not re.match(r"^W\d+$", e["id"]):
+        return None
+    head = strip_decoration(e["title"])
+    # The same separators `_move_to_completed` reads after an id.
+    m = re.match(r"^%s\**\s*[-–—.:]\**\s*" % re.escape(e["id"]), head)
+    t = INSTRUCT_TITLE_RE.match(head[m.end():]) if m else None
+    if not t:
+        return None
+    want = INSTRUCT_PROSE % sanitize_field(t.group("who"), 40)
+    infence = False
+    for k in range(e["line"], min(_entry_end(e), len(lines))):
+        if is_fence_line(lines[k]):
+            infence = not infence
+        elif not infence and lines[k].strip() == want:
+            return k
+    return None
+
+
+def instruction_item(lines, eid, entries=None, notes=None):
+    """The live instruction item `eid` (one `cmd_instruct` made) and the INSTRUCTION notes on it.
+
+    -> (entry, [its INSTRUCTION notes, in file order], index of its "Act on it" line), or a
+    sentence saying why `eid` is not one. `entries` and `notes` are the parses of `lines`,
+    for a caller that already has them.
+
+    ⭐ ONE DEFINITION, read by the item-level delete in `cmd_note`, by
+    `withdraw_doc_instruction`, by the lander and (through `instruction_items`) by the Reader's
+    page model, so none of them can disagree about which items the human may delete whole. What
+    counts is `_instruct_prose_at`.
+    """
+    entries = parse_entries(lines)[0] if entries is None else entries
+    live = [e for e in entries if e["id"] == eid and not e.get("archived")]
+    if not live:
+        if any(e["id"] == eid for e in entries):
+            return "%s is already in §99" % eid
+        return "no entry with id %s" % eid
+    if len(live) > 1:
+        # Words for the page (the lander shows this one as "on main, ..."), which has no way
+        # to fix it: the gate's name, E-DUPID, told the human nothing he could do.
+        return ("%s is the id of %d live entries, and the orchestrator has to give one of them "
+                "a new id before it can be deleted" % (eid, len(live)))
+    e = live[0]
+    at = _instruct_prose_at(lines, e)
+    if at is None:
+        return "%s is not an instruction item" % eid
+    lo, hi = e["line"], e["line"] + len(e["body"].splitlines())
+    notes = parse_notes("\n".join(lines)) if notes is None else notes
+    return e, [n for n in notes
+               if n["kind"] == "INSTRUCTION" and lo <= n["line"] < hi
+               and _note_entry_id(n, entries) == eid], at
+
+
+def instruction_items(lines, entries=None):
+    """{eid: [its INSTRUCTION notes]} for every live instruction item in `lines`.
+
+    ⭐ THE READER'S PAGE MODEL READS THIS, so the page draws "Delete this instruction" from the
+    same decision the server makes when the button is pressed. o9's review of W116,
+    2026-10-01: the page used to re-derive the rule in JavaScript from the RENDERED text, where
+    a wrapped line is joined with a space, and rendered the button on o9's own W116, which the
+    server then refused.
+    """
+    entries = parse_entries(lines)[0] if entries is None else entries
+    notes, out = None, {}
+    for e in entries:
+        if _instruct_prose_at(lines, e) is None:
+            continue
+        if notes is None:
+            notes = parse_notes("\n".join(lines))
+        item = instruction_item(lines, e["id"], entries, notes)
+        if isinstance(item, tuple):
+            out[e["id"]] = item[1]
+    return out
+
+
+def _retire_instruction_item(lines, eid, who):
+    """Move instruction item `eid` to its §99 section as "Deleted with no action".
+
+    -> None, or why it could not be moved. ⭐ THE ONE COPY OF THE MOVE, for both ways the human
+    deletes an instruction: with its INSTRUCTION notes still on the item
+    (`withdraw_doc_instruction`) and with none left on it (`withdraw_instruction_item`).
+    """
+    item = instruction_item(lines, eid)
+    if not isinstance(item, tuple):
+        return item
+    # The "Act on it" line would still read as an order in §99; it now says nothing is owed.
+    # ⛔ THAT ONE LINE AND NO OTHER (o9's review of W116, 2026-10-01). Every line holding the
+    # words used to be rewritten, which destroyed a line of any entry that quoted them.
+    lines[item[2]] = ("_%s deleted this instruction, so nothing is owed on it._"
+                      % sanitize_field(who, 40))
+    return _move_to_completed(lines, eid, WITHDRAWN_STATUS, WITHDRAWN_LABEL)
+
+
+def withdraw_doc_instruction(lines, nid, who, when):
+    """the human deleted the instruction on an `instruct` W item. Changes `lines` only when it succeeds.
+
+    -> (eid, deletion_note_id) when done, None when `nid` is not the instruction on such an
+    item (the caller then deletes it as an ordinary note), or a string saying why it failed.
+
+    ⭐ the human, 2026-09-30: *"to keep the record clean, a simple note for the W-item should be
+    left that I deleted the note, and the note (with the original instructions) should be
+    moved to §99."* So nothing is erased: his words stay on the W item, marked as deleted (the
+    ACK, so the Stop hook stops holding it), a one-line NOTE says he deleted it and when, and
+    the whole item moves to its §99 section with the archived heading `archive` writes.
+
+    ⛔ EVERY INSTRUCTION ON THE ITEM IS MARKED DELETED, NOT ONLY `nid` (o9's review of W116,
+    2026-10-01). The item goes to §99 whichever of its instructions was named, so one left
+    unmarked would keep the Stop hook holding the orchestrator on an order that is filed away.
+    """
+    notes = [n for n in parse_notes("\n".join(lines)) if n["nid"] == nid]
+    if len(notes) != 1 or notes[0]["kind"] != "INSTRUCTION":
+        return None
+    eid = _note_entry_id(notes[0], parse_entries(lines)[0])
+    item = instruction_item(lines, eid) if eid else None
+    if not isinstance(item, tuple) or nid not in [x["nid"] for x in item[1]]:
+        return None
+    # ⛔ ON A COPY, so a move that fails leaves the caller's text exactly as it was: a
+    # half-withdrawn instruction (acked, but still live in §3) would tell the Stop hook it was
+    # dealt with while the human's page still showed it as an order.
+    work = list(lines)
+    for n in item[1]:
+        work[n["line"] - 1] = render_note(n["nid"], n["who"], n["when"], n["text"],
+                                          "INSTRUCTION", ack=("deleted by %s" % who, when),
+                                          stored=True, enc=n.get("enc"))
+    gone = next_note_id(work, eid)
+    said = ("%s deleted this instruction on %s. The original is kept above for the record."
+            % (who, when)) if len(item[1]) == 1 else \
+        ("%s deleted these %d instructions on %s. The originals are kept above for the record."
+         % (who, len(item[1]), when))
+    work.insert(item[1][-1]["line"], render_note(gone, who, when, said))
+    why = _retire_instruction_item(work, eid, who)
+    if why:
+        return why
+    lines[:] = work
+    return eid, gone
+
+
+def withdraw_instruction_item(lines, eid, who, line):
+    """the human deleted instruction item `eid`, which holds no INSTRUCTION note any more.
+
+    -> None when done, or a sentence saying why not; `lines` changes only when it succeeds.
+    `line` is the NOTE saying so, rendered by the caller so the lander can put the SAME line
+    on the canonical ref.
+
+    ⭐ the human, 2026-10-01: *"For any "the human's Instruction" item, I need to be able to delete the
+    entire message."* W114's instruction note was gone, so the Reader had no note to hang its
+    Delete on and nothing deleted the item. This puts the note on the item where `cmd_note`
+    puts one, then moves it exactly as `withdraw_doc_instruction` does.
+    """
+    item = instruction_item(lines, eid)
+    if not isinstance(item, tuple):
+        return item
+    if item[1]:
+        return ("%s still holds instruction %s, so deleting that instruction is what deletes "
+                "the item" % (eid, item[1][0]["nid"]))
+    work = list(lines)
+    why = _place_note_line(work, eid, line) or _retire_instruction_item(work, eid, who)
+    if why:
+        return why
+    lines[:] = work
+    return None
+
+
+# ==========================================================================================
+# ⭐ §2.0 DO TODAY (the human, 2026-09-30): "things that I specifically need to do today, and have
+# daily repeated actions listed there to be completed. If it's a repeated action, then I should
+# be able to indicate the repetition period - daily, every X days, weekly, monthly on [date]."
+#
+# An item is an ordinary entry with prefix N, so every tool that walks entries already sees it.
+# Two fields on its Status line carry the schedule:
+#   **Repeats:** no | daily | every 3 days | weekly | weekly on Monday | monthly on 15
+#   **Done on:** the dates it was ticked off, newest last (the last 30 are kept)
+# A one-off also carries **Due:** <date>. It is DUE when its next occurrence is today or
+# earlier; ticking a one-off off moves it to §99, ticking a routine off records the date.
+# ==========================================================================================
+TODAY_KEEP_DONE = 30
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_REPEATS_RE = re.compile(r"\*\*Repeats:\*\*\s*([^*\n]*?)\s*(?=\s-\s\*\*|$)", re.M)
+_DONE_ON_RE = re.compile(r"\*\*Done on:\*\*\s*([^*\n]*?)\s*(?=\s-\s\*\*|$)", re.M)
+_DUE_RE = re.compile(r"\*\*Due:\*\*\s*(\d{4}-\d{2}-\d{2})")
+_OPENED_RE = re.compile(r"\*\*Opened:\*\*\s*(\d{4}-\d{2}-\d{2})")
+
+
+def parse_repeat(text):
+    """`daily` -> {"kind": "days", "n": 1} ... or None when the text is not a schedule.
+    "no" (or empty) is a one-off: {"kind": "once"}."""
+    t = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if t in ("", "no", "none", "once", "one-off", "today"):
+        return {"kind": "once"}
+    if t == "daily":
+        return {"kind": "days", "n": 1}
+    m = re.fullmatch(r"every (\d{1,3}) days?", t)
+    if m and int(m.group(1)) >= 1:
+        return {"kind": "days", "n": int(m.group(1))}
+    if t == "weekly":
+        return {"kind": "days", "n": 7}
+    m = re.fullmatch(r"weekly on (\w+)", t)
+    if m:
+        w = [d for d in WEEKDAYS if d.startswith(m.group(1)[:3])]
+        if len(w) == 1:
+            return {"kind": "weekday", "n": WEEKDAYS.index(w[0])}
+    m = re.fullmatch(r"monthly on (?:the )?(\d{1,2})(?:st|nd|rd|th)?", t)
+    if m and 1 <= int(m.group(1)) <= 31:
+        return {"kind": "monthday", "n": int(m.group(1))}
+    return None
+
+
+def repeat_label(rule):
+    """The canonical spelling written to the file, so every doc says it the same way."""
+    k, n = rule["kind"], rule.get("n")
+    if k == "once":
+        return "no"
+    if k == "days":
+        return "daily" if n == 1 else "weekly" if n == 7 else "every %d days" % n
+    if k == "weekday":
+        return "weekly on %s" % WEEKDAYS[n].title()
+    return "monthly on %d" % n
+
+
+def _date(s):
+    try:
+        return _dt.date.fromisoformat((s or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def next_occurrence(rule, last, start):
+    """The first date the item falls due after `last` (or from `start` when never done)."""
+    k, n = rule["kind"], rule.get("n")
+    if k == "days":
+        return start if last is None else last + _dt.timedelta(days=n)
+    d = start if last is None else last + _dt.timedelta(days=1)
+    for _ in range(400):
+        if k == "weekday" and d.weekday() == n:
+            return d
+        if k == "monthday":
+            nxt = (d.replace(day=28) + _dt.timedelta(days=4)).replace(day=1)
+            if d.day == min(n, (nxt - _dt.timedelta(days=1)).day):
+                return d
+        d += _dt.timedelta(days=1)
+    return d
+
+
+def today_state(body, today=None):
+    """For an N entry: {rule, label, done_on, last_done, next_due, due, overdue, done_today}.
+    None when the body has no **Repeats:** field (not a §2.0 item)."""
+    m = _REPEATS_RE.search(body or "")
+    if not m:
+        return None
+    today = today or _dt.date.today()
+    rule = parse_repeat(m.group(1)) or {"kind": "once"}
+    dm = _DONE_ON_RE.search(body)
+    done = sorted(d for d in (_date(x) for x in re.split(r"[,\s]+", dm.group(1) if dm else ""))
+                  if d)
+    om, um = _OPENED_RE.search(body), _DUE_RE.search(body)
+    start = _date(um.group(1)) if um else (_date(om.group(1)) if om else today)
+    last = done[-1] if done else None
+    if rule["kind"] == "once":
+        nxt = None if done else start
+    else:
+        nxt = next_occurrence(rule, last, start)
+    return {"rule": rule, "label": repeat_label(rule), "done_on": [d.isoformat() for d in done],
+            "last_done": last.isoformat() if last else "",
+            "next_due": nxt.isoformat() if nxt else "",
+            "due": bool(nxt and nxt <= today), "overdue": bool(nxt and nxt < today),
+            "done_today": today in done}
+
+
+def today_on_plate(e, today=None):
+    """False only for a §2.0 item that is not due today - everything else is unaffected."""
+    if not e.get("id", "").startswith("N"):
+        return True
+    st = today_state(e.get("body"), today)
+    return st is None or st["due"]
+
+
+def ensure_today_section(lines):
+    """Insert `## §2.0 Do today` above §2.1 (else above §3, else at the end) if it is absent."""
+    if section_span(lines, "2.0"):
+        return
+    block = ["## §2.0 Do today", "",
+             "_what %s does today, and the routines that repeat_" % human_name().title(), ""]
+    for want in ("2.1", "2.2", "2.3", "3"):
+        for i, l in enumerate(lines):
+            m = SECTION_RE.match(l)
+            if m and m.group(1) == want and l.startswith("## "):
+                lines[i:i] = block
+                return
+    lines += [""] + block
+
+
+def _move_to_completed(lines, eid, status, label, dest=None):
+    """Cut entry `eid`, give it the archived heading (led by `label`), and put it in its §99
+    section - what `archive` does to one entry, and what `_retire_instruction_item` does."""
+    e = [x for x in parse_entries(lines)[0] if x["id"] == eid and not x.get("archived")]
+    if len(e) != 1:
+        return "entry %s is not a live entry here" % eid
+    start, end = e[0]["line"] - 1, _entry_end(e[0])
+    blk = lines[start:end]
+    for k, ln in enumerate(blk):
+        if STATUS_RE.search(ln) and "**Status:**" in ln:
+            blk[k] = re.sub(r"(\*\*Status:\*\*\s*)[A-Z][A-Z ]*?(?=\s+-\s|\s*$)",
+                            r"\g<1>" + status, ln, count=1)
+            break
+    head = re.sub(r"^(#+)\s*\S*\s*\*{0,2}%s\*{0,2}\s*[-–—.:]\*{0,2}\s*" % re.escape(eid),
+                  r"\1 ", blk[0])
+    _m = re.match(r"^(#+)\s*(.*)$", head.rstrip())
+    blk[0] = "%s %s%s%s" % (_m.group(1), (label + " - ") if label else "", _m.group(2),
+                            archived_heading_suffix(eid, status))
+    while len(blk) > 1 and not blk[-1].strip():
+        blk.pop()
+    del lines[start:end]
+    # o9:W147: `dest(lines)` -> the span of another §99 subsection (the Reader's "Don't do").
+    _label, span = (None, dest(lines)) if dest else _destination(
+        lines, eid, WITHDRAWN_INTO, create=True)
+    if span is None:
+        lines += ["", "## %s" % WITHDRAWN_INTO, ""]
+        span = _section_span(lines, name=WITHDRAWN_INTO)
+    _insert_in_section(lines, span, eid, blk)
+    return None
+
+
+def _set_field(line, name, value):
+    """Set `**name:** value` on a Status line, appending the field when it is absent."""
+    pat = re.compile(r"(\*\*%s:\*\*\s*)[^*\n]*?(\s*(?=\s-\s\*\*|$))" % re.escape(name))
+    if pat.search(line):
+        return pat.sub(lambda m: m.group(1) + value, line, count=1)
+    return line.rstrip() + " - **%s:** %s" % (name, value)
+
+
+def apply_today(lines, op):
+    """One §2.0 change on `lines` (changed in place). -> None, or why it could not be made.
+
+    Pure over the text, so the lander can make the SAME change on the canonical ref when this
+    copy is behind it (see `_note_onto_canonical`)."""
+    act, eid = op.get("act"), op.get("eid")
+    if act == "add":
+        have = [e for e in parse_entries(lines)[0] if e["id"] == eid]
+        if have:
+            return None if lines[have[0]["line"] - 1].strip() == op["block"][1].strip() \
+                else "%s is already a different entry" % eid
+        ensure_today_section(lines)
+        at, _t = _section_insert_at(lines, parse_entries(lines)[1], "today", "N")
+        lines[at:at] = list(op["block"])
+        return None
+    if act == "priority":
+        import reader_priority as _rp
+        return _rp.apply_priority(lines, eid, op.get("choice"))
+    if act == "status":
+        # o9L1328: the human's Done / Superseded button, or its undo (`reader_status.py`).
+        import reader_status as _rs
+        return _rs.apply_status(lines, op)
+    ents = [e for e in parse_entries(lines)[0] if e["id"] == eid and not e.get("archived")]
+    if len(ents) != 1:
+        return "%s is not a live §2.0 item here" % eid
+    e = ents[0]
+    st = today_state(e["body"])
+    if st is None:
+        return "%s has no **Repeats:** field, so it is not a §2.0 item" % eid
+    lo = e["line"] - 1
+    si = next((i for i in range(lo, _entry_end(e)) if "**Status:**" in lines[i]), None)
+    if si is None:
+        return "%s has no Status line" % eid
+    day = op.get("date")
+    if act in ("done", "undo"):
+        done = [d for d in st["done_on"] if d != day]
+        if act == "done":
+            done = sorted(done + [day])[-TODAY_KEEP_DONE:]
+        lines[si] = _set_field(lines[si], "Done on", ", ".join(done) or "none")
+        if act == "done" and st["rule"]["kind"] == "once":
+            return _move_to_completed(lines, eid, "DONE", "")
+        return None
+    if act == "stop":
+        return _move_to_completed(lines, eid, WITHDRAWN_STATUS, "Stopped")
+    return "unknown §2.0 change %r" % act
+
+
+def _priority_landed(text, eid, choice):
+    """o9:W147: is `choice` on `eid` in `text` (a Don't do item: archived in its subsection)?"""
+    import reader_priority as _rp
+    return _rp.priority_in(text, eid, choice)
+
+
+READER_WRITE_ENV = "ORCHDOC_READER_WRITE"
+
+
+def cmd_today(args):
+    """Add, tick off, untick or stop a §2.0 Do-today item. Verified, then landed."""
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        _note_fail(args, "no such doc: %s" % args.doc)
+        return 2
+    # ⛔ o9:W147 review: A PRIORITY CHOICE AND A NEW DO-TODAY ITEM ARE THE HUMAN'S, MADE IN THE READER.
+    # `priority` (the proposal command) cannot write the bare `**Priority:** NOW` for the same
+    # reason: that line sorts above everything and means "the human chose this". `--by` was accepted
+    # and thrown away, so a session could write it and nothing recorded who. The Reader's writer
+    # sets READER_WRITE_ENV for the process it starts; a session's own command line does not.
+    # Honest scope: this is a guard on the honest shape, like `propose`, not authentication; a
+    # session that sets the variable by hand has stepped round a refusal on purpose.
+    if (args.add is not None or getattr(args, "priority", None)
+            or getattr(args, "choice", None)) and os.environ.get(READER_WRITE_ENV) != "1":
+        _note_fail(args, "a priority choice and a new Do-today item are the human's, made in the "
+                         "OrchDoc Reader. A session proposes with `orchdoc.py priority` "
+                         "(written as `(proposed by oN)`), and ticks off its own items with "
+                         "--done / --undo / --stop.")
+        return 2
+    who = args.by or human_name().title()
+    day = (args.date or _dt.date.today().isoformat())[:10]
+    if not _date(day):
+        _note_fail(args, "--date is YYYY-MM-DD, not %r" % args.date)
+        return 2
+    rel = os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/")
+    # o9:W123: a change the Reader sent twice is made once (see `_sent_check`).
+    _what = {"cmd": "today", "add": args.add, "done": args.done, "undo": args.undo,
+             "stop": args.stop, "repeat": args.repeat, "due": args.due, "date": day,
+             "priority": getattr(args, "priority", None), "choice": getattr(args, "choice", None)}
+    # The ref's next N id, read before the lock (o9:W123) - see the same step in `cmd_instruct`.
+    ref_eid = _ref_next_id(rel, "N") if args.add is not None else None
+    with _lock(doc):
+        _seen, _bad = _sent_check(args, doc, _what)
+        if _bad:
+            _note_fail(args, _bad)
+            return 2
+        if _seen is not None:
+            return _sent_reply(args, _seen)
+        # The file's bytes, decoded: what a refused change is put back to (o9:W153). `raw` is
+        # what `read_text` gave here before, with every line ending made "\n".
+        _orig = doc.read_bytes().decode("utf-8")
+        raw = _orig.replace("\r\n", "\n").replace("\r", "\n")
+        lines = raw.splitlines()
+        pre = list(lines)
+        if args.add is not None:
+            text = sanitize_note(args.add, enc=False)
+            rule = parse_repeat(args.repeat or "no")
+            if not text or rule is None:
+                _note_fail(args, "an item needs text, and --repeat is one of: no, daily, "
+                                 "every N days, weekly, weekly on <day>, monthly on <1-31>")
+                return 2
+            eid = next_id(parse_entries(lines)[0], "N", raw)
+            if ref_eid and int(ref_eid[1:]) > int(eid[1:]):
+                eid = ref_eid
+            title = text if len(text) <= 160 else text[:160].rsplit(" ", 1)[0] + "..."
+            fields = "**Status:** OPEN - **Owner:** %s - **Opened:** %s - **Repeats:** %s" % (
+                sanitize_field(who, 40), _now_iso(), repeat_label(rule))
+            if rule["kind"] == "once":
+                fields += " - **Due:** %s" % ((args.due or day)[:10])
+            fields += " - **Done on:** none"
+            block = ["", "### %s %s - %s" % (STATUS_MARKER["OPEN"], eid, sanitize_field(title, 200)),
+                     "", fields, ""] + ([text, ""] if title != text else [])
+            op = {"act": "add", "eid": eid, "block": block}
+        else:
+            act = "done" if args.done else "undo" if args.undo else "stop" if args.stop else None
+            eid = args.done or args.undo or args.stop
+            if getattr(args, "priority", None):
+                # o9:W147: the human's priority choice for any entry (`reader_priority.py`).
+                import reader_priority as _rp
+                if _rp.choice_norm(getattr(args, "choice", None)) is None:
+                    _note_fail(args, "--choice is one of: " + ", ".join(_rp.CHOICES))
+                    return 2
+                act, eid = "priority", args.priority
+            if not act:
+                _note_fail(args, "say --add, --done, --undo, --stop or --priority")
+                return 2
+            op = {"act": act, "eid": eid, "date": day}
+            if act == "priority":
+                op["choice"] = _rp.choice_norm(args.choice)
+        why = apply_today(lines, op)
+        if why:
+            _note_fail(args, why)
+            return 1
+        _new = "\n".join(lines) + "\n"
+        _new_set = set(_new.split("\n"))
+        _job = _queue_job(args, doc, "Do today: %s %s on %s (%s)" % (
+            op["act"], eid, doc.name, sanitize_field(who, 40)),
+            [l for l in pre if l.strip() and l not in _new_set],
+            {"op": "today", "nid": None, "today": op}, _new, pre=raw)
+        try:
+            write_doc(doc, _new)
+        except BaseException:
+            _drop_job(_job, doc)
+            raise
+        _sent = _sent_record(args, doc, _what, {
+            "ok": True, "action": op["act"], "id": eid, "doc": doc.name,
+            "queued": _job.stem if _job is not None else None})
+
+        # ⛔ VERIFIED IN THE LOCK THE WRITE WAS MADE IN, AND A REFUSED CHANGE IS TAKEN BACK OUT
+        # (o9:W153), as `note` does. This ran after the lock and left a refused change in the
+        # file, so each resend of a refused --add put one more copy of the item there.
+        # ⛔ AND IT CHECKS THE DAY THE CHANGE WAS MADE FOR, `day`. It checked the machine's
+        # date, so a --done or --undo for any other --date was refused while it was in the file.
+        back = doc.read_text(encoding="utf-8")
+        ents = parse_entries(back.split("\n"))[0]
+        live = [e for e in ents if e["id"] == eid and not e.get("archived")]
+        _day = _date(day)
+        ok = {"add": bool(live),
+              "done": (not live) or (today_state(live[0]["body"], _day) or {}).get("done_today"),
+              "undo": bool(live) and not (today_state(live[0]["body"], _day)
+                                          or {}).get("done_today"),
+              "stop": not live,
+              "priority": _priority_landed(back, eid, op.get("choice"))}[op["act"]]
+        if not ok:
+            _drop_job(_job, doc)
+            _sent_drop(_sent)
+            _note_fail(args, ("%s: the change is NOT in %s after the write" % (eid, doc.name))
+                       + _undo_failed_write(doc, _orig, _new))
+            return 1
+    now = set(back.split("\n"))
+    removed = [l for l in pre if l.strip() and l not in now]
+    landed, detail = False, "not attempted"
+    if _job is not None:
+        landed, detail = None, QUEUED_DETAIL % CANONICAL_REF
+    elif not getattr(args, "no_land", False):
+        _lop = {"op": "today", "nid": None, "today": op}
+        try:
+            landed, detail = land_note(doc, "Do today: %s %s on %s (%s)" % (
+                op["act"], eid, doc.name, sanitize_field(who, 40)),
+                removed=removed, op=_lop,
+                chain=lambda: (_text_blob(_new), _text_blob(raw)))
+        except Exception as _ex:
+            landed, detail = False, "the lander raised %s" % type(_ex).__name__
+        # Landed under a new id: main had given this one to a different item (o9:W123).
+        eid = _lop.get("eid_final") or eid
+    _reply = {"ok": True, "action": op["act"], "id": eid, "doc": doc.name,
+              "landed": landed, "land_detail": detail,
+              "queued": _job.stem if _job is not None else None}
+    _sent_update(_sent, _reply)
+    if args.json:
+        print(json.dumps(_reply))
+        return 0
+    print("[TODAY %s] %s in %s%s" % (op["act"].upper(), eid, doc.name, "" if landed else
+          ("  - %s" % detail) if landed is None else
+          "  \u26a0\ufe0f NOT ON %s: %s" % (CANONICAL_REF, detail)))
+    return 0
+
+
+def cmd_instruct(args):
+    """Add a doc-level instruction from the human as a new §3 W item. Verified, then landed."""
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        _note_fail(args, "no such doc: %s" % args.doc)
+        return 2
+    text = sanitize_note(args.text or "")
+    if not text:
+        _note_fail(args, "--text is empty")
+        return 2
+    # o9:W258: an instruction is the human's text to the doc's owner; a session writes none.
+    if _orch_note_refusal(args, "an instruction"):
+        return 1
+    who = args.by or human_name().title()
+    when = args.at or _stamp_human()
+    owner = doc_owner_id(doc) or "orchestrator"
+    # A pasted picture is `[image: <path>]` in the text; a path is no title.
+    _plain = re.sub(r"\s+", " ", re.sub(r"\[image:[^\]]*\]", " ",
+                                        decode_note_text(text, True))).strip() or "(image)"
+    first = re.split(r"(?<=[.!?])\s", _plain, maxsplit=1)[0]
+    title = first if len(first) <= INSTRUCT_TITLE_LEN else \
+        first[:INSTRUCT_TITLE_LEN].rsplit(" ", 1)[0] + "..."
+    rel = os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/")
+    # o9:W123: an instruction the Reader sent twice is written once (see `_sent_check`).
+    _what = {"cmd": "instruct", "text": args.text or ""}
+    # ⛔ THE REF COUNTS TOO. This copy can be behind it, and an id free here can already be an
+    # orchestrator's W item there. Take whichever number is higher. Read BEFORE the lock
+    # (o9:W123): a git call took 0.6-5 s on a busy machine, and every save of this doc waits on
+    # the lock. The ref is not changed by anything that holds it, so the answer is the same.
+    ref_eid = _ref_next_id(rel, "W")
+
+    with _lock(doc):
+        _seen, _bad = _sent_check(args, doc, _what)
+        if _bad:
+            _note_fail(args, _bad)
+            return 2
+        if _seen is not None:
+            return _sent_reply(args, _seen)
+        # The file's bytes, decoded: what a refused write is put back to (o9:W153). `raw` is
+        # what `read_text` gave here before, with every line ending made "\n".
+        _orig = doc.read_bytes().decode("utf-8")
+        raw = _orig.replace("\r\n", "\n").replace("\r", "\n")
+        lines = raw.splitlines()
+        entries, sections = parse_entries(lines)
+        eid = next_id(entries, "W", raw)
+        if ref_eid and int(ref_eid[1:]) > int(eid[1:]):
+            eid = ref_eid
+        block = ["", "### %s %s - %s" % (STATUS_MARKER["OPEN"], eid,
+                                         sanitize_field("%s's instruction: %s" % (who, title), 200)),
+                 "",
+                 "**Status:** OPEN - **Owner:** %s - **Opened:** %s - **Enriched:** NO"
+                 % (owner, _now_iso()),
+                 "", INSTRUCT_PROSE % sanitize_field(who, 40), ""]
+        at, _t = _section_insert_at(lines, sections, "work", "W")
+        lines[at:at] = block
+        nid = "%s.n1" % eid
+        newline = render_note(nid, who, when, text, "INSTRUCTION", stored=True, enc=True)
+        why = _place_note_line(lines, eid, newline)
+        if why:
+            _note_fail(args, "could not place the instruction: %s" % why)
+            return 1
+        _new = "\n".join(lines) + "\n"
+        _op = {"op": "add", "nid": nid, "line": newline, "entry": eid, "prev": None,
+               "block": block, "block_kind": "work"}
+        _job = _queue_job(args, doc, "Instruction %s on %s (%s)" % (
+            eid, doc.name, sanitize_field(who, 40)), [], _op, _new, pre=raw)
+        try:
+            write_doc(doc, _new)
+        except BaseException:
+            _drop_job(_job, doc)
+            raise
+        _sent = _sent_record(args, doc, _what, {
+            "ok": True, "action": "added", "id": eid, "nid": nid, "doc": doc.name,
+            "kind": "INSTRUCTION", "queued": _job.stem if _job is not None else None})
+
+        # ⛔ VERIFY BY RE-READING, as `note` and `add` do - IN THE LOCK THE WRITE WAS MADE IN, so
+        # a write that did not take is taken back out (o9:W153). This check ran after the lock
+        # and left the refused W item and its instruction in the file, so every resend added
+        # one more of each: the defect `note` had on 2026-10-05.
+        back = doc.read_text(encoding="utf-8")
+        got = [n for n in parse_notes(back) if n["nid"] == nid and n["kind"] == "INSTRUCTION"]
+        if not got or not any(e["id"] == eid for e in parse_entries(back.split("\n"))[0]):
+            _drop_job(_job, doc)
+            _sent_drop(_sent)
+            _note_fail(args, ("%s is NOT in %s after the write - it did NOT take"
+                              % (eid, doc.name)) + _undo_failed_write(doc, _orig, _new))
+            return 1
+
+    landed, land_detail, stuck = False, "not attempted", []
+    if _job is not None:
+        landed, land_detail = None, QUEUED_DETAIL % CANONICAL_REF
+    elif not getattr(args, "no_land", False):
+        try:
+            landed, land_detail = land_note(
+                doc, "Instruction %s on %s (%s)" % (eid, doc.name, sanitize_field(who, 40)),
+                removed=[], op=_op, chain=lambda: (_text_blob(_new), _text_blob(raw)))
+        except Exception as _ex:
+            landed, land_detail = False, "the lander raised %s" % type(_ex).__name__
+        stuck = list(_op.get("stuck") or [])
+        # Landed under a new id: main had given this one to a different entry (o9:W123).
+        eid = _op.get("eid_final") or eid
+        nid = _op.get("nid_final") or nid
+
+    _reply = {"ok": True, "action": "added", "id": eid, "nid": nid,
+              "landed": landed, "land_detail": land_detail, "stuck": stuck,
+              "queued": _job.stem if _job is not None else None,
+              "doc": doc.name, "kind": "INSTRUCTION", "who": who, "when": when,
+              "text": got[0]["text"]}
+    _sent_update(_sent, _reply)
+    if args.json:
+        print(json.dumps(_reply))
+        return 0
+    print("[INSTRUCTION ADDED] %s in %s%s" % (eid, doc.name, "" if landed else
+          ("  - %s" % land_detail) if landed is None else
+          ("  ⚠️ NOT ON %s: %s" % (CANONICAL_REF, land_detail))))
+    print("  %s (%s): %s" % (who, when, got[0]["text"][:100]))
+    return 0
+
+
+def _note_text(line):
+    """The text of a rendered note line, as `parse_notes` reads it; "" for any other line."""
+    m = NOTE_LINE_RE.match(line or "")
+    return m.group("text").strip() if m else ""
+
+
+def cmd_land_job(args):
+    """Land ONE change from the Reader's landing queue (o9:W123). `reader_landing.py` runs this.
+
+    Prints one JSON line: {"ok", "job", "landed", "land_detail", "fail", "stuck", "nid_final",
+    "eid_final", "gone"}. `eid_final` is the id the entry this change created landed under, when
+    main had given its id to a different entry. `fail` is null when it landed, else the kind of
+    failure:
+      * "transient": a fetch, a push or a lock - the same job is tried again after a pause;
+      * "changed": the queue or the disk copy changed while it was landing - tried again at once;
+      * "content": main, or the change itself, has to change first.
+    `gone` is true when the job is no longer queued (it landed, or its save was refused).
+    {"ok": false, "restored": true, "error"} means main refused the change and the lander put
+    this computer's copy back as it was (o9:W116), so the job is gone and nothing is retried.
+
+    ⛔ THE JOB FILE IS DELETED ONLY AFTER ITS CHANGE IS ON THE CANONICAL REF. Every other outcome
+    leaves it in the queue, and the change stays on disk either way.
+
+    ⛔ RENUMBERING HAPPENS UNDER THE DOC'S LOCK, JUST BEFORE THE PUSH. When main already has the
+    note id this change used, A1 lands the note under the next free id. The disk copy and every
+    later queued change that names that note are renumbered in that same locked step, so a later
+    change (an edit of the same note, say) lands against the id the note really has, and no note
+    saved in the meantime can take the new id. A change renumbers only when no EARLIER change to
+    the same doc is still queued; otherwise it waits for that one to be resolved.
+    """
+    def out(**kw):
+        res = {"ok": True, "job": Path(args.job).name, "landed": False, "land_detail": "",
+               "fail": None, "stuck": [], "nid_final": None, "eid_final": None, "gone": False}
+        res.update(kw)
+        print(json.dumps(res))
+        return 0
+
+    qdir = reader_landing_dir()
+    try:
+        path = Path(args.job).resolve()
+        inside = path.parent == qdir.resolve()
+    except OSError:
+        inside = False
+    if not inside or not JOB_NAME_RE.match(path.name):
+        print(json.dumps({"ok": False, "error": "%s is not a job in this workspace's landing "
+                                                "queue (%s)" % (args.job, qdir)}))
+        return 2
+    raw = _job_bytes(path)
+    if raw is None:
+        return out(gone=True, land_detail="it is no longer queued")
+    try:
+        job = json.loads(raw.decode("utf-8"))
+        if not isinstance(job, dict) or job.get("v") != 1:
+            raise ValueError("unknown queue entry format")
+        doc = _confine(Path(PROJECTS) / job["doc"])
+        snapshot = job["snapshot"]
+        if not isinstance(snapshot, str) or not isinstance(job.get("op"), dict) \
+                or not isinstance(job.get("message"), str):
+            raise ValueError("a field is missing")
+    except Exception as ex:
+        return out(fail="content", land_detail="the queue entry could not be read (%s: %s)"
+                   % (type(ex).__name__, str(ex)[:120]))
+    if not doc.exists():
+        return out(fail="content", land_detail="%s is no longer on this computer" % job["doc"])
+
+    state = {"raw": raw, "snapshot": snapshot}
+    own = job["op"].get("nid")
+    seq = int(job.get("seq") or 0)
+
+    def pat(nid):
+        return r"(?<![\w.])%s(?!\w)" % re.escape(nid)
+
+    def _ids(o):
+        t = o.get("today") if isinstance(o.get("today"), dict) else {}
+        return {"nid": o.get("nid") or "", "entry": o.get("entry") or t.get("eid") or ""}
+
+    def _keep_was(j, before):
+        """A queued change keeps the ids it was saved under: the page knows it by them."""
+        w = j.get("was") if isinstance(j.get("was"), dict) else {}
+        j["was"] = {"nid": w.get("nid") or before["nid"],
+                    "entry": w.get("entry") or before["entry"]}
+
+    def before_push(fixes, efixes=()):
+        """Under the doc's lock: is this still the queued change? Then apply `efixes` (the entry
+        this change creates, landing under a new id) and `fixes` (renumbered notes)."""
+        with _lock(doc):
+            if _job_bytes(path) != state["raw"]:
+                return ("changed", "this change's entry in the landing queue changed while it "
+                                   "was landing")
+            if not fixes and not efixes:
+                return None
+            queued = [(p, j) for p, j, _r in _jobs_for(doc) if p.name != path.name]
+            if any(int(j.get("seq") or 0) < seq for _p, j in queued):
+                return ("content", "an earlier change to %s is still waiting to land, and this "
+                                   "one would land %s, so it waits for that one"
+                        % (doc.name, ("entry %s as %s" % (efixes[0][0], efixes[0][1])) if efixes
+                           else ("note %s as %s" % (fixes[0][0], fixes[0][1]))))
+            disk0 = doc.read_text(encoding="utf-8")
+            used = set(n["nid"] for n in parse_notes(disk0))
+            e_used = set(e["id"] for e in parse_entries(disk0.split("\n"))[0])
+            for _p, j in queued:
+                used |= set(n["nid"] for n in parse_notes(j.get("snapshot") or ""))
+                e_used |= set(e["id"] for e in
+                              parse_entries((j.get("snapshot") or "").split("\n"))[0])
+            for old, new, _h0, _h1 in efixes:
+                if new in e_used:
+                    return ("changed", "entry id %s was given to another entry on this computer "
+                                       "while this change was landing" % new)
+            for old, new, _t in fixes:
+                if new in used:
+                    return ("changed", "note id %s was given to another note on this computer "
+                                       "while this change was landing" % new)
+                if old != own and any((j.get("op") or {}).get("nid") == old for _p, j in queued):
+                    return ("changed", "a later change acts on note %s, which this landing "
+                                       "would renumber" % old)
+            disk, snap = disk0, state["snapshot"]
+            later = [(p, json.loads(json.dumps(j))) for p, j in queued]
+            mine = json.loads(json.dumps(job))
+            for old, new, head, _nh in efixes:
+                # The entry this change creates, renamed wherever it is: in this change's text
+                # and operation, in the copy on disk, and in each later change - whose own
+                # operation on it (a note added to it, a §2.0 tick) follows it to its new id.
+                snap = _rename_entry(snap, old, new, head)
+                disk = _rename_entry(disk, old, new, head)
+                b = _ids(mine["op"])
+                if _rename_op(mine["op"], old, new):
+                    _keep_was(mine, b)
+                mine["message"] = re.sub(pat(old), new, mine["message"])
+                for _p, j in later:
+                    j["snapshot"] = _rename_entry(j.get("snapshot") or "", old, new, head)
+                    jo = j.get("op") if isinstance(j.get("op"), dict) else None
+                    if jo is not None:
+                        b = _ids(jo)
+                        if _rename_op(jo, old, new):
+                            _keep_was(j, b)
+                            j["message"] = re.sub(pat(old), new, j.get("message") or "")
+            for old, new, text in fixes:
+                snap = _apply_note_fixes(snap, [(old, new, text)])
+                if old != own:
+                    # A note this change carried: rename it wherever it is, by id and text.
+                    for _p, j in later:
+                        j["snapshot"] = _apply_note_fixes(j.get("snapshot") or "",
+                                                          [(old, new, text)])
+                    disk = _apply_note_fixes(disk, [(old, new, text)])
+                    continue
+                # This change's own note: its operation and its commit subject...
+                mo = mine["op"]
+                b = _ids(mo)
+                mo["nid"] = new
+                if mo.get("line"):
+                    mo["line"] = _renumber_note_line(mo["line"], old, new)
+                _keep_was(mine, b)
+                mine["message"] = re.sub(pat(old), new, mine["message"])
+                # ...then each later change, oldest first, while the note is still there: an
+                # edit or delete of THIS note (same line before it, ack aside) is renamed, and
+                # the note is renamed in each later text as it stood after that change.
+                cur, here = job["op"].get("line") or "", True
+                for _p, j in later:
+                    jo = j.get("op") or {}
+                    if here and jo.get("nid") == old and jo.get("prev") \
+                            and note_without_ack(jo["prev"]) == note_without_ack(cur):
+                        nxt = jo.get("line") or cur
+                        b = _ids(jo)
+                        jo["nid"] = new
+                        jo["prev"] = _renumber_note_line(jo["prev"], old, new)
+                        if jo.get("line"):
+                            jo["line"] = _renumber_note_line(jo["line"], old, new)
+                        _keep_was(j, b)
+                        j["message"] = re.sub(pat(old), new, j.get("message") or "")
+                        if jo.get("op") == "edit":
+                            cur = nxt
+                        elif jo.get("op") == "delete":
+                            here = False
+                    if here:
+                        j["snapshot"] = _apply_note_fixes(j.get("snapshot") or "",
+                                                          [(old, new, _note_text(cur))])
+                if here:
+                    disk = _apply_note_fixes(disk, [(old, new, _note_text(cur))])
+            if disk != disk0:
+                write_doc(doc, disk, expect=disk0)
+                # The copy is still the Reader's own last write, renamed: the run goes on.
+                tip = _tip_read(doc)
+                if tip and tip.get("tip") == _text_blob(disk0):
+                    tip["tip"] = _text_blob(disk)
+                    _tip_write(doc, tip)
+            for (p, j), (_p0, j0) in zip(later, queued):
+                if j != j0:
+                    _job_write(p, j)
+            mine["snapshot"] = snap
+            state["raw"] = _job_write(path, mine)
+            state["snapshot"] = snap
+        return None
+
+    def chain():
+        """(tip, base) of the Reader's run of writes to this doc, once this change is the last
+        of them still queued; else None (see `_tip_note`). Called under the doc's lock."""
+        if any(p.name != path.name for p, _j, _r in _jobs_for(doc)):
+            return None
+        rec = _tip_read(doc)
+        if not rec or path.name not in (rec.get("jobs") or []):
+            return None
+        return rec.get("tip"), rec.get("base")
+
+    others = [(p, j) for p, j, _r in _jobs_for(doc) if p.name != path.name]
+    avoid = set()
+    try:
+        _disk = doc.read_text(encoding="utf-8")
+        avoid |= set(n["nid"] for n in parse_notes(_disk))
+        avoid |= set(e["id"] for e in parse_entries(_disk.split("\n"))[0])
+    except OSError:
+        pass
+    for _p, j in others:
+        avoid |= set(n["nid"] for n in parse_notes(j.get("snapshot") or ""))
+        avoid |= set(e["id"] for e in parse_entries((j.get("snapshot") or "").split("\n"))[0])
+    skip = set(filter(None, ((j.get("op") or {}).get("nid") for _p, j in others)))
+    skip.discard(own)
+    # An earlier change to this doc still queued (the worker lets a later one past a change it
+    # has parked) is in this snapshot too: build from main, never land the snapshot whole.
+    rebuild = any(int(j.get("seq") or 0) < seq for _p, j in others)
+
+    op = json.loads(json.dumps(job["op"]))            # land_note writes into it
+    try:
+        landed, detail = land_note(doc, job["message"], removed=job.get("removed") or [], op=op,
+                                   mine_text=snapshot, before_push=before_push, avoid=avoid,
+                                   skip=skip, refresh_if=lambda: state["snapshot"],
+                                   rebuild=rebuild, chain=chain)
+        fail = None if landed else (op.get("fail") or "transient")
+    except SystemExit as ex:                          # `_lock` gives up with SystemExit
+        landed, fail = False, "transient"
+        detail = "the doc stayed locked (%s)" % (str(ex)[:160] or "no reason given")
+    except Exception as ex:
+        landed, fail = False, "transient"
+        detail = "the lander raised %s (%s)" % (type(ex).__name__, str(ex)[:160])
+    # o9:W164: A QUEUED DELETE THAT MAIN WILL NOT TAKE IS PUT BACK, AS THE INLINE ONE WAS (W116,
+    # fix round 2). `land_note` puts the copy back itself when main refuses the delete's content;
+    # a guard refusal (`fail == "content"`) or a push the remote or a hook rejected ("push
+    # refused") did not, and the job stayed parked with the item deleted here and live on main.
+    # A fetch that failed or a busy lock is a retry, as for any job, and is left to it.
+    if (not landed and not op.get("restored") and op.get("op") in ("withdraw", "retire")
+            and "is still waiting to land" not in str(detail)
+            and (fail == "content" or str(detail).startswith("push refused"))):
+        try:
+            _undo_unlanded_delete(doc, op, _unlanded_delete_words(detail))
+        except Exception:
+            pass
+    if not landed and op.get("restored"):
+        # The lander put this computer's copy back as it was before this change, because main
+        # refused it (o9:W116's put-back of a deleted instruction). The change no longer exists
+        # anywhere, so its job goes, and the page is told why in words: final, not a retry.
+        try:
+            _job_unlink(path)
+        except OSError:
+            pass
+        return out(ok=False, restored=True, gone=True, land_detail=detail,
+                   stuck=list(op.get("stuck") or []),
+                   error="%s. Nothing was deleted, on this computer or on %s"
+                         % (op.get("plain") or detail, CANONICAL_REF.split("/", 1)[-1]))
+    if landed:
+        try:
+            _job_unlink(path)
+        except OSError as ex:
+            detail += ("; its queue entry could not be deleted (%s), and the next run finds it "
+                       "already landed" % type(ex).__name__)
+    return out(landed=bool(landed), land_detail=detail, fail=fail,
+               stuck=list(op.get("stuck") or []), nid_final=op.get("nid_final"),
+               eid_final=op.get("eid_final"))
 
 
 def _cmd_note_ack(args, doc):
@@ -6291,7 +15613,9 @@ def _cmd_note_ack(args, doc):
     when = _stamp_human()
 
     with _lock(doc):
-        lines = doc.read_text(encoding="utf-8").splitlines()
+        # The file's bytes, decoded: what a refused ack is put back to (o9:W153).
+        _orig = doc.read_bytes().decode("utf-8")
+        lines = _orig.replace("\r\n", "\n").replace("\r", "\n").splitlines()
         hits = [n for n in parse_notes("\n".join(lines)) if n["nid"] == args.note]
         if not hits:
             _note_fail(args, "no note %s in %s" % (args.note, doc.name))
@@ -6333,23 +15657,62 @@ def _cmd_note_ack(args, doc):
         # and the line after said "INSTRUCTION from the human", and nothing else in the output
         # differed. A constant is exactly the kind of wrong that survives review.
         lines[n["line"] - 1] = render_note(n["nid"], n["who"], n["when"], n["text"],
-                                           n.get("kind") or "NOTE", (who, when))
-        write_doc(doc, "\n".join(lines) + "\n")
+                                           n.get("kind") or "NOTE", (who, when), stored=True,
+                                           enc=n.get("enc"))
+        _new = "\n".join(lines) + "\n"
+        write_doc(doc, _new)
 
-    # ⛔ VERIFY BY RE-READING. An ack that did not land means the hook blocks again next
-    # turn and the session has no idea why - so a silent failure here is a wedge.
-    after = [x for x in parse_notes(doc.read_text(encoding="utf-8"))
-             if x["nid"] == args.note]
-    if not after or not after[0].get("ack"):
-        _note_fail(args, "%s is still unacknowledged in %s after the write - it did NOT "
-                         "take" % (args.note, doc.name))
-        return 1
+        # ⛔ VERIFY BY RE-READING. An ack that did not land means the hook blocks again next
+        # turn and the session has no idea why - so a silent failure here is a wedge.
+        # ⛔ IN THE LOCK THE WRITE WAS MADE IN, AND A REFUSED ACK IS TAKEN BACK OUT (o9:W153).
+        # A line the reader does not read as acked can be a line it does not read as a note at
+        # all. Left in the file, that line takes the human's note off the page and out of `--list`,
+        # and the next --ack answers "no note" (test_orchdoc_refused_writes.py, section 3).
+        after = [x for x in parse_notes(doc.read_text(encoding="utf-8"))
+                 if x["nid"] == args.note]
+        if not after or not after[0].get("ack"):
+            _note_fail(args, ("%s is still unacknowledged in %s after the write - it did NOT "
+                              "take" % (args.note, doc.name))
+                       + _undo_failed_write(doc, _orig, _new))
+            return 1
     if args.json:
         print(json.dumps({"ok": True, "action": "acked", "nid": args.note,
                           "doc": doc.name, "ack": after[0]["ack"],
                           "text": after[0]["text"]}))
         return 0
     print("[INSTRUCTION acknowledged] %s in %s by %s" % (args.note, doc.name, who))
+    # \u26d4 AN ACK WRITTEN INTO A TREE THAT CANNOT LAND IS LOST BY THE NEXT RESET. o10:F172,
+    # after hand-repairing it twice: --ack writes the marker into the shared checkout, the
+    # worktree is reset --hard, the prose is written there, and the worktree copy lands. No race
+    # - the ack cannot survive that sequence, and it fails looking fine: --ack reports success,
+    # the prose lands, and the only symptom is the human's note reappearing unacknowledged.
+    #
+    # \u2b50 Both halves of the habit are correct, which is why it is a tool defect and not
+    # carelessness: the reader serves the shared checkout, so --ack naturally runs there; the
+    # landing gate refuses a stale tree, so landings happen in a worktree.
+    #
+    # \u26a0\ufe0f WARNING RATHER THAN REFUSING, though o10 asked for refuse. Acking from the
+    # shared tree is the normal motion and the marker really is written. What is decidable is
+    # narrower: if THIS tree is behind the canonical ref, a landing from it would already be
+    # refused by the staleness gate, so the ack provably cannot travel with a commit from here.
+    # Not writing to both copies either - o10's own reason, that two files are how they drift.
+    try:
+        _st, _n, _ = behind_canonical(doc.parent, fetch=False)
+    except Exception:
+        _st, _n = "unknown", 0
+    if _st == "behind":
+        print("\n  \u26a0\ufe0f THIS ACK WILL NOT SURVIVE A LANDING FROM ANOTHER TREE.",
+              file=sys.stderr)
+        print("     %s is %d commit(s) behind %s, so `commit` from here would be REFUSED"
+              % (doc.parent, _n, CANONICAL_REF), file=sys.stderr)
+        print("     as stale - which means this marker cannot travel with a commit made here.",
+              file=sys.stderr)
+        print("     A `git reset --hard` in the worktree you land from will erase it, and the",
+              file=sys.stderr)
+        print("     only symptom is the note reappearing as unacknowledged.\n", file=sys.stderr)
+        print("     DO THIS: ack in the tree you will LAND from, so the marker and the prose",
+              file=sys.stderr)
+        print("     travel in one commit.\n", file=sys.stderr)
     print("  %s" % after[0]["text"][:120])
     print()
     print("  Acknowledged means SEEN, not done. What you do about it goes in the entry.")
@@ -6380,17 +15743,130 @@ def _stamp_human():
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-def _split_by_seen(doc, rel, ref, lost):
+def _added_forms(raw):
+    """The forms an added line can take in gate 1's comparison: as written, and as gate 1
+    reduces it (`_authored_form`). `lost` holds the reduced form, so matching the raw text
+    alone never recognised a heading, a field line or a note."""
+    out = {raw.strip()}
+    try:
+        f = _authored_form(raw)
+    except Exception:
+        f = None
+    if f:
+        out.add(f.strip())
+    out.discard("")
+    return out
+
+
+#: An orchestrator or lane id at the very start of a subject: `o9: ...`, `o9 W9999: ...`,
+#: `o9L99: ...`. The lookahead keeps `o90` from reading as `o9`.
+ORCH_SUBJECT_RE = re.compile(r"^(o\d+(?:L\d+)?)(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def _commit_origin(subject, landers, me):
+    """"own", "other" or "unknown" - whose landing a commit is, as far as it says.
+
+    ⛔ ONLY A COMMIT KNOWN TO BE SOMEONE ELSE'S IS "other". The first version of B2 treated
+    every commit that was not visibly this orchestrator's as someone else's, and measured
+    against the last 300 subjects touching OrchDocs, 208 carry no orchestrator prefix at all -
+    o7's are mostly the tool's own default `<doc>: update`. So an orchestrator rewording its own
+    lines was refused thousands of times over, with advice it could not follow. Unknown origin
+    now falls back to the mtime rule; notes are protected by B1 whatever this says.
+
+    Known, in order:
+      * an `Orchdoc-Lander:` trailer (written by every landing from 2026-09-24 on): own when
+        every lander named is `me`, else other - a Reader note says `reader-note`
+      * a Reader note subject, "Added D999.n2 on <doc> (<who>)": other
+      * an orchestrator or lane id at the start of the subject: own when it is `me`, else other
+    With `me` unknown, nothing is own, so every attributed commit is other (fail closed).
+    """
+    me_l = (me or "").lower()
+    if landers:
+        if me_l and all(l.strip().lower() == me_l for l in landers):
+            return "own"
+        return "other"
+    if READER_NOTE_SUBJECT_RE.match(subject or ""):
+        return "other"
+    m = ORCH_SUBJECT_RE.match((subject or "").strip())
+    if m:
+        return "own" if (me_l and m.group(1).lower() == me_l) else "other"
+    return "unknown"
+
+
+def _added_after_base(rel, ref, base, me):
+    """B2: lines added to `rel` in base..ref by commits KNOWN to be someone else's.
+
+    -> a set of lines (see `_added_forms`), or None when that cannot be answered.
+
+    ⛔ THE MERGE-BASE IS WHEN THE COPY WAS TAKEN; THE MTIME IS WHEN IT WAS LAST WRITTEN. The
+    mtime rule counts a line as seen if it reached the ref before the file was last written -
+    but the copy was TAKEN at the merge-base, often long before. Measured 2026-09-24: the human's
+    note reached main at 17:06 through the Reader, the orchestrator's copy had been taken before
+    that and was last written at 17:11, and the landing dropped the note as "seen". Anything
+    another session added after the base was never in this copy, whatever the mtime says.
+
+    ⭐ WHOSE COMMIT IT IS comes from `_commit_origin`: own landings are editing, commits of
+    unknown origin are left to the mtime rule, and only the rest count here.
+    """
+    if not base:
+        return None
+    # ⚠️ A PLAIN-TEXT MARKER, NOT A CONTROL CHARACTER. The first version used \x1e, which
+    # Python's str.strip() counts as whitespace - `git()` strips its output, so the NEWEST
+    # commit lost its marker and its lines were read as someone else's. No diff line can start
+    # with this word: content lines start with + - or a space, headers with diff/index/@@.
+    # The subject goes last, since it is the one field that could hold a tab.
+    rc, out, _ = git(["log", "-p", "--unified=0", "--diff-algorithm=histogram",
+                      "--format=ORCHDOC-COMMIT%%x09%%H%%x09%%(trailers:key=%s,valueonly,"
+                      "separator=%%x2C)%%x09%%s" % LANDER_TRAILER,
+                      "%s..%s" % (base, ref), "--", rel])
+    if rc != 0:
+        return None
+    added, count, in_hunk = set(), False, False
+    for ln in out.split("\n"):
+        if ln.startswith("ORCHDOC-COMMIT\t"):
+            parts = ln.split("\t", 3)
+            landers = [x for x in (parts[2] if len(parts) > 2 else "").split(",") if x.strip()]
+            subj = parts[3] if len(parts) > 3 else ""
+            count = _commit_origin(subj, landers, me) == "other"
+            in_hunk = False
+            continue
+        if ln.startswith("diff --git "):
+            in_hunk = False
+            continue
+        if ln.startswith("@@"):
+            in_hunk = True
+            continue
+        if in_hunk and count and ln.startswith("+"):
+            added |= _added_forms(ln[1:])
+    return added
+
+
+def _split_by_seen(doc, rel, ref, lost, base=None):
     """(seen, unseen) - lines the author had when they wrote this copy, and lines they did not.
 
     ⛔ A line that entered `ref` AFTER the working copy's mtime was never in front of the
     author, so removing it cannot have been a decision. A line that was already there was.
     That is the distinction gate 1's message always claimed to make and never tested.
 
-    Fails CLOSED: if the mtime or the log cannot be read, everything counts as unseen and the
-    gate behaves exactly as it did before. A discriminator that cannot answer must not become
-    permission.
+    ⛔ AND (B2) A LINE ANOTHER SESSION ADDED AFTER THIS CHECKOUT'S MERGE-BASE `base` WAS NEVER
+    IN THIS COPY EITHER - see `_added_after_base`. A line is unseen if EITHER rule says so.
+
+    ⚠️ B2 COVERS ONLY A CHECKOUT WHOSE HEAD MOVES WITH THE FILE - a worktree an orchestrator
+    resets or checks out to take a fresh copy. It does NOTHING in the shared checkout: deliver.py
+    moves that checkout's `main` with update-ref and leaves a file it cannot safely overwrite
+    alone, so there the merge-base runs AHEAD of the copy on disk and base..ref is empty. In
+    that checkout only the mtime rule applies to ordinary lines. Notes are covered everywhere by
+    B1, which does not depend on a base. (Recording, per copy, which commit was last written to
+    it would close this; it needs deliver.py, the shared-state module and three writers to agree
+    on one record, and a record a later `git checkout` silently invalidates - not done here.)
+
+    Who "me" is: `running_orchestrator()`, else the orchestrator the doc's filename names.
+
+    Fails CLOSED: if the mtime, the log or the base cannot be read, everything counts as unseen
+    and the gate behaves exactly as it did before. A discriminator that cannot answer must not
+    become permission.
     """
+    me = running_orchestrator() or doc_owner_id(doc)
     try:
         mtime = _dt.datetime.fromtimestamp(doc.stat().st_mtime).astimezone()
     except OSError:
@@ -6400,16 +15876,26 @@ def _split_by_seen(doc, rel, ref, lost):
     if rc != 0:
         return [], list(lost)
     shas = [s for s in blob.split() if s]
-    if not shas:
-        return list(lost), []          # ref has not moved since; every removal was informed
     added = set()
     for sha in shas[:40]:
-        rc2, diff, _ = git(["show", "--format=", "--unified=0", sha, "--", rel])
+        # `histogram`: under the default algorithm a reorder lists every moved line as added.
+        rc2, diff, _ = git(["show", "--format=", "--unified=0", "--diff-algorithm=histogram",
+                            sha, "--", rel])
         if rc2 != 0:
             continue
+        in_hunk = False
         for ln in diff.split("\n"):
-            if ln.startswith("+") and not ln.startswith("+++"):
-                added.add(ln[1:].strip())
+            if ln.startswith("diff --git "):
+                in_hunk = False
+            elif ln.startswith("@@"):
+                in_hunk = True
+            elif in_hunk and ln.startswith("+"):
+                added |= _added_forms(ln[1:])
+    # B2. None means the base or the log could not be read: fail closed.
+    after_base = _added_after_base(rel, ref, base, me)
+    if after_base is None:
+        return [], list(lost)
+    added |= after_base
     seen, unseen = [], []
     for l in lost:
         (unseen if l.strip() in added else seen).append(l)
@@ -6450,6 +15936,189 @@ def _split_by_seen(doc, rel, ref, lost):
     return seen, unseen
 
 
+def _write_landed(path, data):
+    """Write landed bytes into the shared checkout. Returns the attempt that succeeded.
+
+    Twice on 2026-09-23 a landing printed NOT DELIVERED on `[Errno 22] Invalid argument`
+    for ORCHESTRATOR-DECISIONS-o9.md, and the same write succeeded by hand seconds later: the
+    Reader serves that file and Drive syncs the folder, and either can hold it for a moment.
+    `deliver.write_bytes_durably` retries those refusals and writes through a temp file, and
+    it is the one writer deliver.py itself uses, so the two cannot drift apart.
+
+    If no current deliver.py can be found (an old copy in the shared checkout that predates
+    the function, or a published copy of this tool with no deliver.py near it), this falls
+    back to the single plain write it replaced rather than failing.
+    """
+    try:
+        _deliver = _deliver_module()
+        writer = _deliver.write_bytes_durably if _deliver else None
+    except Exception:
+        writer = None
+    if writer is None:
+        Path(path).write_bytes(data)
+        return 1
+    return writer(path, data)
+
+
+#: How long a landing waits for `deliver.py --apply`. Measured 2026-09-23 on the shared
+#: checkout: the fast survey takes about 2s, so it runs in the foreground and the committer
+#: sees its one line. The old full survey took 69-135s and would not have fit.
+DELIVER_TIMEOUT = 30
+#: o9:W195: after a timeout, finish the delivery in a detached run (see _finish_delivery_detached).
+DELIVER_FINISH = True
+#: None = the real deliver.py (see `_real_deliver_path`). Tests point it at a stand-in.
+DELIVER_SCRIPT = None
+
+
+def _real_deliver_path():
+    """deliver.py beside this file, else the workspace's copy - so a published copy of this
+    tool (the skill mirror) still delivers when run against this workspace. None if neither
+    exists, or if the one found predates `--summary` and would run the 69s survey."""
+    for cand in (Path(__file__).resolve().parent / "deliver.py",
+                 Path(PROJECTS) / ".shared" / "scripts" / "deliver.py"):
+        try:
+            if cand.exists():
+                return cand if "--summary" in cand.read_text(encoding="utf-8",
+                                                               errors="replace") else None
+        except OSError:
+            continue
+    return None
+
+
+def _deliver_module():
+    """The real deliver.py, loaded by path, or None. Never an older copy: loading one of those
+    in-process would run its import-time stdout swap inside this process."""
+    import importlib.util
+    path = _real_deliver_path()
+    if path is None:
+        return None
+    spec = importlib.util.spec_from_file_location("orchdoc_deliver", str(path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _finish_delivery_detached(script, base):
+    """Start `deliver.py --apply` again with no time limit and no window, and do not wait.
+    True when it was started. Never raises. Tests set DELIVER_FINISH = False."""
+    if not DELIVER_FINISH:
+        return False
+    try:
+        kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+              "stderr": subprocess.DEVNULL}
+        if os.name == "nt":
+            try:
+                from no_window import SERVER_FLAGS as _f
+            except ImportError:
+                _f = 0x08000000 | 0x00000200
+            kw["creationflags"] = _f
+        else:
+            kw["start_new_session"] = True
+        subprocess.Popen([sys.executable, str(script), "--apply", "--summary", "--no-fetch",
+                          "--repo", str(base), "--caller", "orchdoc.py-finish"], **kw)
+        return True
+    except Exception:
+        return False
+
+
+def _checkout_drew_reads():
+    """The main worktree of the repo PROJECTS is in - the checkout every session reads."""
+    rc, out, _ = git(["worktree", "list", "--porcelain"], cwd=PROJECTS)
+    if rc == 0:
+        for line in out.split("\n"):
+            if line.startswith("worktree "):
+                return Path(line[len("worktree "):].strip())
+    return _main_worktree() or Path(PROJECTS)
+
+
+def _deliver_landed_files():
+    """After a landing, bring EVERY landed file into the shared checkout, not only this doc.
+
+    Each group lands from its own worktree, while the human, every session and every hook read the
+    ONE shared checkout. `deliver.py --apply` was the only thing carrying files across, and it
+    ran at most once a day from morning_self_heal. Measured 2026-09-23 (o1): six writing-rule
+    files sat stale there within an hour of landing and writers read old rules until o1
+    restored them by hand; six new script pilots were missing until someone ran it by hand.
+    This is the command every group runs many times an hour, so running it here closes the gap
+    within minutes.
+
+    The same apply also re-points the shared checkout's `main` at origin/main (branch and
+    index only; deliver.keep_main_current). Before 2026-09-24 nothing did, and `main` fell
+    709 commits behind.
+
+    It NEVER fails or holds up the landing, which has already been verified by gate 3:
+      - one line of output, whatever happens - plus deliver's ALERT block, above that line,
+        when the shared `main` holds commits origin/main does not
+      - a timeout (DELIVER_TIMEOUT); on expiry the apply is killed and its lock released
+      - deliver.py takes a lock, so two groups landing at once do not run two applies; the
+        second prints that it skipped
+      - any exception here is caught and reported as a skip
+    """
+    try:
+        base = _checkout_drew_reads()
+        script = Path(DELIVER_SCRIPT) if DELIVER_SCRIPT else _real_deliver_path()
+        if script is None or not script.exists():
+            print("  deliver: skipped - no current deliver.py beside orchdoc.py or in %s"
+                  % (Path(PROJECTS) / ".shared" / "scripts"))
+            return
+        proc = subprocess.Popen(
+            [sys.executable, str(script), "--apply", "--summary", "--no-fetch",
+             "--repo", str(base), "--caller", "orchdoc.py"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+            errors="replace", creationflags=flags())
+        try:
+            out, err = proc.communicate(timeout=DELIVER_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.communicate(timeout=10)
+            except Exception:
+                pass
+            try:
+                _deliver = _deliver_module()
+                if _deliver:
+                    _deliver.release_lock_if_pid(base, proc.pid)
+            except Exception:
+                pass
+            # o9:W195: stopping it left a large delivery half done (W242, 1203 stale files).
+            # The apply is idempotent, so a detached run with no time limit finishes it; it
+            # writes its own deliver.log lines, and the one this run wrote at its start has
+            # no end line, which that run reports as cut off.
+            finishing = _finish_delivery_detached(script, base)
+            print("  deliver: skipped - no answer within %ds, so it was stopped. The landing"
+                  " stands;%s" % (DELIVER_TIMEOUT, " a detached run is finishing the delivery"
+                                  " (see ~/.claude/state/deliver.log)." if finishing
+                                  else " run deliver.py --apply by hand."))
+            return
+        lines = [l.strip() for l in (out or "").splitlines()]
+        said = [l for l in lines if l.startswith("deliver:")]
+        # An ALERT (the shared checkout's `main` holds commits origin does not) is printed in
+        # full, above the summary line - it names commits a person has to deal with.
+        alert, inside = [], False
+        for raw in (out or "").splitlines():
+            if raw.startswith("deliver: ALERT"):
+                inside = True
+            elif inside and not raw.startswith((" ", "\t")):
+                inside = False
+            if inside:
+                alert.append(raw.rstrip())
+        for a in alert:
+            print("  %s" % a[:300])
+        said = [l for l in said if not l.startswith("deliver: ALERT")]
+        if said:
+            print("  %s" % said[-1][:300])
+            return
+        crashed = [l for l in lines if l.startswith("deliver error:")]
+        if crashed:
+            print("  deliver: skipped - %s" % crashed[-1][len("deliver "):][:200])
+            return
+        tail = [l.strip() for l in ((err or "") + "\n" + (out or "")).splitlines() if l.strip()]
+        print("  deliver: skipped - it exited %s without a summary: %s"
+              % (proc.returncode, (tail[-1] if tail else "no output")[:200]))
+    except Exception as e:
+        print("  deliver: skipped - %s: %s" % (type(e).__name__, str(e)[:200]))
+
+
 def _report_delivery(doc):
     """Does the copy the human actually opens match what just landed? Say so either way.
 
@@ -6471,7 +16140,10 @@ def _report_delivery(doc):
     if not reader.exists():
         print("  ⚠️ NOT ON THE HUMAN'S DISK: %s is missing from %s" % (doc.name, base))
         return
-    rc_a, disk, _e = git(["hash-object", str(reader)])
+    # Every `hash-object` of the reader's copy in this function passes `--path doc.name`: the
+    # blobs it is compared with were stored with the attributes of that repo path, and without
+    # `--path` git looks attributes up by the absolute path, which matches no slashed pattern.
+    rc_a, disk, _e = git(["hash-object", "--path", doc.name, str(reader)])
     rc_b, landed, _e2 = git(["rev-parse", "%s:%s" % (CANONICAL_REF, doc.name)])
     if rc_a != 0 or rc_b != 0:
         print("  ⚠️ could not compare the reader's copy - check by hand: %s" % reader)
@@ -6505,18 +16177,77 @@ def _report_delivery(doc):
         # ⭐ DELIVERING A LANDED COPY IS WORTH DOING AUTOMATICALLY. DESTROYING UNLANDED WORK
         # NEVER IS. So the check is not "do they differ" - they always differ - it is "does the
         # difference contain anything that exists nowhere else".
+        # ⛔ THE COMMENT DIRECTLY ABOVE STATES THE CORRECT RULE AND THE CODE BELOW USED TO
+        # IMPLEMENT A DIFFERENT ONE. Its words: "the check is not 'do they differ' - they
+        # always differ - it is 'does the difference contain anything that exists nowhere
+        # else'." The implementation was `git diff --quiet <ref> -- <file>`, which is exactly
+        # "do they differ". After ANY landing the reader's copy is the PREVIOUS version, so it
+        # differs by construction and the guard refused every time - correctly by its code,
+        # and wrongly by its own stated intent.
+        #
+        # ⭐ A DESIGN NOTE AND ITS BODY DISAGREEING IS THE SAME SHAPE AS F187, where a
+        # docstring claimed more than its code and misled two orchestrators in opposite
+        # directions. Here the prose is RIGHT and the code is wrong, which is the harder way
+        # round: every reader who checked the intent came away satisfied.
+        #
+        # ✅ THE QUESTION THE COMMENT ASKS, ASKED PROPERLY: is the reader's copy a version this
+        # path has HELD before on the canonical ref? If its blob appears anywhere in that
+        # path's history, the copy is merely STALE and overwriting it loses nothing. If it
+        # appears nowhere, it holds content that exists on no ref and must not be touched.
+        _stale_not_unique = False
+        _rc_h2, _disk_sha, _ = git(["hash-object", "--path", doc.name, str(reader)])
+        _disk_sha = _disk_sha.strip()
+        if _disk_sha:
+            _rc_l, _hist, _ = git(["rev-list", "--max-count=500", CANONICAL_REF, "--",
+                                   doc.name], cwd=base)
+            for _sha in (_hist.split() if _rc_l == 0 else []):
+                _rc_b2, _blob_sha, _ = git(["rev-parse", "%s:%s" % (_sha, doc.name)], cwd=base)
+                if _rc_b2 == 0 and _blob_sha.strip() == _disk_sha:
+                    _stale_not_unique = True
+                    break
+
         _uncommitted = False
+        _unanswerable = ""
         try:
-            _rc_d, _diff, _ = git(["diff", "--quiet", "%s" % CANONICAL_REF, "--",
-                                   str(reader)])
-            # `diff --quiet` exits 1 when there IS a difference between the ref and the file
-            # as git sees it in that tree. Anything non-zero means "not identical to the ref",
-            # which is the condition we must not silently resolve by overwriting.
-            _uncommitted = (_rc_d != 0)
-        except Exception:
+            # \u26d4 ASK FROM THE TREE THAT OWNS THE FILE, WITH A RELATIVE PATHSPEC. This ran
+            # with `cwd` defaulting to PROJECTS - whatever tree is running the tool - and an
+            # ABSOLUTE path in the main checkout. Every orchestrator lands from a worktree, so
+            # git was asked about a path outside the repository it was pointed at and exited
+            # 128 every single time. Delivery has been refused on every landing, fleet-wide,
+            # with a message blaming a lane.
+            #
+            # \u2b50 THE CONSERVATIVE DIRECTION IS WHY NOBODY SAW IT. Failing toward "refuse"
+            # looks responsible and raises no alarm, so "this fires every time" read as "the
+            # condition is common" rather than "the question is malformed".
+            _rc_d, _diff, _err_d = git(["diff", "--quiet", "%s" % CANONICAL_REF, "--",
+                                        doc.name], cwd=base)
+            # 0 = identical to the ref. 1 = differs. Anything else means git could not answer,
+            # and that is a THIRD outcome rather than a dressed-up "differs" - it gets said
+            # out loud below instead of hiding here.
+            #
+            # ⭐ DIFFERING IS NOT THE AT-RISK CONDITION. After every landing the reader's copy
+            # is the previous version, so it differs by construction. It is at risk only if
+            # its content has never been on the ref at all - which `_stale_not_unique` above
+            # answers by looking for its blob in the path's history.
+            if _rc_d in (0, 1):
+                _uncommitted = (_rc_d == 1 and not _stale_not_unique)
+            else:
+                _uncommitted = True
+                _unanswerable = _err_d or ("git exited %d" % _rc_d)
+        except Exception as _ex_d:
             _uncommitted = True        # cannot tell -> treat as at risk, never as safe
+            _unanswerable = str(_ex_d)[:120]
+        if _uncommitted and _unanswerable:
+            # A malformed question and a genuine difference call for opposite responses: one
+            # is fixed by reconciling a file, the other by fixing this tool. Merging them is
+            # how the first masqueraded as the second for a fleet-wide run of landings.
+            print("  \u26a0\ufe0f NOT DELIVERED - the check could not be answered, so it")
+            print("     refused rather than guessing: %s" % _unanswerable)
+            print("     This is a defect in the CHECK, not a dirty copy. Compare by hand:")
+            print("       git -C %s diff %s -- %s" % (base, CANONICAL_REF, doc.name))
+            return
         if _uncommitted:
-            print("  ⛔ NOT DELIVERED, ON PURPOSE. %s in %s differs from the canonical ref"
+            print("  \u26d4 NOT DELIVERED, ON PURPOSE. %s in %s differs from the canonical ref"
                   % (doc.name, base))
             print("     and may hold work that is on NO ref - which gate 1 cannot see, because")
             print("     gate 1 only compares against the ref. Overwriting it could destroy an")
@@ -6532,14 +16263,34 @@ def _report_delivery(doc):
             print("     Reconcile by hand, or land that copy first:")
             print("       git -C %s diff %s -- %s" % (base, CANONICAL_REF, doc.name))
             return
-        rc, blob, _ = git(["show", "%s:%s" % (CANONICAL_REF, doc.name)])
-        if rc == 0:
+        # \u26d4 THE LANDED BYTES, NOT A STRIPPED STRING. `git()` returns
+        # `p.stdout.strip()`, and this passed that straight to `write_text` - so every
+        # delivered file lost its trailing newline and any leading blank line. Measured on
+        # ORCHESTRATOR-DECISIONS-o12.md: the main checkout differed from origin by exactly
+        # that, with an mtime four seconds after its last landing. The hash comparison above
+        # would have reported the difference this created, on the next landing, as though
+        # someone had edited the file.
+        #
+        # \u2705 AND VERIFY BY RE-HASHING WHAT IS NOW ON DISK. "Wrote the landed copy" is a
+        # claim about an operation; "the copy the human reads is that object" is the claim that
+        # matters, and it costs one more call.
+        _p = subprocess.run(["git", "-C", str(PROJECTS), "cat-file", "-p",
+                             "%s:%s" % (CANONICAL_REF, doc.name)],
+                            capture_output=True, timeout=60, creationflags=flags())
+        if _p.returncode == 0:
             try:
-                reader.write_text(blob, encoding="utf-8", newline="")
-                print("  DELIVERED. Wrote the landed copy to %s" % reader)
+                _tries = _write_landed(reader, _p.stdout)
+                _rc_v, _now, _ = git(["hash-object", "--path", doc.name, str(reader)])
+                if _rc_v == 0 and _now.strip() == landed.strip():
+                    print("  DELIVERED. Wrote the landed copy to %s%s"
+                          % (reader, "" if _tries == 1 else " (on try %d)" % _tries))
+                else:
+                    print("  \u26a0\ufe0f WROTE %s but it does not hash to what landed."
+                          % reader)
+                    print("     Do not trust that copy - compare it by hand.")
                 return
             except OSError as e:
-                print("  ⚠️ could not write the reader's copy: %s" % e)
+                print("  \u26a0\ufe0f could not write the reader's copy: %s" % e)
     print("  ⛔ NOT DELIVERED. %s on the human's disk DIFFERS from what just landed." % doc.name)
     print("     He is reading something else. Point him at the landed version, or")
     print("     reconcile his copy - do NOT assume 'it is on main' reached him.")
@@ -6615,9 +16366,21 @@ def cmd_restamp(args):
     rc = write_restamp(doc, args.id, why, who, args.at or _now_iso())
     if rc == 0:
         _warn_repeat_mover(doc, args.id, why)
+        # o9:W88 - the author is reviewing this entry now, the one moment a needle is cheap.
+        print_needle_hints(doc, [args.id])
         print("NEXT: orchdoc.py check --doc %s   then commit --doc %s --commit"
               % (args.doc, args.doc))
     return rc
+
+
+def _heading_names_id(doc_text, eid):
+    """True when a heading OUTSIDE any code block names `eid` (gate 4's test that the entry a
+    commit message names is in the doc). o9 W150 box 8: a heading quoted inside a code block is
+    text, not an entry."""
+    rows = doc_text.split("\n")
+    fz = fenced_lines(rows)
+    pat = re.compile(r"^#{1,6}\s.*\b%s\b" % re.escape(eid))
+    return any(i not in fz and pat.match(r) for i, r in enumerate(rows))
 
 
 def _warn_repeat_mover(doc, eid, why):
@@ -6644,7 +16407,11 @@ def _warn_repeat_mover(doc, eid, why):
     except OSError:
         return
     body, found = [], False
-    for raw in text.split("\n"):
+    _rows = text.split("\n")
+    _fz = fenced_lines(_rows)                # o9 W150 box 8: a heading in a code block ends nothing
+    for _i, raw in enumerate(_rows):
+        if _i in _fz:
+            continue
         m = re.match(r"^#{3,6}\s+[^A-Za-z0-9]*([A-Z]{1,3}\d+[a-z]?)\b", raw)
         if m:
             if found:
@@ -6697,7 +16464,10 @@ def write_restamp(doc, eid, why, who, stamp):
 
     ⭐ The guards belong in the wrapper; the behaviour worth testing is here.
     """
-    lines = doc.read_text(encoding="utf-8").splitlines()
+        # `expect` is the RAW text, so a landing that arrives between this
+    # read and the write below refuses instead of being erased.
+    _before_txt = doc.read_text(encoding="utf-8")
+    lines = _before_txt.splitlines()
     entries, _ = parse_entries(lines)
     match = [e for e in entries if e["id"] == eid]
     if not match:
@@ -6840,7 +16610,7 @@ def write_restamp(doc, eid, why, who, stamp):
 
         lines[si] = new_status
         lines[si + 1:fi] = new_block
-    doc.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="")
+    write_doc(doc, "\n".join(lines) + "\n", expect=_before_txt)
 
     # VERIFY THE MUTATION, the way `resolve` does. A write that reports success from its own
     # say-so is how this file learned that "[RESOLVED] Q1 -> RESOLVED" can print three times
@@ -6854,41 +16624,37 @@ def write_restamp(doc, eid, why, who, stamp):
     print("[RESTAMPED] %s in %s" % (eid, doc.name))
     print("            %s at %s" % (who, stamp))
     if len(stamps) > 1:
+        # ⛔ `new_status` IS ONLY BOUND ON THE STATUS PATH, and this line did not know
+        # that. o1 hit it on an entry they hand-wrote with **Opened:** and no **Status:**:
+        # UnboundLocalError, as a traceback rather than a sentence - AFTER the write had
+        # already landed, so a retry appended a second stamp.
+        #
+        # ⭐ The damage was not the crash, it was WHERE it was. A failure in the reporting
+        # code after a successful write reads to the caller as "it did not work", and the
+        # honest recovery - run it again - is the one that duplicates.
         print("            plate line now %d chars; %d stamp(s) beneath it"
-              % (len(new_status), len(stamps)))
+              % (len(plate if no_status else new_status), len(stamps)))
     return 0
 
 
-def cmd_resolve(args):
-    """
-    Flip an entry's Status IN PLACE. Never append a second heading.
+def apply_resolve(lines, eid, status, ruling, depends=None, adopt=False, who="orchestrator",
+                  stamp=None, doc_name="the doc"):
+    """The edit `resolve` makes, on `lines` (changed in place). -> None, or the refusal text.
 
-    Appending a superseding heading is how one ID comes to carry two contradictory
-    statuses (7 instances across the live docs today). Because lifecycle is a FIELD and
-    not a location, resolving cannot strand an entry in the wrong section - there are no
-    lifecycle sections to be stranded in. Every lifecycle view is generated.
+    Pure over the text, so the Reader's queued status change (o9L1328) can make the SAME edit on
+    the canonical ref when this copy is behind it (see `apply_today`, act "status"). `stamp` is
+    passed in so that edit comes out identical on both texts.
     """
-    doc = resolve_doc_arg(args.doc)
-    if not doc or not doc.exists():
-        print("no such doc: %s" % doc, file=sys.stderr)
-        return 2
-    if refuse_if_not_mine(doc, "resolve", getattr(args, "not_mine", False)):
-        return 1
-    lines = doc.read_text(encoding="utf-8").splitlines()
+    stamp = stamp or _now_iso()
     entries, _ = parse_entries(lines)
-
-    match = [e for e in entries if e["id"] == args.id]
+    match = [e for e in entries if e["id"] == eid]
     if not match:
-        print("[REFUSE] no entry with id %s in %s" % (args.id, doc.name), file=sys.stderr)
-        return 1
+        return "[REFUSE] no entry with id %s in %s" % (eid, doc_name)
     if len(match) > 1:
-        print("[REFUSE] id %s appears %d times - fix E-DUPID first" % (args.id, len(match)),
-              file=sys.stderr)
-        return 1
+        return "[REFUSE] id %s appears %d times - fix E-DUPID first" % (eid, len(match))
     e = match[0]
 
-    today = _today()
-    status = args.status.upper()
+    status = status.upper()
     changed = False
     end = e["line"] + len(e["body"].splitlines())
     for i in range(e["line"], min(end, len(lines))):
@@ -6916,12 +16682,12 @@ def cmd_resolve(args):
                     r"\1 ", lines[h]).rstrip()
                 hashes, _, rest = bare.partition(" ")
                 lines[h] = "%s %s %s" % (hashes, want_mark, rest.strip())
-        # IDEMPOTENT.\1The human spotted the bug in a screenshot: Q1 carried the SAME
+        # IDEMPOTENT. The human spotted the bug in a screenshot: Q1 carried the SAME
         # "Resolved" line twice, because the first run silently failed to flip the
         # status (a drifted regex) but still inserted its line, and the re-run inserted
         # another. A mutation that is not idempotent turns every retry into corruption -
         # and retries are guaranteed, because the first attempt reported success falsely.
-        note = "**Resolved %s:** %s" % (today, sanitize_field(args.ruling))
+        note = "**Resolved %s:** %s" % (stamp, sanitize_body(ruling))
         end_i = e["line"] + len(e["body"].splitlines())
         existing = [j for j in range(e["line"], min(end_i, len(lines)))
                     if lines[j].startswith("**Resolved ")]
@@ -6935,13 +16701,11 @@ def cmd_resolve(args):
         changed = True
         break
     if not changed:
-        if not args.adopt:
-            print("[REFUSE] entry %s has no Status field to flip.\n"
-                  "         Expected a line like:  %s\n"
-                  "         Re-run with --adopt to insert one, or use `migrate`"
-                  " for the whole doc."
-                  % (args.id, STATUS_CANONICAL), file=sys.stderr)
-            return 1
+        if not adopt:
+            return ("[REFUSE] entry %s has no Status field to flip.\n"
+                    "         Expected a line like:  %s\n"
+                    "         Re-run with --adopt to insert one, or use `migrate`"
+                    " for the whole doc." % (eid, STATUS_CANONICAL))
         # --adopt: legacy entry, no field yet. Insert one rather than refusing - this is
         # the adoption path o7 found missing, where `resolve` was unreachable on exactly
         # the docs that needed it.
@@ -6950,7 +16714,7 @@ def cmd_resolve(args):
         lines.insert(e["line"] + 1, field)
         lines.insert(e["line"] + 2, "")
         lines.insert(e["line"] + 3,
-                     "**Resolved %s:** %s" % (today, sanitize_field(args.ruling)))
+                     "**Resolved %s:** %s" % (stamp, sanitize_body(ruling)))
         changed = True
 
     # Write the declared edge, so a ruling can be told it has gone stale. E-NODEPS exists
@@ -6967,8 +16731,7 @@ def cmd_resolve(args):
     if changed:
         att = ("**Attested-by:** %s at %s - ruled in this session; the ruling text above "
                "states what was decided and the Depends edge states what it rests on"
-               % (sanitize_field(os.environ.get("CLAUDE_ORCH_ID", "orchestrator"), 40),
-                  _now_iso()))
+               % (sanitize_field(who, 40), stamp))
         if not any(l.startswith("**Attested-by:**")
                    for l in lines[e["line"]:e["line"] + 8]):
             for k in range(e["line"], min(len(lines), e["line"] + 8)):
@@ -6976,8 +16739,8 @@ def cmd_resolve(args):
                     lines.insert(k + 1, att)
                     break
 
-    if changed and args.depends:
-        dep_line = "**Depends:** %s" % sanitize_field(args.depends, 200)
+    if changed and depends:
+        dep_line = "**Depends:** %s" % sanitize_field(refuse_if_too_long(depends, 200, "depends"), 200)
         already = any(l.startswith("**Depends:**")
                       for l in lines[e["line"]:e["line"] + 6])
         if not already:
@@ -6986,7 +16749,142 @@ def cmd_resolve(args):
                     lines.insert(k + 1, dep_line)
                     break
 
-    write_doc(doc, "\n".join(lines) + "\n")
+    return None
+
+
+def _resolve_for_reader(args, doc):
+    """o9L1328: the human's Done / Superseded button in the OrchDoc Reader (and its Undo).
+
+    The same edit as `resolve` (`apply_resolve`, then the move to §99 that `archive` would make),
+    made as a Reader change: under the doc's lock, journalled in the landing queue
+    (`--queue-landing`) so the worker lands it, answered as one JSON line, and recorded by
+    client id so a resend writes nothing. No model is involved anywhere.
+
+    `--undo-json` is the "undo" a first call returned; it puts the entry back as it was.
+    Prints {"ok", "action", "id", "doc", "status", "landed", "land_detail", "queued", "undo"}.
+    """
+    try:
+        undo_in = json.loads(args.undo_json) if getattr(args, "undo_json", None) else None
+    except ValueError:
+        _note_fail(args, "--undo-json is not JSON")
+        return 2
+    import reader_status as _rs
+    eid = args.id
+    status = (args.status or "").upper()
+    if undo_in is None and status not in _rs.STATUS_FOR.values():
+        _note_fail(args, "the Reader marks an entry %s" % " or ".join(sorted(_rs.STATUS_FOR.values())))
+        return 2
+    # The clock time in the ruling is left out of the resend key: the page sends the same click
+    # again with the same id after the minute has turned, and that must still be one change.
+    _what = {"cmd": "resolve", "id": eid, "status": status,
+             "ruling": re.sub(r"at \d\d:\d\d PT", "at HH:MM PT", args.ruling or ""),
+             "depends": args.depends, "undo": undo_in}
+    stamp = _now_iso()
+    with _lock(doc):
+        _seen, _bad = _sent_check(args, doc, _what)
+        if _bad:
+            _note_fail(args, _bad)
+            return 2
+        if _seen is not None:
+            return _sent_reply(args, _seen)
+        _orig = doc.read_bytes().decode("utf-8")
+        raw = _orig.replace("\r\n", "\n").replace("\r", "\n")
+        lines = raw.splitlines()
+        pre = list(lines)
+        if undo_in is not None:
+            op = {"act": "status", "eid": eid, "undo": undo_in}
+            message = "Reader: undo marking %s on %s (the human)" % (eid, doc.name)
+        else:
+            op = {"act": "status", "eid": eid, "status": status, "ruling": args.ruling,
+                  "depends": args.depends, "stamp": stamp, "who": _rs.WHO}
+            message = "Reader: %s marked %s on %s (the human)" % (eid, status, doc.name)
+        why = apply_today(lines, op)
+        if why:
+            _note_fail(args, why)
+            return 1
+        _new = "\n".join(lines) + "\n"
+        # o9 W126, W127: the reason the human typed is read like any ruling.
+        if undo_in is None and _write_guard_refuses(doc, raw, _new, "resolve", force_open={eid}):
+            _note_fail(args, "the reason you typed was refused (see the line above); change it "
+                             "and try again")
+            return 1
+        undo_out = None if undo_in is not None else _rs.make_undo(pre, lines, eid)
+        _new_set = set(_new.split("\n"))
+        _removed = [l for l in pre if l.strip() and l not in _new_set]
+        _job = _queue_job(args, doc, message, _removed,
+                          {"op": "today", "nid": None, "today": op}, _new, pre=raw)
+        try:
+            write_doc(doc, _new)
+        except BaseException:
+            _drop_job(_job, doc)
+            raise
+        _sent = _sent_record(args, doc, _what, {
+            "ok": True, "action": "undo" if undo_in is not None else "status", "id": eid,
+            "doc": doc.name, "queued": _job.stem if _job is not None else None})
+        # Verified in the lock the write was made in, and a refused change is taken back out.
+        back = doc.read_text(encoding="utf-8")
+        got = next((e for e in parse_entries(back.split("\n"))[0] if e["id"] == eid), None)
+        want = (undo_in or {}).get("prev") if undo_in is not None else status
+        if got is None or (status_of(got["body"]) or "").upper() != want:
+            _drop_job(_job, doc)
+            _sent_drop(_sent)
+            _note_fail(args, ("%s: the change is NOT in %s after the write" % (eid, doc.name))
+                       + _undo_failed_write(doc, _orig, _new))
+            return 1
+    landed, detail = False, "not attempted"
+    if _job is not None:
+        landed, detail = None, QUEUED_DETAIL % CANONICAL_REF
+    elif not getattr(args, "no_land", False):
+        _lop = {"op": "today", "nid": None, "today": op}
+        try:
+            landed, detail = land_note(doc, message, removed=_removed, op=_lop,
+                                       chain=lambda: (_text_blob(_new), _text_blob(raw)))
+        except Exception as _ex:
+            landed, detail = False, "the lander raised %s" % type(_ex).__name__
+    _reply = {"ok": True, "action": "undo" if undo_in is not None else "status", "id": eid,
+              "doc": doc.name, "status": want, "landed": landed, "land_detail": detail,
+              "queued": _job.stem if _job is not None else None, "undo": undo_out}
+    _sent_update(_sent, _reply)
+    print(json.dumps(_reply))
+    return 0
+
+
+def cmd_resolve(args):
+    """
+    Flip an entry's Status IN PLACE. Never append a second heading.
+
+    Appending a superseding heading is how one ID comes to carry two contradictory
+    statuses (7 instances across the live docs today). Because lifecycle is a FIELD and
+    not a location, resolving cannot strand an entry in the wrong section - there are no
+    lifecycle sections to be stranded in. Every lifecycle view is generated.
+    """
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("no such doc: %s" % doc, file=sys.stderr)
+        return 2
+    if refuse_if_not_mine(doc, "resolve", getattr(args, "not_mine", False)):
+        return 1
+    if getattr(args, "json", False):
+        return _resolve_for_reader(args, doc)
+        # `expect` is the RAW text, so a landing that arrives between this
+    # read and the write below refuses instead of being erased.
+    _before_txt = doc.read_text(encoding="utf-8")
+    lines = _before_txt.splitlines()
+
+    err = apply_resolve(lines, args.id, args.status, args.ruling, args.depends, args.adopt,
+                        os.environ.get("CLAUDE_ORCH_ID", "orchestrator"), None, doc.name)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
+    status = args.status.upper()
+
+    # o9 W126, W127: the ruling is read as if the entry were still open, because the human reads a
+    # ruling too: one that sends him to a file or URL for text he copies, or names a picture by
+    # its path, is refused with the command to run instead.
+    if _write_guard_refuses(doc, _before_txt, "\n".join(lines) + "\n", "resolve",
+                            force_open={args.id}):
+        return 1
+    write_doc(doc, "\n".join(lines) + "\n", expect=_before_txt)
 
     # VERIFY THE MUTATION. Never report success from the command's own say-so.
     #
@@ -7134,15 +17032,22 @@ def refresh_meta(doc, landing_now=False):
     chokepoint, so it cannot drift) and `refresh-meta` (what an audit runs). Three
     hand-rolled refreshes would be three chances to disagree about what "current" means.
     """
-    lines = doc.read_text(encoding="utf-8", errors="replace").split("\n")
-    span, err = marker_span(lines, META_BEGIN_TOKEN, META_END_TOKEN, "meta")
-    if err or not span:
-        return False
-    new = lines[:span[0]] + render_meta(doc, lines, landing_now) + lines[span[1] + 1:]
-    if new == lines:
-        return False
-    write_doc(doc, "\n".join(new))
-    return True
+    # ⛔ THE LOCK, BECAUSE THIS ONE IS SHORT AND EVERY `commit` RUNS IT. Eight lines from read
+    # to write, so prevention costs nothing here: the whole read-modify-write sits inside the
+    # lock rather than detecting afterwards that it lost. This ran unlocked while seven other
+    # writers took the lock - not a missing concept, a rule applied unevenly, which is the
+    # harder kind to notice.
+    with _lock(doc):
+        _before = doc.read_text(encoding="utf-8", errors="replace")
+        lines = _before.split("\n")
+        span, err = marker_span(lines, META_BEGIN_TOKEN, META_END_TOKEN, "meta")
+        if err or not span:
+            return False
+        new = lines[:span[0]] + render_meta(doc, lines, landing_now) + lines[span[1] + 1:]
+        if new == lines:
+            return False
+        write_doc(doc, "\n".join(new), expect=_before)
+        return True
 
 
 def cmd_refresh_meta(args):
@@ -7160,6 +17065,77 @@ def cmd_refresh_meta(args):
     print("  %s" % ("meta block refreshed from the commit log."
                     if changed else "already current - nothing written."))
     return 0
+
+
+def _republish_mirrors(landed):
+    """After a landing that touched a mirrored tool or skill, write the copies from the ref.
+
+    ⛔ THE GAP IS CREATED BY A LANDING, SO IT IS CLOSED BY ONE. o1 tracked the canonical-
+    vs-plugin-cache distance across four readings - 986, 868, 941, 1,017 - and it moved every
+    time o9 landed, because **nothing republishes that copy**. The copy a session loads when
+    it invokes the skill is the cache, so a night of fixes can live entirely in a file no
+    skill-invoking session runs. At the time this was written the cache had neither
+    `E-HIDDENENTRY` nor `log_refusal`.
+
+    ⭐ A SCHEDULE WOULD BE THE WRONG SHAPE: an event creates the gap, so the event should
+    close it. A nightly sync leaves a day in which the copy sessions load is not the copy
+    that was reviewed.
+
+    ⛔ AND IT SYNCS FROM THE REF. `tool_drift.py --sync` now defaults to `origin/main`,
+    which gate 3 has just verified contains this commit. Publishing from a working tree is
+    how a copy gets AHEAD - running behaviour no merge approved while the ref everyone reads
+    says otherwise.
+
+    ⚠️ NEVER FAILS THE LANDING. A republish problem must not turn a good landing
+    into a refusal; the worst case is the gap staying exactly where it already was, which is
+    the state this improves on.
+    """
+    try:
+        import tool_drift
+        watched = set(tool_drift.TOOLS)
+    except Exception:
+        return
+    touched = [p for p in (landed or [])
+               if Path(p).name in watched or Path(p).name == "SKILL.md"]
+    if not touched:
+        return
+    print()
+    print("  republishing %d mirrored file(s) from %s - the copy a session LOADS"
+          % (len(touched), CANONICAL_REF))
+    try:
+        # --cache-only: a plain --sync also writes the marketplace checkout's working tree,
+        # leaving uncommitted edits in another repo (o9:W74). The cache is what sessions load.
+        r = subprocess.run([sys.executable,
+                            str(Path(__file__).resolve().parent / "tool_drift.py"),
+                            "--sync", "--cache-only"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=180, creationflags=flags())
+        tail = [l for l in (r.stdout or "").splitlines() if "synced" in l or "still" in l]
+        for l in tail[-3:]:
+            print("   %s" % l.strip())
+        if not tail:
+            print("    (tool_drift reported no sync - the copies may already agree)")
+    except Exception as e:
+        print("    [warn] republish did not run (%s) - the landing STANDS; the mirrors are"
+              % type(e).__name__)
+        print("           where they were. Run `tool_drift.py --sync` when convenient.")
+
+
+def non_markdown_doc_refusal(doc):
+    """Why `commit --doc` must refuse `doc`, or None. (o9 W166)
+
+    `commit` writes `<!-- ORCHDOC:OVERRIDE ... -->` stamps into --doc, and an HTML comment is a
+    syntax error in Python and JSON. On 2026-09-03 `--doc voice_gen_batch.py` appended nine
+    stamps to that file and its test (5f1b927a, f8feccd6); neither compiled until 53e12b61.
+    --doc is the OrchDoc (markdown); a code file goes in with `--also`, and its attestation
+    goes in the commit message.
+    """
+    if Path(doc).suffix.lower() == ".md":
+        return None
+    return ("--doc must be a markdown OrchDoc (.md); %s is not. Override stamps are HTML "
+            "comments and would break a code or data file. Land it with `--also %s` next to "
+            "its OrchDoc, and put the attestation in the commit message."
+            % (Path(doc).name, Path(doc).name))
 
 
 def cmd_commit(args):
@@ -7191,10 +17167,41 @@ def cmd_commit(args):
     if not doc or not doc.exists():
         print("no such doc: %s" % doc, file=sys.stderr)
         return 2
+    _nonmd = non_markdown_doc_refusal(doc)
+    if _nonmd:
+        print("  [REFUSE] %s Nothing was written." % _nonmd, file=sys.stderr)
+        return 2
     rel = os.path.relpath(str(doc), str(PROJECTS)).replace("\\", "/")
     ref = CANONICAL_REF
 
     print("orchdoc commit - %s -> %s" % (doc.name, ref))
+
+    # The fetch and the pin come BEFORE the meta refresh and the auto-archive below, which
+    # both write the doc, so an out-of-date copy of this tool is refused before it writes
+    # anything - with the one fetch this command already made, and no second one.
+    git(["fetch", "--quiet", "origin"])
+
+    # ⛔ PIN THE REF TO ONE COMMIT ID, NOW, AND LET EVERY GATE AND THE BUILD NAME THAT ID.
+    # Every worktree shares the remote-tracking refs, and deliver.py and every orchdoc command
+    # fetch - so `origin/main` can move while this runs. Gate 1 read `ref:rel` and `build_on`
+    # resolved `ref` again: the commit was built on the NEWER tip from content checked against
+    # the OLDER one, and pushed as a fast-forward. Reproduced 2026-09-24 in a throwaway repo:
+    # the human's note that arrived in between was removed, and this printed LANDED. With one id,
+    # a moved remote only makes the push non-fast-forward, and the retry below refuses when
+    # the file itself moved.
+    _rc_pin, pinned, _e_pin = git(["rev-parse", "--verify", "%s^{commit}" % ref])
+    pinned = (pinned or "").strip()
+    if _rc_pin != 0 or not re.fullmatch(r"[0-9a-f]{40}", pinned):
+        print("  [REFUSE] could not resolve %s to a commit (%s). Nothing was pushed."
+              % (ref, _e_pin or "git gave no reason"), file=sys.stderr)
+        return 1
+    print("           %s is pinned at %s for every check below." % (ref, pinned[:10]))
+    # ⛔ An older copy of this file must not land (see `_refuse_if_tool_is_stale`).
+    _stale = None if args.dry_run else _refuse_if_tool_is_stale(pinned)
+    if _stale:
+        print("  [REFUSE] %s\n           It declines to land. Nothing was written or pushed."
+              % _stale.replace("\n", "\n           "), file=sys.stderr)
+        return 1
 
     # ⛔ REFRESH THE META BLOCK HERE, AT THE WRITE CHOKEPOINT. `render_meta` used to be
     # called by `scaffold` ONLY, so "Last updated" was stamped once and never again - while
@@ -7254,7 +17261,6 @@ def cmd_commit(args):
           % len(doc.read_text(encoding="utf-8", errors="replace").splitlines()))
     print("           is coherent; half-finished edits in the file WILL be landed.")
     print()
-    git(["fetch", "--quiet", "origin"])
 
     # ⛔ GATE 0 REFUSES. A finding in BLOCKING stops the landing.
     #
@@ -7345,20 +17351,33 @@ def cmd_commit(args):
         who = actor_for(doc)
         for _code in _asked:
             stamp = "<!-- ORCHDOC:OVERRIDE %s by=%s at=%s --> %s" % (
-                _code, who, _now_iso(), sanitize_field(args.because, 600))
+                _code, who, _now_iso(), sanitize_body(args.because))
             if args.dry_run:
                 print("  [override] %s would be recorded by %s (DRY RUN - not written)."
                       % (_code, who))
                 continue
             txt = doc.read_text(encoding="utf-8")
             if stamp.split("-->")[0] not in txt:
-                write_doc(doc, txt.rstrip("\n") + "\n\n" + stamp + "\n")
+                # `expect=txt` because this is a read-modify-write like any other: the window
+                # is small, but a landing inside it would be ERASED rather than merged over,
+                # and an override stamp is the one line that records why a gate was bypassed.
+                write_doc(doc, txt.rstrip("\n") + "\n\n" + stamp + "\n", expect=txt)
             print("  [override] %s recorded by %s - it will surface in every later check."
                   % (_code, who))
         findings = [f for f in findings if f.code not in _asked]
 
     if findings:
         # ⛔ REFUSE. There is no landing-anyway path any more - see the gate 0 note above.
+        #
+        # ⭐ AND RECORD IT. Everything else this tool writes describes the document; this is
+        # the only record of what the tool DID to someone trying to land. Without it the
+        # question "does this check earn its false positives" has no population to count -
+        # see `log_refusal`.
+        try:
+            _refused_lines = doc.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            _refused_lines = None
+        log_refusal(doc, findings, _refused_lines)
         print("  [REFUSE] gate 0 - %d blocking finding(s). Nothing was pushed."
               % len(findings))
         for f in findings[:8]:
@@ -7367,6 +17386,10 @@ def cmd_commit(args):
         if len(findings) > 8:
             print("           ... and %d more - orchdoc.py check --doc %s"
                   % (len(findings) - 8, args.doc))
+        print_wakes_refusal([f for f in findings if f.code == "E-WAKESOTHERS"])
+        print_prelabel_refusal([f for f in findings if f.code == "E-PRELABEL"])
+        print_buried_ask_refusal([f for f in findings if f.code == "E-BURIEDASK"])
+        print_copy_guard_remedies(findings)   # o9 W126, W127: each command in full
         print()
         print("  Fix them, or land anyway WITH A WRITTEN REASON:")
         print("    orchdoc.py commit --doc %s --commit \\" % args.doc)
@@ -7376,6 +17399,9 @@ def cmd_commit(args):
               % MIN_ATTESTATION_CHARS)
         return 1
     print("  [ok] gate 0 - no blocking findings")
+    # o9:W88 - the needle suggestion for the entries this landing changes, while the author is
+    # editing them. Advice only; it never refuses.
+    print_needle_hints(doc, entries_changed_since(doc, rel, ref))
 
     # Gate 1: isolation. Compare the MERGE-BASE to the canonical ref, not HEAD to it.
     #
@@ -7400,7 +17426,7 @@ def cmd_commit(args):
     # The content test has no such blind spot: every non-empty line on the canonical copy
     # must still be present in the copy about to be landed. If so, landing is additive
     # and can revert nobody, whoever wrote what. If not, it names the exact lines at risk.
-    _, base, _ = git(["merge-base", ref, "HEAD"])
+    _, base, _ = git(["merge-base", pinned, "HEAD"])
     def _authored(text, label):
         """
         Non-empty lines EXCLUDING the derived region, which changes by construction and
@@ -7422,43 +17448,93 @@ def cmd_commit(args):
                 continue
             if any(lo <= i <= hi for lo, hi in spans):
                 continue          # ANY generated region - see DERIVED_REGIONS
-            if MACHINE_FIELD_RE.search(l):
-                # A field line: keep only what the author wrote around the fields, so a
-                # status rewrite is invisible but an attestation is still protected.
-                rest = strip_machine_fields(l)
-                if rest:
-                    out.append(rest)
-                continue
-            m = re.match(r"^(#{1,6})\s+(.*)$", l)
-            if m:
-                # Compare a heading by its ID, not its wording (o7). Every OrchDoc
-                # correction rewords headings - four of the six lines gate 1 flagged
-                # against o7 were changes o9's OWN LINTER had demanded. An entry whose
-                # id survives ANYWHERE, including inside a <details> block, is not lost.
-                # Losing the id entirely is still refused, which is the actual harm.
-                bare = _strip_markers(m.group(2))
-                idm = ID_RE.match(bare)
-                if not idm:
-                    # An ARCHIVED heading carries its id mid-line, not at the start.
-                    # Without this the archiver and this gate disagree about the same
-                    # entry and every archiving commit needs an override.
-                    idm = ARCHIVED_ID_RE.search(bare)
-                out.append("ENTRY:%s" % idm.group(1) if idm
-                           else "%s %s" % (m.group(1), bare))
-            else:
-                out.append(l)
+            # One line's reduction lives in `_authored_form`, so `_split_by_seen` reduces an
+            # ADDED line the same way. It holds, unchanged, what was written here before:
+            #  * a field line keeps only what the author wrote around the fields;
+            #  * a heading compares by its ID, not its wording (o7) - four of the six lines
+            #    gate 1 once flagged against o7 were changes o9's OWN LINTER had demanded -
+            #    including an ARCHIVED heading's mid-line id, so the archiver and this gate
+            #    agree about the same entry;
+            #  * and, new with B1, a note line compares without its ack.
+            f = _authored_form(l)
+            if f:
+                out.append(f)
         return out
 
-    _, canon_txt, _ = git(["show", "%s:%s" % (ref, rel)])
+    # \u26d4 HASH THE CONTENT ONCE, HERE, AND LET EVERY GATE READ THAT OBJECT. Gate 1 used
+    # to read the file from disk while `build_on` hashed it again later, so the bytes gate 1
+    # approved and the bytes that landed were two different reads of a file eleven sessions
+    # write concurrently. That is the same two-moment shape o1 measured on gate 4, sitting one
+    # gate over in this same function. The blob is what gets committed, so the blob is what
+    # every check must be about.
+    #
+    # ⛔ B1 RUNS FIRST, BECAUSE IT MAY CHANGE THE COPY. A note on the canonical ref that is
+    # missing from this copy is merged back in, so the blob below is hashed from the merged
+    # file. Nothing in this function deletes a note, and no --override reaches this step.
+    _b1_ok, _b1_dry_text = _merge_notes_before_landing(doc, rel, pinned,
+                                                       dry_run=bool(args.dry_run))
+    if not _b1_ok:
+        return 1
+    if _b1_dry_text is not None:
+        # A dry run writes nothing, so the merged text is hashed from memory instead.
+        _rc_h, _doc_blob, _e_h = _hash_text(_b1_dry_text, rel)
+    else:
+        # `--path rel`, as `_hash_text` passes on the dry run: attributes are looked up by the
+        # path the blob lands at, so a dry run and a real run hash the same file the same way.
+        _rc_h, _doc_blob, _e_h = git(["hash-object", "-w", "--path", rel, str(doc)])
+    _doc_blob = _doc_blob.strip()
+    if _rc_h != 0 or not _doc_blob:
+        print("  [REFUSE] could not hash %s, so no gate below could be about the bytes that"
+              % doc.name, file=sys.stderr)
+        print("           would land: %s" % (_e_h or "git gave no reason"), file=sys.stderr)
+        return 1
+
+    # \u26d4 THE RETURN CODE WAS DISCARDED, AND AN EMPTY ANSWER READ AS "NOTHING TO PRESERVE".
+    # `_, canon_txt, _ = git([...])` meant any git failure produced an empty string, an empty
+    # authored-line set, and a printed "[ok] gate 1 - every line on origin/main survives" that
+    # had compared nothing to nothing. A gate that passes hardest exactly when its oracle is
+    # broken is worse than no gate.
+    #
+    # \u2b50 AND A FAILURE HERE IS TWO DIFFERENT FACTS. A document not yet on the canonical
+    # ref is a FIRST LANDING and genuinely has no lines to preserve. Anything else is an
+    # oracle that could not answer, and that must refuse rather than report success.
+    _rc_c, canon_txt, _e_c = git(["show", "%s:%s" % (pinned, rel)])
+    if _rc_c != 0:
+        _rc_e, _o_e, _ = git(["cat-file", "-e", "%s:%s" % (pinned, rel)])
+        if _rc_e == 0:
+            print("  [REFUSE] gate 1 - %s IS on %s but could not be read back:"
+                  % (rel, ref), file=sys.stderr)
+            print("           %s" % (_e_c or "git gave no reason"), file=sys.stderr)
+            print("           Refusing rather than treating an unreadable canonical copy as",
+                  file=sys.stderr)
+            print("           an empty one, which would pass this gate on every landing.",
+                  file=sys.stderr)
+            return 1
+        canon_txt = ""      # genuinely not on the ref yet - a first landing preserves nothing
     canon_lines = _authored(canon_txt, "on %s" % ref)
     if canon_lines is None:
         return 1
-    try:
-        mine_l = _authored(doc.read_text(encoding="utf-8"), "in the working tree")
-    except (OSError, UnicodeDecodeError) as e:
-        print("  [REFUSE] cannot read %s: %s" % (doc.name, e), file=sys.stderr)
+
+    # The copy about to be landed is the BLOB, not the file. If the file changes between now
+    # and the push, the blob does not, and the blob is what `build_on` commits.
+    _rc_m, _mine_txt, _e_m = git(["cat-file", "-p", _doc_blob])
+    if _rc_m != 0:
+        print("  [REFUSE] could not read back the object just written for %s: %s"
+              % (doc.name, _e_m or "git gave no reason"), file=sys.stderr)
         return 1
+    mine_l = _authored(_mine_txt, "in the commit about to be built")
     if mine_l is None:
+        return 1
+    # ⛔ B1, CHECKED AGAIN ON THE BLOB. B1 merged into the FILE; the blob was hashed after,
+    # and eleven sessions write these files. If anything took a note back out in between, the
+    # blob is what would land - so the blob is what is checked.
+    _b1_new, _b1_changes, _b1_refusals = merge_canonical_notes(canon_txt, _mine_txt)
+    if _b1_refusals or _b1_changes:
+        print("  [REFUSE] B1 - the copy changed while landing, and the commit about to be built")
+        print("           no longer holds every note on %s. Nothing was pushed; re-run."
+              % ref)
+        for nid in ([r["nid"] for r in _b1_refusals] or [c[0] for c in _b1_changes])[:5]:
+            print("             - note %s" % nid)
         return 1
     mine = set(mine_l)
     # ⛔ A LINE THAT GREW IS NOT A LINE THAT LEFT. The comparison is line-identity, so appending
@@ -7475,6 +17551,9 @@ def cmd_commit(args):
     # ruling could not land, and the offered remedy was the override that ruling was about.
     _joined = "\n".join(mine_l)
     lost = [l for l in canon_lines if l not in mine and l.strip() not in _joined]
+    # What this gate lets the landing remove, if it passes: checked again, against the built
+    # commit's ACTUAL parent, right before every push.
+    _approved_removals = set(lost)
     if lost and (set(override_codes) & GATE_OVERRIDE_CODES):
         # o8's guard 2, applied to gate 1: a RECORDED reconciliation beats a bypass that
         # leaves no trace. The --because reason is already held to the attestation bar.
@@ -7497,20 +17576,24 @@ def cmd_commit(args):
     # ref AFTER this working copy was last written is one the author never had.
     seen, unseen = lost, []
     if lost:
-        seen, unseen = _split_by_seen(doc, rel, ref, lost)
+        # B2: `base` is when this checkout's copy was taken, which the mtime is not.
+        seen, unseen = _split_by_seen(doc, rel, pinned, lost, base=base)
     if unseen:
-        print("  [REFUSE] gate 1 - landing this would remove %d line(s) that reached %s AFTER"
+        print("  [REFUSE] gate 1 - landing this would remove %d line(s) that reached %s after"
               % (len(unseen), ref))
-        print("           your working copy was last written. You never had them, so this is")
-        print("           a stale copy or someone else's work - not a rewrite. First:")
+        print("           your copy was taken: added since your checkout's merge-base by a")
+        print("           commit known to be someone else's, or after the file was last")
+        print("           written. You never had them, so this is a stale copy or someone")
+        print("           else's work - not a rewrite. First:")
         for l in unseen[:5]:
             print("             - %s" % l.strip()[:88])
         print("           Reconcile:  git diff %s -- %s" % (ref, rel))
         print("           Then re-read the file and redo the edit on top of it.")
         return 1
     if seen:
-        print("  [ok] gate 1 - %d line(s) removed, all present before your copy was written."
+        print("  [ok] gate 1 - %d line(s) removed, all in your copy when you took it (on your"
               % len(seen))
+        print("       checkout's base, or added by your own landings).")
         print("       You had them and chose; that is editing, not loss. First:")
         for l in seen[:3]:
             print("             - %s" % l.strip()[:88])
@@ -7549,6 +17632,126 @@ def cmd_commit(args):
     print("       revert nobody%s"
           % ("" if not base else " (merge-base %s)" % base[:8]))
 
+    # ------------------------------------------------------------------ gate 1b: F50 ------
+    # ⛔ A RULING STAMPED ONLY TO THE DAY CANNOT BE ORDERED AGAINST ANOTHER RULING THE SAME DAY,
+    # and "which ruling is current?" is the question the whole record exists to answer. o1
+    # measured the cost: on a day the human ruled at 17:15, 19:10 and 19:16, their sweep returned the
+    # OLDEST and called it current.
+    #
+    # ⭐ WHY THIS IS A GATE AND NOT A HOOK, which is o1's distinction and it is the right one:
+    # a hook fires on a TOOL CALL, so it can never reformat prose a model typed, and a ruling
+    # hand-written straight into the document never passes through one. The writer stamps
+    # correctly; the gate is what catches everything that did not come through the writer.
+    #
+    # ⚠️ IT FIRES ONLY ON RULINGS THIS LANDING ADDS. The fleet holds ~90 date-only rulings
+    # written before the writer was fixed, and blocking on those would refuse every landing
+    # until an unrelated backfill finished - a gate nobody can satisfy gets overridden by
+    # reflex, which is worse than no gate.
+    # ⛔ THE SAME RULE FOR THE ITEM ITSELF, not only the ruling inside it. The human, 2026-09-17.
+    # Fires only on entries this landing ADDS, for the reason gate 1b does: the fleet holds
+    # hundreds of date-only `Opened:` fields written before this, and a gate nobody can satisfy
+    # gets overridden by reflex.
+    # ⛔ BY ENTRY ID, NOT BY LINE. The first version compared the Opened LINE against the ref
+    # and could never fire: a field line is repetitive - same owner, same date, same
+    # `**Enriched:** NO` - and TEN entries in one document shared the exact line a probe
+    # produced, so "is this line new?" was always false. **The unit was lines where entries
+    # carry the meaning**, which is the same class of error as counting ruling lines when the
+    # reasoning lives in the entry. An entry is new when its ID is not on the ref.
+    try:
+        _canon_ids = {e["id"] for e in parse_entries(canon_txt.split("\n"))[0] if e.get("id")}
+        _mine_entries = parse_entries(_mine_txt.replace("\r\n", "\n").split("\n"))[0]
+    except Exception:
+        _canon_ids, _mine_entries = None, []
+    _opened_new = []
+    if _canon_ids is not None:
+        for _e in _mine_entries:
+            if not _e.get("id") or _e["id"] in _canon_ids:
+                continue
+            for _l in (_e.get("body") or "").split("\n"):
+                if OPENED_DAY_ONLY_RE.search(_l):
+                    _opened_new.append("%s - %s" % (_e["id"], _l.strip()))
+                    break
+    if _opened_new:
+        print(file=sys.stderr)
+        print("  [REFUSE] gate 1c - %d entr(ies) this landing ADDS carry a date-only **Opened:**."
+              % len(_opened_new), file=sys.stderr)
+        for l in _opened_new[:5]:
+            print("             %s" % l.strip()[:92], file=sys.stderr)
+        print(file=sys.stderr)
+        print("           An item has an AGE, and a bare date cannot express one. o1 measured a",
+              file=sys.stderr)
+        print("           sub-item whose figure sat unchanged for five weeks, read as current,",
+              file=sys.stderr)
+        print("           and was wrong in BOTH directions when re-run.", file=sys.stderr)
+        print(file=sys.stderr)
+        print("           `orchdoc.py add` stamps the full time for you. Written by hand?",
+              file=sys.stderr)
+        print("           **Opened:** %s" % _now_iso(), file=sys.stderr)
+        print(file=sys.stderr)
+        print("           Capturing an item created EARLIER, whose time is genuinely unknown?",
+              file=sys.stderr)
+        print("           --override E-DAYONLYOPENED --because \"<whose item, and why the time",
+              file=sys.stderr)
+        print("           cannot be recovered>\"", file=sys.stderr)
+        if "E-DAYONLYOPENED" not in (getattr(args, "override", None) or []):
+            return 1
+        print("  [override] E-DAYONLYOPENED recorded - the entr(ies) stay date-only.")
+
+    # ⛔ PER ENTRY, NOT PER LINE - AND NOT BY ENTRY ID EITHER. Measured 2026-09-17 across the
+    # fleet: 248 date-only ruling lines, 246 distinct, and **2 duplicated** - each a hole the
+    # line comparison has been open on the whole time. Both are long prose lines COPY-PASTED
+    # between documents, which is o1's point: the technique does not scale with how distinctive
+    # the format is, it scales with how often a human copies one. That is a behaviour, so no
+    # stricter format fixes it.
+    #
+    # ⚠️ AND IT CANNOT USE 1c's FIX. An `**Opened:**` line only appears in a NEW entry,
+    # so "is this id new?" is the whole question there. A ruling is added to an EXISTING entry -
+    # that is what resolving a decision IS - so comparing by id would miss every ruling and the
+    # gate would go quiet. Compare each entry against ITS OWN earlier self.
+    try:
+        _canon_by_id = {e["id"]: (e.get("body") or "")
+                        for e in parse_entries(canon_txt.split("\n")) [0] if e.get("id")}
+        _mine_by_id = parse_entries(_mine_txt.replace("\r\n", "\n").split("\n"))[0]
+    except Exception:
+        _canon_by_id, _mine_by_id = None, []
+    _day_new = []
+    if _canon_by_id is not None:
+        for _e in _mine_by_id:
+            if not _e.get("id"):
+                continue
+            _was = set(l.strip() for l in _canon_by_id.get(_e["id"], "").split("\n"))
+            for _l in (_e.get("body") or "").split("\n"):
+                if RESOLVED_DAY_ONLY_RE.search(_l) and _l.strip() not in _was:
+                    _day_new.append("%s - %s" % (_e["id"], _l.strip()))
+                    break
+    if _day_new:
+        print(file=sys.stderr)
+        print("  [REFUSE] gate 1b - %d ruling(s) this landing ADDS are stamped to the day only."
+              % len(_day_new), file=sys.stderr)
+        for l in _day_new[:5]:
+            print("             %s" % l.strip()[:92], file=sys.stderr)
+        print(file=sys.stderr)
+        print("           A ruling is the field every 'which one is current?' question turns",
+              file=sys.stderr)
+        print("           on. Two rulings on one day cannot be ordered by a date, and the",
+              file=sys.stderr)
+        print("           answer that comes back is whichever the parser happened to reach.",
+              file=sys.stderr)
+        print(file=sys.stderr)
+        print("           `orchdoc.py resolve` stamps the full time for you. If you wrote the",
+              file=sys.stderr)
+        print("           line by hand, give it one:  **Resolved %s:**" % _now_iso(),
+              file=sys.stderr)
+        print(file=sys.stderr)
+        print("           Recording a ruling made EARLIER, whose time is genuinely unknown?",
+              file=sys.stderr)
+        print("           --override E-DAYONLYRULING --because \"<whose ruling, and why the",
+              file=sys.stderr)
+        print("           time cannot be recovered>\"", file=sys.stderr)
+        if "E-DAYONLYRULING" not in (getattr(args, "override", None) or []):
+            return 1
+        print("  [override] E-DAYONLYRULING recorded - the ruling(s) stay date-only.")
+
     # Which files are we landing? o5 landed FOUR (its OrchDoc plus three deliverables)
     # and the single-file version could not express that.
     wanted = [rel]
@@ -7559,6 +17762,16 @@ def cmd_commit(args):
             return 1
         wanted.append(os.path.relpath(str(ep), str(PROJECTS)).replace("\\", "/"))
     wanted = sorted(set(wanted))
+    # o9 W127: each picture the doc embeds from orchdoc-images/ (the image command put it
+    # there) lands with the doc, so the Reader on main can show it. Read from the blob the
+    # gates approved, and only the pictures `pinned` does not already hold as they are.
+    _imgs = _images_to_land(doc, pinned, _blob_text(_doc_blob))
+    if _imgs:
+        wanted = sorted(set(wanted) | set(_imgs))
+        print("  [ok] %d picture(s) the doc embeds land with it: %s"
+              % (len(_imgs), ", ".join(_imgs[:4]) + (" ..." if len(_imgs) > 4 else "")))
+
+    _lander = running_orchestrator() or doc_owner_id(doc)
 
     def build_on(parent):
         """Build a commit = parent + exactly `wanted`, without touching the tree."""
@@ -7570,14 +17783,24 @@ def cmd_commit(args):
 
         def g(a):
             p = subprocess.run(["git", "-C", str(PROJECTS)] + a, capture_output=True,
-                               text=True, env=env, timeout=60)
+                               text=True, env=env, timeout=60, creationflags=flags())
             return p.returncode, p.stdout.strip(), p.stderr.strip()
         try:
             if idx.exists():
                 idx.unlink()
             g(["read-tree", parent])
             for w in wanted:
-                _, blob, _ = g(["hash-object", "-w", str(PROJECTS / w)])
+                # \u26d4 THE DOCUMENT USES THE OBJECT GATE 1 VERIFIED, NOT A FRESH READ. This
+                # re-hashed the file from disk, so the bytes the gates approved and the bytes
+                # that landed were two reads of a concurrently-written file. Other paths in
+                # `wanted` are hashed here because nothing has certified them.
+                if w == rel:
+                    blob = _doc_blob
+                else:
+                    # `--path w`: git looks .gitattributes up by the path it is given, and an
+                    # absolute path matches no pattern with a slash in it. Without it e88febf3
+                    # landed a `-text` snapshot with every CR stripped.
+                    _, blob, _ = g(["hash-object", "-w", "--path", w, str(PROJECTS / w)])
                 g(["update-index", "--add", "--cacheinfo", "100644,%s,%s" % (blob, w)])
             _, tree, _ = g(["write-tree"])
             msg = args.message or ("%s: update" % doc.name)
@@ -7586,9 +17809,13 @@ def cmd_commit(args):
                 # Attribute the model ACTUALLY running, not a hardcoded one. A published
                 # tool stamping every commit "Claude Opus 5" is factually wrong for most
                 # runs of it, and the trailer is the permanent record.
-                input=msg + ("\n\nCo-Authored-By: %s <noreply@anthropic.com>\n"
-                             % sanitize_field(os.environ.get("CLAUDE_MODEL_NAME", "Claude"), 40)),
-                capture_output=True, text=True, timeout=60)
+                # ⭐ AND NAME THE LANDER. B2 tells an orchestrator's own landings from
+                # everyone else's by this trailer; most subjects carry no id at all.
+                input=msg + ("\n\n%sCo-Authored-By: %s <noreply@anthropic.com>\n"
+                             % (("%s: %s\n" % (LANDER_TRAILER, _lander)) if _lander else "",
+                                sanitize_field(os.environ.get("CLAUDE_MODEL_NAME", "Claude"),
+                                               40))),
+                capture_output=True, text=True, timeout=60, creationflags=flags())
             return p.stdout.strip()
         finally:
             try:
@@ -7596,13 +17823,13 @@ def cmd_commit(args):
             except (OSError, UnicodeDecodeError):
                 pass
 
-    commit = build_on(ref)
+    commit = build_on(pinned)
     if not commit:
         print("  [REFUSE] could not build the commit", file=sys.stderr)
         return 1
 
     # Gate 2: the built commit must touch EXACTLY the files we named, and nothing else.
-    _, names, _ = git(["diff", "--name-only", ref, commit])
+    _, names, _ = git(["diff", "--name-only", pinned, commit])
     touched = sorted(n for n in names.splitlines() if n.strip())
     # SUBSET, not equality. The property is "nothing I did not name gets swept in".
     # Requiring equality refused a commit merely because a named file happened to be
@@ -7619,6 +17846,93 @@ def cmd_commit(args):
               % ref)
         return 1
     unchanged = [n for n in wanted if n not in touched]
+    # ---- Gate 5: a paragraph that is almost entirely bold emphasises nothing. ----------
+    #
+    # ⛔ THE HUMAN, 2026-09-20: *"Many of the Orchs are writing into the OrchDoc in a way that
+    # forces everything (or most) into bold - not just the start of the sentences. Is there
+    # a way to fix this deterministically?"*
+    #
+    # ⭐ THE THRESHOLD CAME FROM THE CORPUS. Across 9,954 prose paragraphs the bold share
+    # decays steadily to 176 paragraphs at 70-79% and then SPIKES BACK to 320 at 90-99% -
+    # bimodal, so "wrap the whole paragraph" is a separate behaviour rather than the tail of
+    # over-emphasis, and 80% sits in the trough between them.
+    #
+    # ⛔ ON THE DIFF, NEVER THE DOCUMENT. 366 paragraphs are already over the line, 201
+    # in one doc; a gate reading whole documents would refuse everything on day one and be
+    # switched off, which is W19. Scoped to what a landing ADDS: 40 of the last 252 landings
+    # (16%) would have been refused, and that is a rate of behaviour, which falls once the
+    # gate exists.
+    if "BOLDWALL" not in override_codes:
+        try:
+            import bold_wall
+            # `histogram`, so a landing that moves entries is not read as ADDING them all.
+            _, _bd, _ = git(["diff", "--unified=0", "--diff-algorithm=histogram",
+                             pinned, commit, "--", str(doc.name)])
+            # o9 W126: bold inside pasted (fenced) text is the source's, kept word for word.
+            _bd = _drop_fenced_adds(_bd, _blob_text(_doc_blob))
+            _block, _advise = bold_wall.findings_in_diff(_bd)
+        except Exception:
+            _block, _advise = [], []
+        if _block:
+            _nwall = sum(1 for f in _block if f["kind"] == "WALL")
+            _nscat = len(_block) - _nwall
+            print("  [REFUSE] gate 5 - %d passage(s) this landing ADDS do not use bold the"
+                  % len(_block))
+            print("           way the human reads it: %d almost entirely bold, %d with bold"
+                  % (_nwall, _nscat))
+            print("           scattered %d+ times and opening nothing."
+                  % bold_wall.SCATTER_RUNS)
+            for f in _block[:3]:
+                print("             %-7s %.0f%% bold, %d runs, %d chars: %s"
+                      % (f["kind"], f["share"] * 100, f["runs"], f["chars"],
+                         f["text"].replace("\n", " ")[:76]))
+            print()
+            print("           Bold the OPENING clause so it states the premise, the way a")
+            print("           bullet summarises, and leave the rest plain - the human decides")
+            print("           from that clause whether to read on. The backlog is")
+            print("           untouched; this reads only what you are adding.")
+            print("           If a passage genuinely needs it:")
+            print("             --override BOLDWALL --because \"<why, %d+ chars>\""
+                  % MIN_ATTESTATION_CHARS)
+            # ⛔ GATE 5 NEVER WROTE A ROW, so its cost could only ever be re-estimated. I
+            # told the human it would refuse 16% of landings; it refuses 30%, and the 16%
+            # reproduces under none of five samples. The rows are how the next threshold
+            # question gets answered from evidence instead of from another estimate.
+            log_refusal(doc, [Finding("E-BOLDWALL" if f["kind"] == "WALL"
+                                      else "E-BOLDSCATTER", 0,
+                                      "%.0f%% bold, %d runs: %s"
+                                      % (f["share"] * 100, f["runs"],
+                                         f["text"].replace("\n", " ")[:120]))
+                              for f in _block])
+            return 1
+        if _advise:
+            # ⭐ REPORTED, NEVER REFUSED. 85% of recent landings contain one of these, so
+            # blocking them would be an outage rather than a gate. The count is here so the
+            # author sees it every time, and logged so the decision to tighten has rows.
+            _nlead = sum(1 for f in _advise if f["kind"] == "NOLEAD")
+            _nmulti = len(_advise) - _nlead
+            print("  [ok] gate 5 - no wall, no scattered bold")
+            print("       note: %d passage(s) where bold does not open the passage, %d"
+                  % (_nlead, _nmulti))
+            print("             where it opens it but more bold follows. The human's rule is one")
+            print("             bold opening that states the premise. Not a refusal.")
+            worst = _advise[0]
+            print("             worst: %d runs, %.0f%% bold: %s"
+                  % (worst["runs"], worst["share"] * 100,
+                     worst["text"].replace("\n", " ")[:70]))
+            # ⭐ ONE SUMMARY ROW PER LANDING, so promoting this to blocking is a decision
+            # about a trend rather than about my estimate of one. Measured at the moment
+            # it was written: 86.7% of landings carry an advisory, 11.3 passages each.
+            # ⚠️ Gate 5 runs before gates 2 and 3, so a row means the landing REACHED
+            # here, not that it landed. Fine for a rate; wrong for a count of documents.
+            log_refusal(doc, [Finding("A-BOLDLEAD", 0,
+                                      "%d nolead, %d multi; worst %d runs %.0f%%: %s"
+                                      % (_nlead, _nmulti, worst["runs"],
+                                         worst["share"] * 100,
+                                         worst["text"].replace("\n", " ")[:90]))])
+        else:
+            print("  [ok] gate 5 - bold opens each passage and nothing else is bold")
+
     print("  [ok] gate 2 - commit touches %d file(s), all named%s"
           % (len(touched),
              "; %d named file(s) unchanged" % len(unchanged) if unchanged else ""))
@@ -7678,10 +17992,19 @@ def cmd_commit(args):
     # implements it. Same qualifier blindness as the deleted ghost scan, but in the WRITE
     # path, where it blocks rather than merely adds noise.
     _subject = re.sub(r"\bo\d+:[A-Za-z-]*\d+", " ", subject)
-    for m in re.finditer(r"\b((?:%s)\d{1,3})\b" % _pfx, _subject):
+    # ⛔ AN ID RIGHT AFTER TWO CAPITAL LETTERS AND A HYPHEN IS THE TAIL OF A SCRIPT ID (o9 F266).
+    # A subject naming "the script AT-S999" was refused with "entry S999 is named in the message
+    # but is NOT in" the doc, and SC-S999 the same. AT-S5, SC-S5 and THE HUMAN-A1 name audio
+    # scripts, and refusing them pushes people to stop naming the script. orchdoc_ids.py has
+    # held this rule since 2026-09-22 (`_is_real_reference`, 17c788be), but this gate reads ids
+    # with its own pattern and never called it. The lookbehind below is that rule. Still read,
+    # as before: a range such as W2-W8 (a digit before the hyphen), hyphenated English such as
+    # pre-D35 (lower case before it), and a bare id. A lookbehind rather than an import,
+    # because publish_public_skill.py ships this file without its siblings.
+    # test_gate4_script_ids.py checks that this gate and orchdoc_ids.find_ids agree.
+    for m in re.finditer(r"(?<![A-Z][A-Z]-)\b((?:%s)\d{1,3})\b" % _pfx, _subject):
         intents.append(("entry " + m.group(1),
-                        re.search(r"^#{1,6}\s.*\b%s\b" % m.group(1), doc_text,
-                                  re.MULTILINE) is not None))
+                        _heading_names_id(doc_text, m.group(1))))
     for exp in (args.expect or []):
         intents.append(("%r" % exp[:48], exp in doc_text))
 
@@ -7710,13 +18033,89 @@ def cmd_commit(args):
         print("           Gates 1-3 are SAFETY and all pass on a no-op. This one asks")
         print("           whether the write actually happened. It did not.")
         return 1
+    # o9:W46: WITH NO INTENT, THIS GATE USED TO CHECK NOTHING AND PRINT NOTHING. A commit whose
+    # subject names no entry id and which passes no --expect built an empty list, so a landing
+    # that verified nothing looked the same as one that verified everything. What can always be
+    # checked is that the blob inside the built commit is the object gate 1 approved; say so,
+    # and say plainly that nothing else was checked.
+    _rc_cb, _cblob, _ = git(["rev-parse", "%s:%s" % (commit, rel)])
+    if _rc_cb != 0 or (_cblob or "").strip() != _doc_blob:
+        print("  [REFUSE] gate 4 - the %s inside the built commit (%s) is not the object gate 1"
+              " approved (%s)." % (doc.name, (_cblob or "unknown").strip()[:10], _doc_blob[:10]),
+              file=sys.stderr)
+        print("           Nothing was pushed. Re-run, and the rebuild will carry what you wrote.",
+              file=sys.stderr)
+        return 1
     if intents:
         print("  [ok] gate 4 - all %d intent(s) named in the message are present"
               % len(intents))
+    else:
+        print("  [note] gate 4 - no entry id in the commit subject and no --expect, so no entry"
+              " was checked; only that the commit holds the exact bytes gate 1 approved.")
+
+    # ---- NOTICE: which entries in OTHER docs this landing will flag. Never refuses. ------
+    # See WHO A LANDING WILL WAKE. Printed before the push, on the commit just built, so the
+    # lander can still reword an example id or warn the owner.
+    for _od in [n for n in touched
+                if re.match(r"ORCHESTRATOR-DECISIONS-[^/\\]*\.md$", pathlib.Path(n).name)]:
+        try:
+            _t0 = time.time()
+            print_landing_wakes(landing_wakes(_od, pinned, commit), time.time() - _t0)
+        except Exception as _e:        # a notice that fails must not stop a landing
+            print("  [note] could not work out which other entries this landing flags: %s"
+                  % str(_e)[:120])
+
+    def _verify_parent(c):
+        """None, or why commit `c` must not be pushed - checked against its ACTUAL parent.
+
+        ⛔ FROM THE OBJECTS, NOT FROM THE VARIABLES THAT BUILT THEM. The parent must be the
+        pinned commit; every note on it must be in `c`; and nothing may be missing from `c`
+        that gate 1 did not approve removing. Before the ref was pinned, the gates checked one
+        commit and the build used another, and this is the check that would have said so.
+        """
+        _r1, parent, _ = git(["rev-parse", "%s^" % c])
+        parent = (parent or "").strip()
+        if _r1 != 0 or parent != pinned:
+            return ("its parent is %s, not the pinned %s" % (parent[:10] or "unknown",
+                                                              pinned[:10]))
+        _r2, ptxt, _ = git(["show", "%s:%s" % (parent, rel)])
+        if _r2 != 0:
+            if git(["cat-file", "-e", "%s:%s" % (parent, rel)])[0] == 0:
+                return "could not read %s on its parent" % rel
+            return None                    # a first landing: nothing on the parent to keep
+        _r3, btxt, _ = git(["show", "%s:%s" % (c, rel)])
+        if _r3 != 0:
+            return "could not read %s back out of the built commit" % rel
+        _n, _ch, _rf = merge_canonical_notes(ptxt, btxt)
+        if _ch or _rf:
+            return ("note(s) on its parent are missing or changed in it: %s"
+                    % ", ".join(sorted(set([x[0] for x in _ch] + [r["nid"] for r in _rf]))))
+        p_auth = _authored(ptxt, "on the parent")
+        b_auth = _authored(btxt, "in the built commit")
+        if p_auth is None or b_auth is None:
+            return "could not compare it with its parent"
+        _bset, _bj = set(b_auth), "\n".join(b_auth)
+        extra = [l for l in p_auth if l not in _bset and l.strip() not in _bj
+                 and l not in _approved_removals]
+        if extra:
+            return ("it would remove %d line(s) from its parent that gate 1 did not approve - "
+                    "first: %s" % (len(extra), extra[0].strip()[:80]))
+        return None
+
+    _why_parent = _verify_parent(commit)
+    if _why_parent:
+        print("  [REFUSE] before push - the built commit fails its own check: %s. Nothing"
+              % _why_parent)
+        print("           was pushed.")
+        return 1
+    print("  [ok] verified against its actual parent %s: every note kept, and only the"
+          % pinned[:10])
+    print("       removals gate 1 approved.")
 
     if args.dry_run:
         print()
-        print("  DRY RUN. Built %s on top of %s, pushed nothing." % (commit[:10], ref))
+        print("  DRY RUN. Built %s on top of %s (%s), pushed nothing."
+              % (commit[:10], ref, pinned[:10]))
         print("  Re-run with --commit to fast-forward push it.")
         return 0
 
@@ -7780,17 +18179,34 @@ def cmd_commit(args):
             return 1
         print("  [race] main moved; re-parenting onto the fresh tip (attempt %d)" % attempt)
         git(["fetch", "--quiet", "origin"])
-        _, others, _ = git(["log", "--oneline", "%s..%s" % (base, ref), "--"] + wanted)
+        _rc_new, _new, _ = git(["rev-parse", "--verify", "%s^{commit}" % ref])
+        _new = (_new or "").strip()
+        if _rc_new != 0 or not re.fullmatch(r"[0-9a-f]{40}", _new):
+            print("  [REFUSE] could not resolve %s after it moved. Nothing was pushed." % ref)
+            return 1
+        # ⛔ FROM THE PINNED COMMIT, NOT FROM THE MERGE-BASE. The gates above checked this
+        # landing against `pinned`; if nothing touched these files between it and the new tip,
+        # re-parenting changes nothing they checked. If anything did, they checked the wrong
+        # thing, so refuse. (This compared base..ref, which also counted this checkout's own
+        # earlier landings, so a retry was refused whenever the checkout had landed before
+        # without moving HEAD.)
+        _, others, _ = git(["log", "--oneline", "%s..%s" % (pinned, _new), "--"] + wanted)
         if others.strip():
             print("  [REFUSE] while retrying, another session landed changes to your")
             print("           file(s). Reconcile rather than overwrite:")
             for ln in others.splitlines()[:5]:
                 print("             %s" % ln[:92])
             return 1
-        commit = build_on(ref)
-        _, names, _ = git(["diff", "--name-only", ref, commit])
+        pinned = _new
+        commit = build_on(pinned)
+        _, names, _ = git(["diff", "--name-only", pinned, commit])
         if sorted(n for n in names.splitlines() if n.strip()) != wanted:
             print("  [REFUSE] rebuilt commit no longer matches the named file set.")
+            return 1
+        _why_parent = _verify_parent(commit)
+        if _why_parent:
+            print("  [REFUSE] the rebuilt commit fails its own check: %s. Nothing was pushed."
+                  % _why_parent)
             return 1
 
     # Gate 3: VERIFY from the remote. o3: a push is confirmed by ancestry after a fresh
@@ -7807,6 +18223,10 @@ def cmd_commit(args):
     # ⭐ LANDED IS NOT DELIVERED. The line above is about a BRANCH; the human reads a FILE on disk.
     # Say which, at the exact moment the wrong belief would form. (o11, 2026-08-19)
     _report_delivery(doc)
+    # Every OTHER landed file too - another group's landing from ten minutes ago included.
+    # Only reached after gate 3 verified this landing; it cannot turn it into a failure.
+    _deliver_landed_files()
+    _republish_mirrors(touched)
     return 0
 
 
@@ -7823,6 +18243,37 @@ def strip_machine_fields(line):
     t = MACHINE_FIELD_RE.sub("", line)
     t = re.sub(r"^[\s\-\u00b7|]+", "", t)
     return re.sub(r"\s{2,}", " ", t).strip()
+
+
+def _authored_form(l):
+    """Gate 1's unit for ONE line: what the author wrote, or None if it carries nothing authored.
+
+    Used by gate 1's `_authored` (which also drops the derived regions, a whole-document
+    question) and by `_split_by_seen`, which has to reduce an ADDED line the same way before it
+    can recognise it among the lost ones.
+
+    \u26d4 A NOTE COMPARES BY ITS WORDS, NOT ITS ACK. B1 has already made sure every note on the ref
+    is in the copy by id and text; an orchestrator acking one rewrites the line (a glyph, and
+    an ACK token in the comment), and without this gate 1 would report the un-acked line on
+    the ref as lost - refusing the ack, which is how an ack lands.
+    """
+    if NOTE_LINE_RE.match(l):
+        return note_without_ack(l)
+    if MACHINE_FIELD_RE.search(l):
+        # A field line: keep only what the author wrote around the fields, so a status
+        # rewrite is invisible but an attestation is still protected.
+        return strip_machine_fields(l) or None
+    m = re.match(r"^(#{1,6})\s+(.*)$", l)
+    if m:
+        # Compare a heading by its ID, not its wording (o7). Every OrchDoc correction rewords
+        # headings; losing the id entirely is still refused, which is the actual harm.
+        bare = _strip_markers(m.group(2))
+        idm = ID_RE.match(bare)
+        if not idm:
+            # An ARCHIVED heading carries its id mid-line, not at the start.
+            idm = ARCHIVED_ID_RE.search(bare)
+        return ("ENTRY:%s" % idm.group(1)) if idm else "%s %s" % (m.group(1), bare)
+    return l
 
 
 def _strip_markers(title):
@@ -7904,6 +18355,559 @@ def cmd_normalize(args):
     return 0
 
 
+# ---- WHERE A FINISHED ENTRY GOES --------------------------------------------------------
+#
+# ⛔ A MIXED BATCH WENT OUTSIDE THE SCHEMA (measured by o8's W57 lane, 2026-09-24). `archive`
+# picked ONE destination for the whole batch: the kind's §99 subsection when every entry was
+# the same kind, and otherwise a `## RESOLVED - kept for the record` section that no index
+# describes. Measured 2026-09-24 on copies of every doc: 57 movable entries sat in those
+# sections across six docs (o6, o8, o9, o10, o11, o12); o8 moved its own 4 by hand the same
+# day. Each entry now goes to its own kind's destination (KIND_SECTION_NUM), and `archive`
+# moves what is already stranded there - it runs on every `commit`, so each group's next
+# landing repairs its own doc.
+#
+# ⚠️ Only an UN-numbered heading of that name is the stray section. o1 and o7 each renamed
+# theirs into the schema (`## §99.3 RESOLVED - kept for the record`, `## §99.7 ...`), which
+# makes them real sections, and nothing in them moves.
+#
+# ⚠️ A relocation is a move, and gate 5 (walls of bold) reads what a landing ADDS. A diff
+# shows a moved entry as removed in one place and added in another, so `bold_wall.added_lines`
+# now drops a line the same diff also removes. Without that, a group's next landing would be
+# refused for bold written weeks ago in an entry `archive` only relocated.
+
+
+def _stray_entry_looks_live(block, stopsign_means_open):
+    """The first line in a stranded entry that says it may still be live work, as
+    (reason, line), or None.
+
+    ⛔ ONLY CLOSED WORK MOVES INTO §99. An entry in the stray section carries an archived
+    heading or a finished status, and still some of them hold an unticked box or an open
+    sub-item - o9's F158 and F160 each end on `- [ ] o9: ...` while their Resolved line says
+    the fix merged. Whether that box is done-but-unticked or live work archived by mistake is
+    the owner's call, not this tool's, so the entry stays where it is and is reported.
+
+    ⭐ And moving it would hide the question. orchdoc_upkeep's W-UNNUMBERED reports a closed
+    entry's unticked box when it sits after §99 outside a numbered section - which is where
+    the stray section is - and not once it is inside §99.x. Three signals, each one already
+    used elsewhere: a Status that is not terminal, an open sub-item by archive's own D5 rule
+    (`first_open_subitem`), and an unticked box outside a fence and outside strikethrough.
+    """
+    st = status_of(block)
+    if st is not None and st not in TERMINAL_STATUS:
+        m = STATUS_RE.search(block)
+        return "Status is %s" % st, (m.group(0) if m else "")
+    opn = first_open_subitem(block, stopsign_means_open)
+    if opn:
+        return "open sub-item", opn[1]
+    infence = False
+    for raw in block.splitlines():
+        s = raw.lstrip()
+        if is_fence_line(s):
+            infence = not infence
+            continue
+        if infence:
+            continue
+        # a struck-through item is done by the human's D5 convention, so only text left after the
+        # strike keeps the box open
+        txt = re.sub(r"~~.*?~~", "", re.sub(r"`[^`]*`", "", raw))
+        if re.match(r"\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+\S", txt):
+            return "unticked box", raw
+    return None
+
+
+def _section_span(lines, num=None, name=None):
+    """(heading_index, end_index) of the `## §num` section, or of the first UN-numbered `##`
+    heading containing `name`. `end_index` is the next `##` heading outside a fence, or the
+    end of the file. None when there is no such section."""
+    infence, start = False, None
+    for i, l in enumerate(lines):
+        s = l.lstrip()
+        if is_fence_line(s):
+            infence = not infence
+            continue
+        if infence or not re.match(r"^##\s", l):
+            continue
+        if start is not None:
+            return start, i
+        m = SECTION_RE.match(l)
+        if num is not None and m and m.group(1) == num:
+            start = i
+        elif name is not None and not m and name.upper() in l.upper():
+            start = i
+    return (start, len(lines)) if start is not None else None
+
+
+def _heading_id(line):
+    """The entry id a heading line carries, live or archived, else None."""
+    m = ENTRY_HEAD_RE.match(line)
+    if not m and line.startswith("#"):
+        m = ARCHIVED_ID_RE.search(line)
+    return m.group(1) if m else None
+
+
+def _insert_in_section(lines, span, eid, block):
+    """Insert `block` into the section `span`, before the first entry of the same prefix with
+    a higher number - so E-IDORDER, which reads order per section and prefix, stays quiet -
+    else at the end of the section. One blank line on each side. Returns the insert index.
+
+    ⛔ ONLY A HEADING AT THE BLOCK'S OWN LEVEL OR SHALLOWER IS AN ENTRY TO INSERT BEFORE. o8's
+    §99.3 carries `#### ... _(was T1 - ...)_` inside an entry and o10's §4 carries `#### D3`;
+    inserting before one of those would cut the entry that holds it in two."""
+    head, end = span
+    pos = end
+    _lv = re.match(r"^(#+)", block[0] if block else "")
+    level = len(_lv.group(1)) if _lv else 3
+    m = re.match(r"^([A-Z]{1,3})(\d+)", eid or "")
+    if m:
+        pre, n = m.group(1), int(m.group(2))
+        infence = False
+        for i in range(head + 1, end):
+            s = lines[i].lstrip()
+            if is_fence_line(s):
+                infence = not infence
+                continue
+            if infence:
+                continue
+            _hl = re.match(r"^(#+)\s", lines[i])
+            if not _hl or len(_hl.group(1)) > level:
+                continue
+            other = _heading_id(lines[i])
+            om = re.match(r"^([A-Z]{1,3})(\d+)$", other or "")
+            if om and om.group(1) == pre and int(om.group(2)) > n:
+                pos = i
+                break
+    piece = list(block)
+    if pos > 0 and lines[pos - 1].strip():
+        piece.insert(0, "")
+    # Nothing follows at the end of the file, so no blank line goes after the block there:
+    # it would leave the file ending on a blank line it did not have before.
+    if pos < len(lines) and lines[pos].strip():
+        piece.append("")
+    lines[pos:pos] = piece
+    return pos
+
+
+# ---- WHERE A FINISHED FINDING GOES (W83) --------------------------------------------------
+#
+# A finished finding used to stay in §4, with `_(was F12 - DONE)_` added to its heading.
+# Every check skipped it, but the human still scrolled past it to reach the live ones: on
+# 2026-09-25 o9's §4 held 108 closed findings among 155 live ones. A finished finding now goes
+# to a Findings subsection of §99, the same way a ruled decision goes to §99.1.
+#
+# ⚠️ THE SUBSECTION HAS NO FIXED NUMBER. Most docs stop at §99.3, but o7 already uses §99.4 to
+# §99.7 for sections of its own, and o1 has two §99.3 headings. So it is found by its title,
+# which must be exactly "Findings". A doc without one gets `## §99.<n> Findings`, where n is
+# one more than the highest §99.x number, placed after the last §99.x section and before any
+# un-numbered section that follows it. That keeps E-SCHEMA's ascending order true.
+#
+# S is a specimen: a verification failure caught in flight. It is filed in §4 beside the
+# findings (KIND_SECTION_NUM, and ADOPT_RULES files a SPECIMENS heading as §4), so it is a
+# kind of finding, and a finished one goes to the same subsection.
+FINDINGS_KINDS = ("F", "S")
+FINDINGS_TITLE = "Findings"
+FINDINGS_NOTE = "_closed_"
+FINDINGS4_LABEL = "§4 FINDINGS"      # how `archive` names §4 when it reports what it left
+# Why `relocate_closed_findings` left an entry in §4 when moving it would damage the document.
+FOLD_REASON = "inside or across a <details> fold"
+FENCE_REASON = "holds an unclosed ``` fence"
+NOPLACE_REASON = "no §99 Findings subsection could be placed"
+REPARSE_REASON = "the move would change how another entry parses"
+NESTED_LIVE_REASON = "a live entry is nested inside it"
+
+
+def _h2_outside_fences(lines):
+    """Indices of every `## ` heading outside a fenced block, in file order. The fence state
+    is read from line 0, never from part-way through - see F226 in `cmd_archive` - and
+    through `scan_structure`, so a fence here is exactly a fence to the parser."""
+    return [i for i, (l, st) in enumerate(zip(lines, scan_structure(lines)))
+            if not st[0] and re.match(r"^##\s", l)]
+
+
+def _governing_outside_fences(lines):
+    """The governing § number of every line: the last `# `-`### ` §-numbered heading above it
+    that sits OUTSIDE a fence. `_governing_section` also reads headings quoted inside a
+    fence, so a closed finding quoting `## §99.1` in a code block made every finding below
+    it read as §99.1 on one run and §4 on the next, once the quote had moved (o9's review
+    of W83). `archive` decides what leaves §4 by this, so a move is decided once."""
+    gov, cur = [], None
+    for l, st in zip(lines, scan_structure(lines)):
+        if not st[0]:
+            m = _CANON_HEAD_RE.match(l)
+            if m:
+                cur = m.group(1)
+        gov.append(cur)
+    return gov
+
+
+def _findings_span(lines, title=FINDINGS_TITLE):
+    """(heading_index, end_index) of the `## §99.<n> Findings` subsection, or None.
+    o9:W147: `title` names another §99 subsection, the Reader's "Don't do"."""
+    heads = _h2_outside_fences(lines)
+    for k, i in enumerate(heads):
+        m = SECTION_RE.match(lines[i])
+        if (m and m.group(1).startswith(ARCHIVE_SECTION + ".")
+                and lines[i][m.end():].strip() == title):
+            return i, (heads[k + 1] if k + 1 < len(heads) else len(lines))
+    return None
+
+
+def _has_archive_section(lines):
+    """True when the doc has a `## §99` or `## §99.x` heading outside a fence."""
+    for i in _h2_outside_fences(lines):
+        m = SECTION_RE.match(lines[i])
+        if m and m.group(1).split(".")[0] == ARCHIVE_SECTION:
+            return True
+    return False
+
+
+def _add_findings_section(lines, title=FINDINGS_TITLE, note=FINDINGS_NOTE):
+    """Create `## §99.<next free number> Findings` after the last §99.x section and return
+    its span. None when the doc has no §99 to put it in, or when the heading could not be
+    placed where the parser reads it as a section - then `lines` is left as it was.
+
+    ⛔ NEVER BELOW §99.4. §99.1 to §99.3 are the schema's own (Decisions, Questions, To-Dos).
+    A doc with a bare `## §99` would otherwise get `## §99.1 Findings`, a ruled decision in
+    the same run would be filed into it, and `scaffold` would never add §99.1 Decisions
+    because the number already exists (o9's review of W83)."""
+    heads = _h2_outside_fences(lines)
+    last, minor = None, len([n for n, _t, _d in SCHEMA_SECTIONS
+                             if n.startswith(ARCHIVE_SECTION + ".")])
+    for k, i in enumerate(heads):
+        m = SECTION_RE.match(lines[i])
+        if not m or m.group(1).split(".")[0] != ARCHIVE_SECTION:
+            continue
+        last = k
+        if "." in m.group(1):
+            minor = max(minor, int(m.group(1).split(".")[1]))
+    if last is None:
+        return None
+    pos = heads[last + 1] if last + 1 < len(heads) else len(lines)
+    # after the last section's own text, not after the blank lines that precede the next heading
+    while pos > heads[last] + 1 and not lines[pos - 1].strip():
+        pos -= 1
+    piece = ["", "## §%s.%d %s" % (ARCHIVE_SECTION, minor + 1, title), "", note]
+    lines[pos:pos] = piece
+    span = _findings_span(lines, title)
+    if span is None:
+        # the heading landed inside an unclosed fence, where nothing reads it as a section
+        del lines[pos:pos + len(piece)]
+    return span
+
+
+def _destination(lines, eid, stray_name, create=False):
+    """(label, span) for where entry `eid` belongs: its kind's section from KIND_SECTION_NUM,
+    else the un-numbered `stray_name` section, else (None, None).
+
+    A finding or specimen goes to the §99 Findings subsection instead. When the doc does not
+    have one yet the answer is (label, None), and `create=True` makes it. So a caller can ask
+    before it cuts a block and create the section only once the block is out, when creating
+    it cannot shift a line number the caller is still holding. A doc with no §99 at all keeps
+    the old home, §4."""
+    kind = (re.match(r"[A-Z]+", eid or "") or [""])[0][:1]
+    if kind in FINDINGS_KINDS and _has_archive_section(lines):
+        span = _findings_span(lines)
+        if span is None and create:
+            span = _add_findings_section(lines)
+        if span is None:
+            return "§%s %s (new)" % (ARCHIVE_SECTION, FINDINGS_TITLE), None
+        return "§" + SECTION_RE.match(lines[span[0]]).group(1), span
+    num = KIND_SECTION_NUM.get(kind, (None, None))[1]
+    if num:
+        span = _section_span(lines, num=num)
+        if span:
+            return "§" + num, span
+    span = _section_span(lines, name=stray_name)
+    return (stray_name, span) if span else (None, None)
+
+
+def _entry_end(e):
+    """Index one past an entry's last line. `len(body.splitlines())` is one short when the
+    body ends in a blank line - splitlines() drops the empty string after the final newline -
+    and that left a blank line behind at every cut, one more on every run."""
+    return e["line"] - 1 + e["body"].count("\n") + 1
+
+
+def _stamp_cut(lines, a, b):
+    """(first override stamp in lines[a:b] outside a fence, or b; True when everything from
+    that stamp to b is stamps and blank lines). A stamp is its OVERRIDE line and the lines
+    after it up to a blank line, the span `parse_entries` reads as one attestation."""
+    infence, c = False, b
+    for i in range(a, b):
+        s = lines[i].lstrip()
+        if is_fence_line(s):
+            infence = not infence
+            continue
+        if not infence and OVERRIDE_RE.match(lines[i]):
+            c = i
+            break
+    in_stamp = False
+    for i in range(c, b):
+        ln = lines[i]
+        if not ln.strip():
+            in_stamp = False
+        elif OVERRIDE_RE.match(ln):
+            in_stamp = True
+        elif not in_stamp:
+            return c, False
+    return c, True
+
+
+def relocate_stray(lines, stray_name, left=None):
+    """Move entries out of the un-numbered `stray_name` section into their kinds' sections.
+    Mutates `lines`. Returns [(id, destination label)] for what moved. When `left` is a list,
+    each entry left behind is appended to it as (id, reason, the line that says so), for
+    `_print_stray_left`. Drops the stray heading once nothing is under it.
+
+    ⭐ THE ENTRY BLOCK MOVES BYTE-IDENTICAL, and it is the heading through its last line of
+    prose - not what `parse_entries` calls its body. The stray section is always the LAST
+    section, and `commit` appends every override stamp at the end of the file, so in o9 and
+    o10 the stamps sit between the stray entries (682 of them inside one o10 body). Stamps are
+    records about landings, not part of any entry, so they stay exactly where they are, and so
+    does the heading above them. Measured before writing this: after the first stamp inside a
+    stray entry's body, every line to the next heading is a stamp or blank, in all six docs.
+
+    Only entries the archiver would have moved are touched - an archived heading or a terminal
+    status - and of those, only the ones with nothing still open in them. Anything else stays
+    and is reported by the caller.
+
+    ⛔ AN ENTRY WITH TEXT AFTER A STAMP STAYS TOO. The cut ends at the first stamp, which is
+    right only when nothing but stamps follows it. An entry that QUOTES an override line in
+    its prose would lose everything after the quote, so it is left for a person to move.
+    """
+    moved, kept = [], {}
+    span = _section_span(lines, name=stray_name)
+    if not span:
+        return moved
+    while True:
+        span = _section_span(lines, name=stray_name)
+        if not span:
+            break
+        head, end = span
+        entries, _ = parse_entries(lines)
+        stop = follows_stopsign_convention(entries)
+        pick = None
+        for e in entries:
+            a = e["line"] - 1
+            if not (head < a < end) or e["id"] in kept:
+                continue
+            st = status_of(e["body"])
+            if not (e.get("archived") or st in TERMINAL_STATUS):
+                m = STATUS_RE.search(e["body"])
+                kept[e["id"]] = ("not finished (%s)" % ("Status %s" % st if st else "no Status"),
+                                 m.group(0) if m else lines[a])
+                continue
+            label, dspan = _destination(lines, e["id"], stray_name)
+            # (label, None) is a Findings subsection that does not exist yet - it is created
+            # below, once the block is cut out
+            if label is None or (dspan and dspan[0] == head):
+                kept[e["id"]] = ("no section of its kind", lines[a])
+                continue
+            b = min(_entry_end(e), end)
+            c, clean = _stamp_cut(lines, a, b)
+            if not clean:
+                kept[e["id"]] = ("text after a stamp", lines[c])
+                continue
+            why = _stray_entry_looks_live("\n".join(lines[a:c]), stop)
+            if why:
+                kept[e["id"]] = why        # possibly live work - the owner decides, not this
+                continue
+            pick = (e, label, b, c)
+            break
+        if not pick:
+            break
+        e, label, b, c = pick
+        a = e["line"] - 1
+        while c > a + 1 and not lines[c - 1].strip():
+            c -= 1
+        block = lines[a:c]
+        # take the blank lines that followed the block with it, so the stray section does not
+        # collect gaps; the stamps after them are left alone
+        cut_end = c
+        while cut_end < b and not lines[cut_end].strip():
+            cut_end += 1
+        cut = lines[a:cut_end]
+        del lines[a:cut_end]
+        label, dspan = _destination(lines, e["id"], stray_name, create=True)
+        if dspan is None:
+            # the Findings subsection could not be placed: put the entry back and say so,
+            # rather than fail the whole run
+            lines[a:a] = cut
+            kept[e["id"]] = ("no section of its kind", lines[a])
+            continue
+        _insert_in_section(lines, dspan, e["id"], block)
+        moved.append((e["id"], label))
+    # An emptied stray section goes: a heading over nothing is the same clutter the move
+    # removed. Only when it holds nothing at all - no entry, no stamp, no prose.
+    span = _section_span(lines, name=stray_name)
+    if span and not any(l.strip() for l in lines[span[0] + 1:span[1]]):
+        at_eof = span[1] >= len(lines)
+        del lines[span[0]:span[1]]
+        if at_eof:
+            while lines and not lines[-1].strip():
+                lines.pop()
+    elif span and _only_stamps(lines[span[0] + 1:span[1]]):
+        # \u2b50 A heading over nothing but override stamps goes too, and the stamps stay
+        # where they are. o8 and o11 both found this heading left behind after the first
+        # run, because old GATE1-REWORD stamps sat under it; o8 removed theirs by hand.
+        # A stamp is an HTML comment that nobody reads by section and every check finds
+        # wherever it is, so it does not need the heading.
+        del lines[span[0]]
+        if span[0] < len(lines) and not lines[span[0]].strip():
+            del lines[span[0]]
+    if left is not None:
+        left.extend((eid, why[0], why[1]) for eid, why in kept.items())
+    return moved
+
+
+def relocate_closed_findings(lines, stray_name, left=None):
+    """Move the closed findings an older `archive` left in §4 into the §99 Findings subsection.
+    Mutates `lines`. Returns [(id, destination label)] for what moved. When `left` is a list,
+    each closed finding left in §4 is appended to it as (id, reason, the line that says so).
+
+    A closed finding is an F or S entry whose heading carries the `_(was F12 - DONE)_` suffix
+    and whose governing section is §4. It moves the way `relocate_stray` moves an entry:
+    byte-identical, heading through its last line of prose, with the same two reasons to stay.
+    An entry that may still be live work (`_stray_entry_looks_live`) stays for its owner to
+    decide, and so does one with text after an override stamp. An entry nested inside another
+    entry's body travels with that entry and is never pulled out of it.
+
+    The governing section is the last §-numbered heading above the entry OUTSIDE a fence, not
+    its parser section: o9's §4 carries prose `##` headings, and entries below them are still
+    in §4.
+
+    ⛔ A MOVE MUST NOT CHANGE HOW ANYTHING ELSE PARSES. o9's review of W83 found a closed
+    finding inside a `<details>` fold whose block carried the `</details>`: the fold's opening
+    tag stayed in §4 and the next LIVE finding, which nobody touched, read as archived and
+    produced two blocking findings. So an entry stays, reported, when it sits inside a fold,
+    when its block opens or closes one, or when its block holds an unclosed ``` fence - each
+    read through `scan_structure`, the parser's own scan. And after the move every entry must
+    still parse with the same id, title and archived state; if any does not, or the
+    subsection cannot be placed, nothing moves and each entry is reported.
+    """
+    if not _has_archive_section(lines):
+        return []
+    entries, _ = parse_entries(lines)
+    stop = follows_stopsign_convention(entries)
+    gov = _governing_outside_fences(lines)
+    scan = scan_structure(lines)
+    spans = [(x["level"], x["line"] - 1, _entry_end(x)) for x in entries]
+    picks, kept = [], {}
+    for e in entries:
+        a = e["line"] - 1
+        if (e["id"][:1] not in FINDINGS_KINDS or not e.get("id_demoted")
+                or gov[a] != "4"):
+            continue
+        if any(lv < e["level"] and s < a < t for lv, s, t in spans):
+            continue
+        b = _entry_end(e)
+        c, clean = _stamp_cut(lines, a, b)
+        if not clean:
+            kept[e["id"]] = ("text after a stamp", lines[c])
+            continue
+        end = c
+        while end > a + 1 and not lines[end - 1].strip():
+            end -= 1
+        part = scan[a:end]
+        depth_before = scan[a - 1][1] if a > 0 else 0
+        if (depth_before or part[-1][1] or sum(s[2] for s in part) != sum(s[3] for s in part)):
+            kept[e["id"]] = (FOLD_REASON, lines[a])
+            continue
+        if sum(1 for l in lines[a:end] if is_fence_line(l)) % 2:
+            kept[e["id"]] = (FENCE_REASON, lines[a])
+            continue
+        # A live entry nested in the block would travel into §99 with it, silently: the
+        # live-work test below reads only the block's first Status (o9's second review).
+        inner = [x for x in entries if x is not e and a < x["line"] - 1 < end
+                 and not x.get("archived") and status_of(x["body"]) not in TERMINAL_STATUS]
+        if inner:
+            kept[e["id"]] = (NESTED_LIVE_REASON, lines[inner[0]["line"] - 1])
+            continue
+        why = _stray_entry_looks_live("\n".join(lines[a:c]), stop)
+        if why:
+            kept[e["id"]] = why        # possibly live work - the owner decides, not this
+            continue
+        picks.append((a, b, end, e["id"]))
+
+    def refuse(reason):
+        for _a, _b, _c, eid in picks:
+            kept[eid] = (reason, lines[_a])
+        if left is not None:
+            left.extend((eid, why[0], why[1]) for eid, why in kept.items())
+        return []
+
+    # Everything below happens on a copy, and the copy replaces `lines` only once it is checked.
+    work = list(lines)
+    # Cut bottom-up so the line numbers of the entries above stay valid. The entries do not
+    # overlap: each body ends at the next heading of its own level or shallower.
+    blocks = []
+    for a, b, c, eid in sorted(picks, reverse=True):
+        cut_end = c
+        while cut_end < b and not work[cut_end].strip():
+            cut_end += 1
+        blocks.append((eid, work[a:c]))
+        del work[a:cut_end]
+    moved = []
+    for eid, block in reversed(blocks):
+        label, span = _destination(work, eid, stray_name, create=True)
+        if span is None:
+            return refuse(NOPLACE_REASON)
+        _insert_in_section(work, span, eid, block)
+        moved.append((eid, label))
+    if moved:
+        sig = lambda ls: sorted((x["id"], x["title"], bool(x.get("archived")))
+                                for x in parse_entries(ls)[0])
+        if sig(work) != sig(lines):
+            return refuse(REPARSE_REASON)
+        lines[:] = work
+    if left is not None:
+        left.extend((eid, why[0], why[1]) for eid, why in kept.items())
+    return moved
+
+
+def _only_stamps(section_lines):
+    """True if every paragraph in `section_lines` is an override stamp, and there is one.
+
+    A stamp is an `<!-- ORCHDOC:OVERRIDE -->` line plus any lines after it up to a blank
+    line, the same unit `_stamp_cut` uses. Any other paragraph means the section still
+    holds content, so its heading stays."""
+    seen = in_stamp = False
+    for l in section_lines:
+        if not l.strip():
+            in_stamp = False
+        elif OVERRIDE_RE.match(l):
+            seen = in_stamp = True
+        elif not in_stamp:
+            return False
+    return seen
+
+
+def _print_stray_left(dest_name, left):
+    """What `archive` left in the stray section, and why, so nothing stays there unexplained.
+    `left` is relocate_stray's (id, reason, line) list; each reason gets its own heading, so
+    an open entry is never reported as one with nowhere to go."""
+    groups = (
+        ("may still be live work - tick or strike the line, or reopen the entry in §2/§3;"
+         " the next archive moves a closed one",
+         lambda r: r in ("unticked box", "open sub-item", NESTED_LIVE_REASON)
+         or r.startswith("Status is")),
+        ("not finished - an open entry under this heading belongs in §2/§3",
+         lambda r: r.startswith("not finished")),
+        ("text follows an override stamp inside the entry, so where it ends is unclear -"
+         " move it by hand", lambda r: r == "text after a stamp"),
+        ("no section of their kind to go to", lambda r: r == "no section of its kind"),
+        ("moving them would split a <details> fold or a ``` fence, or change how the rest of"
+         " the doc parses - move them by hand",
+         lambda r: r in (FOLD_REASON, FENCE_REASON, NOPLACE_REASON, REPARSE_REASON)),
+    )
+    for title, test in groups:
+        rows = [x for x in left if test(x[1])]
+        if not rows:
+            continue
+        print("  left in `## %s`, %s:" % (dest_name, title))
+        for eid, why, line in rows:
+            print("    %-10s %-24s %s" % (eid, why, line.strip()[:80]))
+
+
 def cmd_archive(args):
     """
     Move terminal-status entries out of sections that promise live items.
@@ -7922,10 +18926,21 @@ def cmd_archive(args):
     dest_name = args.into
 
     with _lock(doc):
-        lines = doc.read_text(encoding="utf-8").splitlines()
+        _before = doc.read_text(encoding="utf-8")
+        lines = _before.splitlines()
+        # Every change below is made in memory; the file is written once, at the end, and only
+        # when this is not a dry run - so a dry run reports exactly what a real run would do.
+        left = []
+        _had_stray = _section_span(lines, name=dest_name) is not None
+        relocated = relocate_stray(lines, dest_name, left=left)
+        dropped = _had_stray and _section_span(lines, name=dest_name) is None
+        # W83: closed findings an older run left in §4 go to the §99 Findings subsection
+        left4 = []
+        relocated4 = relocate_closed_findings(lines, dest_name, left=left4)
         entries, sections = parse_entries(lines)
 
         movers, held = [], []
+        _govmap = _governing_outside_fences(lines)
         for e in entries:
             if e.get("archived"):
                 continue
@@ -7935,7 +18950,8 @@ def cmd_archive(args):
             # is_active_section() about a prose heading. Two guards sharing one blind spot is a
             # false all-clear, which is worse than a single gap: `archive` printed "no
             # terminal-status entries are sitting in an active section" while one sat in §2.1.
-            _gov = _governing_section(lines, e["line"])
+            # `_governing_outside_fences` is `_governing_section` for every line in one pass.
+            _gov = _govmap[e["line"] - 1]
             # ⛔ §4 WAS MISSING, AND THAT IS THE SAME BLIND SPOT THE COMMENT ABOVE WARNS ABOUT -
             # one level along. o7 reported it (W6 and W7 RESOLVED since 2026-08-17/18, sitting in
             # §4, with `archive` printing "no terminal-status entries are sitting in an active
@@ -7972,22 +18988,28 @@ def cmd_archive(args):
             print("  they stay visible, which is the point: seeing where the done work sits")
             print("  is what makes the remaining decision readable.")
             print()
-        if not movers:
+        if not movers and not relocated and not dropped and not relocated4:
             if not held:
                 print("orchdoc archive - %s" % doc.name)
                 print("  no terminal-status entries are sitting in an active section.")
+            _print_stray_left(dest_name, left)
+            _print_stray_left(FINDINGS4_LABEL, left4)
             return 0
 
+        # Kept so a misplaced insert can be refused rather than written - see below the loop.
+        _pre_move = list(lines)
+        _renamed = {}
+        refused_moves = []
         # Cut bottom-up so earlier line numbers stay valid.
         blocks = []
         for e in sorted(movers, key=lambda x: x["line"], reverse=True):
             start = e["line"] - 1
-            end = start + len(e["body"].splitlines())
+            end = _entry_end(e)
             blocks.append((e["id"], status_of(e["body"]), lines[start:end]))
-            if not args.dry_run:
-                del lines[start:end]
+            del lines[start:end]
 
-        if not args.dry_run:
+        placed = []
+        if blocks:
             # ROUTE BY KIND, into the schema's own completed subsection. Matching on the
             # NAME found nothing on a schema doc (there is no heading containing "DONE"),
             # so archive APPENDED A NEW "## DONE" SECTION OUTSIDE THE SCHEMA - the entry
@@ -7998,24 +19020,12 @@ def cmd_archive(args):
             # is_active_section(): each one located a section by its WORDING. The schema
             # gave sections stable NUMBERS precisely so lookups would stop guessing from
             # prose - so every lookup has to actually use them.
-            dest = None
-            kinds = {(re.match(r"[A-Z]+", b[0]) or [""])[0][:1] for b in blocks}
-            want_num = None
-            if len(kinds) == 1:
-                want_num = KIND_SECTION_NUM.get(kinds.pop(), (None, None))[1]
-            if want_num:
-                for i, l in enumerate(lines):
-                    m = SECTION_RE.match(l)
-                    if m and m.group(1) == want_num:
-                        dest = i
-                        break
-            if dest is None:                       # legacy doc, or a mixed-kind batch
-                for i, l in enumerate(lines):
-                    if re.match(r"^##\s", l) and dest_name.upper() in l.upper():
-                        dest = i
-            if dest is None:
-                lines += ["", "## %s" % dest_name, ""]
-                dest = len(lines) - 1
+            #
+            # ⛔ AND PER ENTRY, NOT PER BATCH. This picked one destination for the whole batch,
+            # so a batch holding two kinds (D+Q, D+W, T+W) went to the un-numbered
+            # `## RESOLVED - kept for the record` fallback - see WHERE A FINISHED ENTRY GOES.
+            # Each block now finds its own kind's section in the loop below; only a kind with
+            # no section in this doc (a legacy doc) falls back to that name.
             # ⛔ FINISH THE JOB. `archive` used to move the block verbatim, which left every
             # archived entry tripping E-ARCHIVEDMARKER - "archived entry still carries the
             # live-looking id 'D6'" - and the fix it printed was a hand edit. So the tool
@@ -8028,29 +19038,39 @@ def cmd_archive(args):
             #
             # The id is PRESERVED in the prose ("_was W14_") because ids are never reused and
             # references to them must still resolve - it just stops LOOKING live.
-            body = []
             for _id, _st, blk in reversed(blocks):
                 blk = list(blk)
                 if blk and blk[0].startswith("#"):
-                    head = re.sub(r"^(#+)\s*\S*\s*%s\s*[-–—]\s*" % re.escape(_id),
-                                  r"\1 ", blk[0])
-                    if head != blk[0]:
-                        # ⛔ THE STRIP MUST NOT UNCOVER A SECOND ID-SHAPED TOKEN. o10's W10 was
-                        # titled `W10 - W0: the morning-energy H1 ...`, where `W0` names a SCRIPT
-                        # in o8's corpus, not an entry. Removing `W10 - ` left the heading
-                        # beginning `W0:`, which ID_RE matches - so the parser stopped reading
-                        # the `_(was W10 - DONE)_` suffix and registered a live entry `W0` that
-                        # nobody wrote. E-IDORDER and E-MARKERDRIFT then fired on the phantom.
-                        #
-                        # ⭐ The archiver cannot know which id-shaped tokens in a human title
-                        # are entry ids, so it must not CREATE the ambiguity: lead with the
-                        # status word, which is the same shape archive already produces when a
-                        # title happens to start with prose (`### RESOLVED - #153 closed ...`).
-                        _m_hash = re.match(r"^(#+)\s*(.*)$", head)
-                        if _m_hash and ID_RE.match(strip_decoration(_m_hash.group(2))):
-                            head = "%s %s - %s" % (_m_hash.group(1), _st, _m_hash.group(2))
-                        head = head.rstrip() + archived_heading_suffix(_id, _st)
-                    blk[0] = head
+                    # ⛔ THE SEPARATOR AFTER THE ID IS NOT ALWAYS A DASH. o10 writes findings as
+                    # `### ✅ F18. o10 is the KEEPER ...`; a dash-only pattern left that heading
+                    # unrewritten, so F18 never read as archived, was picked up again on every
+                    # run, and gained a blank line each time. `.` and `:` are accepted, bold
+                    # around the id too, and the suffix is added whether or not the strip
+                    # worked - the id-shaped-lead check below keeps a leftover id from
+                    # reading as live.
+                    head = re.sub(r"^(#+)\s*\S*\s*\*{0,2}%s\*{0,2}\s*[-–—.:]\*{0,2}\s*"
+                                  % re.escape(_id), r"\1 ", blk[0])
+                    # ⛔ THE STRIP MUST NOT UNCOVER A SECOND ID-SHAPED TOKEN. o10's W10 was
+                    # titled `W10 - W0: the morning-energy H1 ...`, where `W0` names a SCRIPT
+                    # in o8's corpus, not an entry. Removing `W10 - ` left the heading
+                    # beginning `W0:`, which ID_RE matches - so the parser stopped reading
+                    # the `_(was W10 - DONE)_` suffix and registered a live entry `W0` that
+                    # nobody wrote. E-IDORDER and E-MARKERDRIFT then fired on the phantom.
+                    #
+                    # ⭐ The archiver cannot know which id-shaped tokens in a human title
+                    # are entry ids, so it must not CREATE the ambiguity: lead with the
+                    # status word, which is the same shape archive already produces when a
+                    # title happens to start with prose (`### RESOLVED - #153 closed ...`).
+                    # The same step covers a heading the strip could not match: its own id
+                    # still leads, and the status word pushes it off the front.
+                    _m_hash = re.match(r"^(#+)\s*(.*)$", head)
+                    if _m_hash and ID_RE.match(strip_decoration(_m_hash.group(2))):
+                        head = "%s %s - %s" % (_m_hash.group(1), _st, _m_hash.group(2))
+                    _old_t = re.match(r"^#{1,6}\s+(.*)$", blk[0])
+                    blk[0] = head.rstrip() + archived_heading_suffix(_id, _st)
+                    _new_t = re.match(r"^#{1,6}\s+(.*)$", blk[0])
+                    if _old_t and _new_t:
+                        _renamed[(_id, _old_t.group(1).rstrip())] = _new_t.group(1).rstrip()
                 # ⛔ HEADING ONLY. A first version also rewrote the **Status:** line, and the
                 # substitution produced `****Owner:**` - it damaged 8 entries across this doc
                 # before the linter caught it. The rule E-ARCHIVEDMARKER states is about the
@@ -8058,22 +19078,116 @@ def cmd_archive(args):
                 # and stripping it broke E-NOSTATUS and E-MARKERDRIFT on entries nobody had
                 # touched. Widening a narrow rule to "everything that mentions status" is how
                 # a tidy-up becomes damage.
-                body += blk + [""]
-            insert_at = len(lines)
-            for i in range(dest + 1, len(lines)):
-                if re.match(r"^##\s", lines[i]):
-                    insert_at = i
-                    break
-            lines[insert_at:insert_at] = body
-            write_doc(doc, "\n".join(lines) + "\n")
+                while len(blk) > 1 and not blk[-1].strip():
+                    blk.pop()
+                label, span = _destination(lines, _id, dest_name, create=True)
+                if span is None:
+                    lines += ["", "## %s" % dest_name, ""]
+                    label, span = dest_name, _section_span(lines, name=dest_name)
+                _insert_in_section(lines, span, _id, blk)
+                placed.append((_id, _st, label))
+            # ⛔ A MISPLACED INSERT IS REFUSED, NOT WRITTEN (o9's second review of W83). An
+            # insert that lands inside a fence or a fold makes the entry vanish from every
+            # reader (E-HIDDENENTRY), and nothing downstream puts it back. So after the moves
+            # every entry must still parse, with the same id, title and archived state -
+            # except a moved entry, whose heading this loop rewrote on purpose. Otherwise the
+            # whole batch is undone and reported; `relocate_closed_findings` holds its own
+            # moves to the same test.
+            _want = sorted(
+                (x["id"], _renamed.get((x["id"], x["title"]), x["title"]),
+                 True if (x["id"], x["title"]) in _renamed else bool(x.get("archived")))
+                for x in entries)
+            _got = sorted((x["id"], x["title"], bool(x.get("archived")))
+                          for x in parse_entries(lines)[0])
+            if _want != _got:
+                lines[:] = _pre_move
+                refused_moves = [p[0] for p in placed]
+                placed = []
+            # ⛔ A FENCE IS A SPAN, AND THIS WALK IS WHY ENTRIES KEPT LANDING INSIDE ONE.
+            #
+            # This is F226's cause, proved on a live reproduction 2026-09-21 rather than
+            # inferred from the three archaeological episodes. The walk looked for the next
+            # `## ` to insert before, with no fence tracking. In this very doc it stopped at
+            #
+            #     17294  ```
+            #     17295  ## Decisions for the human (D14, D15 - ORCHESTRATOR-DECISIONS-o9.md)
+            #     17296  ```
+            #
+            # a three-line fenced EXAMPLE of a mailbox heading, and spliced the archived
+            # entry in ahead of it - inside the block. The first `## ` genuinely outside a
+            # fence was 78 lines further on.
+            #
+            # ⭐ `parse_entries` tracks fences and skips their contents. So the entry was
+            # READ fence-aware and WRITTEN fence-blind, by the same tool, forty lines apart.
+            #
+            # ⭐ AND IT EXPLAINS THE MEASUREMENT F226 COULD NOT RECONCILE. "The archiver
+            # adds no fence, count unchanged" was TRUE in 2 of 3 episodes and was simply the
+            # wrong instrument: the archiver never creates a fence, it writes into one that
+            # is already there. A count cannot see that; only the fence STATE at the
+            # insertion line can.
+            #
+            # State is accumulated from line 0, not from the section heading - starting the
+            # scan part-way through would assume the region begins outside a fence, which is
+            # the same assumption that caused this. `_section_span` and `_insert_in_section`
+            # now carry that walk, for this loop and for `relocate_stray` alike.
+
+        # ⛔ KEEP A PLATE THAT WAS CURRENT, CURRENT. The plate counts how often each open item
+        # is named, and in o10 the override stamps between stray entries were counted as that
+        # entry's text - so moving the entries changed T44's "named 8" to "named 7" and left
+        # the plate stale. `commit` runs archive before gate 0, so a stale plate here refused
+        # the author's landing with E-PLATEDRIFT for a move they did not make. Regenerated only
+        # when it matched before this run: a hand-edited plate is E-PLATEDRIFT's to report.
+        _old_lines = _before.splitlines()
+        _pspan, _pwhy = plate_span(_old_lines)
+        if not _pwhy and _pspan:
+            _was = _old_lines[_pspan[0]:_pspan[1] + 1]
+            if _was == build_plate_block(parse_entries(_old_lines)[0], _old_lines):
+                _nspan, _nwhy = plate_span(lines)
+                if not _nwhy and _nspan:
+                    lines[_nspan[0]:_nspan[1] + 1] = build_plate_block(
+                        parse_entries(lines)[0], lines)
+        # The section index at the top lists every numbered section. When this run adds
+        # `§99.x Findings` an index that was current before it stays current - the same rule
+        # as the plate above, and nothing else would notice the index missing a section.
+        _ispan, _iwhy = index_span(_old_lines)
+        if (not _iwhy and _ispan
+                and _old_lines[_ispan[0]:_ispan[1] + 1] == render_index(_old_lines)):
+            _nspan, _nwhy = index_span(lines)
+            if not _nwhy and _nspan:
+                lines[_nspan[0]:_nspan[1] + 1] = render_index(lines)
+
+        if not args.dry_run:
+            write_doc(doc, "\n".join(lines) + "\n", expect=_before)
 
     print("orchdoc archive - %s - %s"
           % (doc.name, "DRY RUN (nothing written)" if args.dry_run else "APPLIED"))
     print()
-    print("  %d finished entr%s would leave the active sections:"
-          % (len(blocks), "y" if len(blocks) == 1 else "ies"))
-    for _id, _st, blk in reversed(blocks):
-        print("    %-10s %-10s -> %s" % (_id, _st, dest_name))
+    if placed:
+        print("  %d finished entr%s would leave the active sections:"
+              % (len(placed), "y" if len(placed) == 1 else "ies"))
+        for _id, _st, label in placed:
+            print("    %-10s %-10s -> %s" % (_id, _st, label))
+    if refused_moves:
+        print("  REFUSED, nothing in this batch moved: placing %s would have changed how another"
+              " entry parses" % ", ".join(refused_moves))
+        print("  (an insert landed inside a fence or a <details> fold). Move them by hand.")
+    if relocated:
+        print("  %d entr%s moved out of `## %s` into %s own section:"
+              % (len(relocated), "y" if len(relocated) == 1 else "ies", dest_name,
+                 "its" if len(relocated) == 1 else "their"))
+        for _id, label in relocated:
+            print("    %-10s -> %s" % (_id, label))
+    if dropped:
+        print("  `## %s` held nothing after the move, so its heading was removed." % dest_name)
+    if relocated4:
+        import textwrap
+        print("  %d closed finding%s moved out of §4 into %s, unchanged:"
+              % (len(relocated4), "" if len(relocated4) == 1 else "s",
+                 ", ".join(sorted({lb for _i, lb in relocated4}))))
+        for row in textwrap.wrap(", ".join(i for i, _lb in relocated4), 88):
+            print("    " + row)
+    _print_stray_left(dest_name, left)
+    _print_stray_left(FINDINGS4_LABEL, left4)
     if args.dry_run:
         print()
         print("  Re-run with --commit to move them. Nothing is deleted; they move.")
@@ -8156,7 +19270,7 @@ def cmd_clones(args):
 def _vgit(args, cwd=PROJECTS):
     """git via an argument LIST. No shell, so no MSYS path mangling, ever."""
     p = subprocess.run(["git", "-C", str(cwd)] + list(args),
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, timeout=60, creationflags=flags())
     return p.returncode, p.stdout, p.stderr
 
 
@@ -8348,7 +19462,7 @@ def canonical_title(num, role=""):
 
     On (3): no current consumer extracts H1s from OrchDocs - and that does not clear it.
     The hazard belongs to tools that do not exist yet, and every one of them will assume
-    the "one H1 per document" convention.\1The human: "if that is a possibility for any unknown
+    the "one H1 per document" convention. The human: "if that is a possibility for any unknown
     future grep, let's revert."
 
     The visual line break is simply unavailable: markdown cannot break inside a heading,
@@ -8488,7 +19602,7 @@ def render_meta(doc, lines, landing_now=False):
     out.append("| **Open on %s** | **%%d** - see [\u00a72](%s) |"
                % (_plate_label, _plate_anchor)
                % open_plate)
-    # THE ORACLE.\1The human left this slot open with "?? Oracle info?? what else?" and this is
+    # THE ORACLE. The human left this slot open with "?? Oracle info?? what else?" and this is
     # the answer: the reader's own question, "am I looking at the current copy?", which
     # nothing else on the page can settle. o8's doc was 327 lines behind while being
     # internally consistent and correctly formatted - re-reading it could never have
@@ -8543,7 +19657,7 @@ def human_name(default="THE HUMAN"):
         name = (name or "").strip()
         if not name:
             return default
-        # THIS FIELD IS FREE TEXT.\1The human's own profile screenshot proves it: "What should
+        # THIS FIELD IS FREE TEXT. The human's own profile screenshot proves it: "What should
         # we call you?" held "the human This is The File". A heading built straight from it
         # becomes "LIVE ON THE HUMAN THIS IS THE FILE'S PLATE", and the field could equally
         # hold an emoji, 200 characters, or markdown that breaks the heading.
@@ -8552,7 +19666,7 @@ def human_name(default="THE HUMAN"):
         # apostrophe, and cap the length. A section heading is structure; user-supplied
         # free text must be narrowed before it becomes structure.
         # Take the first token that actually yields letters, so a leading emoji or a
-        # title ("Dr.\1The human") does not collapse the whole name to the fallback.
+        # title ("Dr. The human") does not collapse the whole name to the fallback.
         for tok in name.split():
             clean = re.sub(r"[^A-Za-zÀ-ɏ'\-]", "", tok)[:24]
             if clean:
@@ -8618,6 +19732,9 @@ def render_index(lines):
             mark = "" if num in present else "  **<- MISSING**"
         else:
             title, note, mark = present[num], "this orchestrator's own", ""
+            # `archive` makes the Findings subsection, not the orchestrator (W83)
+            if num.startswith(ARCHIVE_SECTION + ".") and title == FINDINGS_TITLE:
+                note = FINDINGS_NOTE.strip("_")
         out.append("%s- **\u00a7%s %s** - %s%s" % ("  " * depth, num, title, note, mark))
     out.append("")
 
@@ -8631,10 +19748,17 @@ def reorder_sections(lines):
 
     Raises ValueError if any line would be lost - the caller must not write on that.
     """
+    # ⛔ A `## ` LINE INSIDE A ``` FENCE IS QUOTED TEXT, NOT A BLOCK BOUNDARY (lane o9L1026,
+    # 2026-10-03, found beside o9 W150). Split there, a quoted `## §1` became a block of its
+    # own, sorted to the top, and took the second half of its fence with it; no line was lost,
+    # so the gate below passed a document whose fence parity was broken. `fenced_lines` is the
+    # parser's own reading of the fences, as `_reorder_slots` already uses for `reorder`.
+    fz = fenced_lines(lines)
+
     # Split into: head (everything before the first numbered section) + blocks.
     first = None
     for i, ln in enumerate(lines):
-        if ln.startswith("## ") and SECTION_RE.match(ln):
+        if i not in fz and ln.startswith("## ") and SECTION_RE.match(ln):
             first = i
             break
     if first is None:
@@ -8646,8 +19770,8 @@ def reorder_sections(lines):
     # therefore travel with the numbered section above them, which keeps an
     # orchestrator's domain content next to whatever it was written beside.
     blocks, cur = [], None
-    for ln in rest:
-        if ln.startswith("## "):
+    for j, ln in enumerate(rest, start=first):
+        if j not in fz and ln.startswith("## "):
             if cur is not None:
                 blocks.append(cur)
             cur = [ln]
@@ -8682,7 +19806,10 @@ def render_findings_index(lines):
     second copy of the truth and would rot on the first entry anyone added.
     """
     fin = []
-    for ln in lines:
+    _fz = fenced_lines(lines)                # o9 W150 box 8: a heading in a code block is no finding
+    for i, ln in enumerate(lines):
+        if i in _fz:
+            continue
         m = re.match(r"^###\s+(?:\W+\s*)?(F\d+)\b\s*[-\u2013]?\s*(.*)$", ln)
         if m:
             title = m.group(2).strip().rstrip(".")
@@ -8726,7 +19853,10 @@ def cmd_handoff(args):
     raw_ids = set()
     prose_titles = {}
     cur = ""
-    for ln in lines:
+    _fz_h = fenced_lines(lines)              # o9 W150 box 8: ids quoted in a code block are not items
+    for i, ln in enumerate(lines):
+        if i in _fz_h:
+            continue
         if ln.startswith("## "):
             cur = ln
         if not is_active_section(cur):
@@ -8968,10 +20098,16 @@ def cmd_strike(args):
     if refuse_if_not_mine(doc, "strike", getattr(args, "not_mine", False)):
         return 2
 
-    lines = doc.read_text(encoding="utf-8").split("\n")
+        # `expect` is the RAW text, so a landing that arrives between this
+    # read and the write below refuses instead of being erased.
+    _before_txt = doc.read_text(encoding="utf-8")
+    lines = _before_txt.split("\n")
     entries, _ = parse_entries(lines)
     out = list(lines)
     changed, ambiguous, spans_only = [], [], []
+    # o9 W126: text pasted into a fenced block stays word for word, so neither pass below
+    # touches a fenced line.
+    _fenced = fenced_lines(lines)
 
     # ⛔ LITERAL SPANS ARE STRIPPED EVERYWHERE, not only where a line converts. I told another
     # orchestrator this command "strips the 17 <span> tags in your doc"; it did not - it only
@@ -9000,6 +20136,8 @@ def cmd_strike(args):
         # that walks whole lines consults NOTE_LINE_RE as well as STAMP_LINE_RE.
         if STAMP_LINE_RE.match(raw) or NOTE_LINE_RE.match(raw):
             continue
+        if i in _fenced:
+            continue
         if GREY_SPAN_RE.search(raw):
             fixed = GREY_SPAN_RE.sub("", raw).replace("</span>", "")
             if fixed != raw:
@@ -9015,6 +20153,8 @@ def cmd_strike(args):
             i = e["line"] + off                      # 0-indexed into `out`
             if i >= len(out) or out[i] != raw:
                 continue
+            if i in _fenced:
+                continue                     # pasted text, word for word (o9 W126)
             # ⛔ NEVER A NUMBERED LIST. `2.` is document STRUCTURE, not a settled sub-item, and
             # rewriting it to `- [x]` orphans it between its own `1.` and `3.`. o1's specimen:
             # `2. ✅ **RETAINED in the stored script**` became a checkbox and broke the list it
@@ -9093,7 +20233,7 @@ def cmd_strike(args):
     if args.dry_run:
         print("  DRY RUN - nothing written. Re-run with --commit.")
         return 0
-    doc.write_text("\n".join(out), encoding="utf-8")
+    write_doc(doc, "\n".join(out), expect=_before_txt)
     print("  written.")
     return 0
 
@@ -9180,7 +20320,10 @@ def cmd_reorder(args):
     if refuse_if_not_mine(doc, "reorder", getattr(args, "not_mine", False)):
         return 2
 
-    lines = doc.read_text(encoding="utf-8").split("\n")
+        # `expect` is the RAW text, so a landing that arrives between this
+    # read and the write below refuses instead of being erased.
+    _before_txt = doc.read_text(encoding="utf-8")
+    lines = _before_txt.split("\n")
     entries, _ = parse_entries(lines)
     groups, spans = _reorder_slots(lines, entries)
 
@@ -9257,7 +20400,7 @@ def cmd_reorder(args):
     if args.dry_run:
         print("  DRY RUN - nothing written. Re-run with --commit.")
         return 0
-    doc.write_text("\n".join(out), encoding="utf-8")
+    write_doc(doc, "\n".join(out), expect=_before_txt)
     print("  written.")
     return 0
 
@@ -9490,7 +20633,8 @@ def refresh_subtitles(lines, name):
     ⭐ It used to be WRITE-ONCE: `scaffold` regenerated the index from the schema and left the
     subtitle under each heading frozen as first authored. So a schema edit fixed the index and
     left the body saying something else - one string, two copies, one derived and one not,
-    which is the multi-copy defect this whole tool exists to remove, inside its own generator\1The human found it by reading an index and a section that disagreed in the same document.
+    which is the multi-copy defect this whole tool exists to remove, inside its own generator.
+    The human found it by reading an index and a section that disagreed in the same document.
 
     Only replaces a line that is ALREADY a subtitle (`_..._` immediately under the heading).
     It never invents one and never touches prose, so a doc that writes its own intro keeps it.
@@ -9537,10 +20681,52 @@ def running_orchestrator():
     return _bound_orchestrator()
 
 
-APP_SESSIONS = Path(r"<your-home>\AppData\Roaming\Claude\claude-code-sessions")
+def _app_sessions_dir():
+    """Where the Claude desktop app keeps its session rows.
+
+    ⭐ DERIVED FROM `%APPDATA%`, not spelled out. The literal it replaced named one user on
+    one machine, so the two callers below could never find a session row anywhere else -
+    including in the per-orchestrator worktrees, where `APPDATA` is set and the hardcoded
+    path happened to agree only by coincidence.
+
+    Off Windows there is no such directory at all. That is FINE and deliberate: both callers
+    already wrap `rglob` in a try, and a session store that does not exist is the truthful
+    answer for an environment that has no desktop app - not an error to raise.
+    """
+    env = os.environ.get("ORCHDOC_APP_SESSIONS")
+    if env:
+        return Path(env)
+    roaming = os.environ.get("APPDATA")
+    base = Path(roaming) if roaming else Path.home() / "AppData" / "Roaming"
+    return base / "Claude" / "claude-code-sessions"
+
+
+APP_SESSIONS = _app_sessions_dir()
+_APP_SESSIONS_DEFAULT = APP_SESSIONS
+
+
+def _app_session_files():
+    """Every `local_*.json` session row, from the old store AND the new one.
+
+    The app moved its store (seen 2026-10-28) from %APPDATA%\\Claude\\claude-code-sessions to
+    %LOCALAPPDATA%\\Claude-Data\\claude_<random>\\claude-code-sessions. APP_SESSIONS is still the
+    old folder (or $ORCHDOC_APP_SESSIONS); the new folders are added only when APP_SESSIONS is
+    left at its default, so an override, or a test that points it at a fixture, reads just that.
+    """
+    roots = [APP_SESSIONS]
+    if APP_SESSIONS == _APP_SESSIONS_DEFAULT and not os.environ.get("ORCHDOC_APP_SESSIONS"):
+        local = os.environ.get("LOCALAPPDATA")
+        base = Path(local) if local else Path.home() / "AppData" / "Local"
+        try:
+            roots.extend(sorted((base / "Claude-Data").glob("claude_*/claude-code-sessions")))
+        except OSError:
+            pass
+    for root in roots:
+        if root.is_dir():
+            yield from root.rglob("local_*.json")
 # ONE ORCHESTRATOR ID AT THE START OF THE SESSION NAME. Two rules, and each is doing work:
 #
-#   [^0-9A-Za-z]*   ANY run of non-alphanumeric characters may precede the id.\1The human prefixes
+#   [^0-9A-Za-z]*   ANY run of non-alphanumeric characters may precede the id. The human prefixes
 #                   names with - and . today and said plainly there may be others later, so an
 #                   ALLOWLIST of punctuation is the wrong shape - a character he has not used
 #                   yet fails SILENTLY, and a silent failure here is indistinguishable from a
@@ -9600,22 +20786,109 @@ def session_role():
 
 def _session_title():
     """This session's title from the desktop app's per-session JSON, or "" when it has none."""
-    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID")
-           or os.environ.get("CLAUDE_SESSION_ID") or "").strip().replace("local_", "")
-    if not sid:
-        return ""
+    head = _own_session()
+    return ((head or {}).get("title") or "").strip()
+
+
+# The identity fields sit at the very start of every file in the app's session store
+# (measured: sessionId at byte 1, cliSessionId at 58, title at 308), ahead of the large
+# fields. Reading the head is enough; parsing the whole file is what cost the time.
+_SESSION_HEAD_BYTES = 16384
+_SESSION_FIELD_RE = {
+    k: re.compile(r'"%s"\s*:\s*("(?:[^"\\]|\\.)*"|true|false|null)' % k)
+    for k in ("sessionId", "cliSessionId", "title", "isArchived")}
+
+
+def session_head(f):
+    """{sessionId, cliSessionId, title, isArchived} of ONE app session file, or None.
+
+    \u26d4 THIS USED TO BE `json.loads(f.read_text())` ON EVERY FILE IN THE STORE, and the
+    store is 1,750 files and 1 GB (measured 2026-09-24; some files are 2.6 MB). Every
+    `orchdoc` command that asked which orchestrator was running parsed all of it - an `add`
+    measured at over 200 seconds on a busy machine, and a `commit` calls it more than once.
+    The Stop hook found the same cost in itself on 09-21 and fixed only its own copy.
+
+    Falls back to parsing the whole file when the head does not hold the fields, so a
+    change in the app's key order costs time, never a wrong answer.
+    """
     try:
-        for f in APP_SESSIONS.rglob("local_*.json"):
+        with open(f, "rb") as fh:
+            head = fh.read(_SESSION_HEAD_BYTES).decode("utf-8", "replace")
+    except OSError:
+        return None
+    out = {}
+    for k, rx in _SESSION_FIELD_RE.items():
+        m = rx.search(head)
+        if m:
             try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
+                out[k] = json.loads(m.group(1))
+            except ValueError:
+                pass
+    if "title" in out and ("sessionId" in out or "cliSessionId" in out):
+        return out
+    try:
+        d = json.loads(pathlib.Path(f).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return {k: d.get(k) for k in _SESSION_FIELD_RE}
+
+
+_OWN_SESSION_CACHE = _shared_state.home_state_dir() / "orchdoc"   # $CLAUDE_HOME_STATE_DIR moves it
+_own_session_memo = {}
+
+
+def _own_session():
+    """THIS session's head fields (see `session_head`), or None when it cannot be found.
+
+    \u2b50 ONLY THE PATH IS REMEMBERED, never the answer. A renamed session must not keep an old
+    binding, so the title is re-read from the file every call; what is cached is where the
+    file is, which is the expensive part to find. Same design as the Stop hook's
+    `bound_orchestrator`, with its own cache file so the two do not share a format.
+    """
+    sid = ""
+    for key in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_HOST_SESSION_ID"):
+        val = os.environ.get(key)
+        if val:
+            sid = "".join(c for c in val if c.isalnum() or c in "-_")[:80]
+            break
+    if not sid:
+        return None
+    want = sid.replace("local_", "")
+
+    def ours(f):
+        h = session_head(f)
+        if h and want in (str(h.get("cliSessionId") or ""),
+                          str(h.get("sessionId") or "").replace("local_", "")):
+            return h
+        return None
+
+    cache = _OWN_SESSION_CACHE / ("session-%s.json" % want)
+    cached = _own_session_memo.get(want) or ""
+    if not cached:
+        try:
+            cached = json.loads(cache.read_text(encoding="utf-8")).get("path") or ""
+        except Exception:
+            cached = ""       # a bad cache is a slow call, never a wrong answer
+    if cached and Path(cached).is_file():
+        h = ours(cached)
+        if h is not None:
+            _own_session_memo[want] = cached
+            return h
+    try:
+        for f in _app_session_files():
+            h = ours(f)
+            if h is None:
                 continue
-            if sid in (str(d.get("cliSessionId") or ""),
-                       str(d.get("sessionId") or "").replace("local_", "")):
-                return (d.get("title") or "").strip()
+            _own_session_memo[want] = str(f)
+            try:
+                _OWN_SESSION_CACHE.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps({"path": str(f)}), encoding="utf-8")
+            except Exception:
+                pass          # failing to cache costs a slow call, nothing else
+            return h
     except Exception:
         pass
-    return ""
+    return None
 
 
 def _bound_orchestrator():
@@ -9631,29 +20904,11 @@ def _bound_orchestrator():
     all 10 real, zero false positives - and the lane "o1l2:..." correctly does not match, since
     the id must be followed by a separator.
     """
-    sid = ""
-    for key in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_HOST_SESSION_ID"):
-        val = os.environ.get(key)
-        if val:
-            sid = "".join(c for c in val if c.isalnum() or c in "-_")[:80]
-            break
-    if not sid:
+    head = _own_session()
+    if head is None:
         return None
-    want = sid.replace("local_", "")
-    try:
-        for f in APP_SESSIONS.rglob("local_*.json"):
-            try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if want not in (str(d.get("cliSessionId") or ""),
-                            str(d.get("sessionId") or "").replace("local_", "")):
-                continue
-            m = TITLE_ID.match((d.get("title") or "").strip())
-            return m.group(1).lower() if m else None
-    except Exception:
-        pass
-    return None
+    m = TITLE_ID.match((head.get("title") or "").strip())
+    return m.group(1).lower() if m else None
 
 
 def doc_owner_id(doc):
@@ -9703,7 +20958,8 @@ def cmd_scaffold(args):
         return 2
     if refuse_if_not_mine(doc, "scaffold", getattr(args, "not_mine", False)):
         return 1
-    lines = doc.read_text(encoding="utf-8").split("\n") if doc.exists() else ["# " + doc.stem]
+    _scaffold_before = doc.read_text(encoding="utf-8") if doc.exists() else None
+    lines = _scaffold_before.split("\n") if _scaffold_before is not None else ["# " + doc.stem]
 
     # The charter forbids rewriting a live OrchDoc unilaterally: propose, agree, then
     # migrate. --adopt rewrites headings, so it REFUSES to write without --force.
@@ -9731,7 +20987,7 @@ def cmd_scaffold(args):
         if hi is None:
             lines.insert(0, canonical_title(tnum))
         else:
-            # THE TITLE IS A TWO-LINE UNIT, so it must be read as one.\1The human's format puts
+            # THE TITLE IS A TWO-LINE UNIT, so it must be read as one. The human's format puts
             # the role on the line AFTER the <br>, and a first version of this read only
             # the H1: on a second run it found nothing after the <br>, concluded there
             # was no role, and rewrote the title without it. The doc kept the role line
@@ -9787,8 +21043,9 @@ def cmd_scaffold(args):
         # The collision rule was right; its scope was wrong.
         taken = set(m.group(1) for m in
                     (SECTION_RE.match(l) for l in lines) if m)
+        _fz_adopt = fenced_lines(lines)      # o9 W150 box 8: a `## ` line in a code block is text
         for i, ln in enumerate(lines):
-            if not ln.startswith("## ") or SECTION_RE.match(ln):
+            if i in _fz_adopt or not ln.startswith("## ") or SECTION_RE.match(ln):
                 continue
             num = adopt_number(ln)
             if num is None:
@@ -9815,8 +21072,9 @@ def cmd_scaffold(args):
                         else "%s \u00a7%s %s - %s" % (depth, num, title, orig))
 
     present = set()
-    for ln in lines:
-        m = SECTION_RE.match(ln)
+    _fz_present = fenced_lines(lines)        # o9 W150 box 8: a heading in a code block is no section
+    for i, ln in enumerate(lines):
+        m = None if i in _fz_present else SECTION_RE.match(ln)
         if m:
             present.add(m.group(1))
 
@@ -9891,8 +21149,10 @@ def cmd_scaffold(args):
     if fspan:
         lines = lines[:fspan[0]] + fidx + lines[fspan[1] + 1:]
     elif fidx:
+        _fz_h = fenced_lines(lines)
         h = next((i for i, l in enumerate(lines)
-                  if l.startswith("## ") and re.match(r"^##\s*\u00a74\b", l)), None)
+                  if i not in _fz_h and l.startswith("## ")
+                  and re.match(r"^##\s*\u00a74\b", l)), None)
         if h is not None:
             lines = lines[:h + 1] + [""] + fidx + lines[h + 1:]
 
@@ -9917,11 +21177,14 @@ def cmd_scaffold(args):
     # The subtitle under each heading is DERIVED, like the index above it. It used to be
     # write-once, so a schema edit updated the index and left the body saying something else -
     # one string in two copies, one generated and one frozen, which is the exact multi-copy
-    # defect this tool exists to remove.\1The human found it by reading an index and a section that
+    # defect this tool exists to remove. The human found it by reading an index and a section that
     # contradicted each other inside the same document.
     lines = refresh_subtitles(lines, human_name())
 
-    write_doc(doc, "\n".join(lines))
+    # `expect=` the text this function read at the top. scaffold renames headings, inserts
+    # sections and refreshes subtitles across the WHOLE document, so a landing arriving in
+    # between is erased rather than merged. None on a brand-new doc - there is nothing to race.
+    write_doc(doc, "\n".join(lines), expect=_scaffold_before)
     print("scaffold: %s" % doc.name)
     if reordered:
         print("  sections REORDERED into numeric order (content verified identical)")
@@ -9932,6 +21195,86 @@ def cmd_scaffold(args):
         print("  Sections were APPENDED, not sorted. Moving entries under them is yours:")
         print("  only you know which entry belongs where, and a tool that guessed would")
         print("  be rewriting your doc. Then: orchdoc.py check --doc %s" % args.doc)
+    return 0
+
+
+def cmd_priority(args):
+    """Propose that the human look at an entry first. Writes the PROPOSED form, always.
+
+    ⛔ IT CANNOT WRITE THE BARE MARK, and that is the feature. `**Priority:** NOW` is
+    the human's and sorts above everything; `**Priority:** NOW (proposed by oN)` is a request
+    and sorts with the computed order, shown as a request. Nothing can verify who typed
+    either one, so the tool makes the honest shape free and leaves the other to a
+    deliberate hand edit.
+    """
+    import priority as prio
+    doc = resolve_doc_arg(args.doc)
+    if not doc or not doc.exists():
+        print("no such doc: %s" % doc, file=sys.stderr)
+        return 2
+    if refuse_if_not_mine(doc, "priority", getattr(args, "not_mine", False)):
+        return 1
+    # o9:W228: the proposer is `oN`, never the hedged `oN?` that actor_for returns when the id is
+    # inferred from the doc name. `oN?` made the Reader show "o1?" and, worse, did not match the
+    # priority pattern, so the line read as the human's bare NOW. The line needs a real orchestrator id.
+    _m = re.match(r"o\d+", actor_for(doc))
+    if not _m:
+        print("  [REFUSE] cannot tell which orchestrator is proposing. Set $ORCHDOC_ME (for "
+              "example o9) and run it again.", file=sys.stderr)
+        return 1
+    me = _m.group(0)
+    tier_arg = getattr(args, "tier", None) or "NOW"
+    tier = prio.choice_norm(tier_arg)
+    if tier not in prio.PROPOSE_TIERS:
+        print("  [REFUSE] %r is not a tier to propose. Use one of: %s"
+              % (tier_arg, ", ".join(prio.PROPOSE_TIERS)), file=sys.stderr)
+        return 1
+    why = " ".join((getattr(args, "why", None) or "").split())
+    if getattr(args, "tier", None) and not why:
+        print("  [REFUSE] --tier needs --why: the line carries the reason the human reads.",
+              file=sys.stderr)
+        return 1
+    new_line = "**Priority:** %s (proposed by %s)%s" % (tier, me, (" - " + why) if why else "")
+    with _lock(doc):
+        text = doc.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        entries, _ = parse_entries(lines)
+        hit = next((e for e in entries if e["id"] == args.id), None)
+        if hit is None:
+            print("  [REFUSE] no entry %s in %s" % (args.id, doc.name), file=sys.stderr)
+            return 1
+        # This entry's own lines: from its heading to the next heading.
+        start = hit["line"] - 1
+        end = next((j for j in range(start + 1, len(lines)) if re.match(r"#{1,6} ", lines[j])),
+                   len(lines))
+        existing = next((j for j in range(start, end)
+                         if lines[j].startswith("**Priority:**")), None)
+        if existing is not None:
+            if "(proposed" not in lines[existing].lower():
+                print("  [REFUSE] %s already carries the human's own `%s`. His mark outranks a "
+                      "proposal and this would replace it." % (args.id, lines[existing].strip()),
+                      file=sys.stderr)
+                return 1
+            if lines[existing].rstrip() == new_line:
+                print("  %s already carries `%s` - nothing to do." % (args.id, new_line))
+                return 0
+            out = lines[:existing] + [new_line] + lines[existing + 1:]
+        else:
+            # Insert directly beneath the Status line, where every other field of this entry
+            # lives, so a reader finds it in the one place fields are.
+            at = next((j for j in range(start, end) if lines[j].startswith("**Status:**")), None)
+            if at is None:
+                print("  [REFUSE] %s has no `**Status:**` line to attach to" % args.id,
+                      file=sys.stderr)
+                return 1
+            out = lines[:at + 1] + [new_line] + lines[at + 1:]
+        if args.dry_run:
+            print("  DRY RUN - would write `%s` to %s" % (new_line, args.id))
+            return 0
+        write_doc(doc, "\n".join(out) + "\n", expect=text)
+    print("  %s proposed as %s by %s. The human's own `**Priority:**` choice outranks it."
+          % (args.id, tier, me))
+    print("  NEXT: orchdoc.py plate --doc %s" % args.doc)
     return 0
 
 
@@ -10006,8 +21349,9 @@ def cmd_plate(args):
             out = lines[:start] + block + lines[stop + 1:]
         else:
             anchor = 0
+            _fz_a = fenced_lines(lines)      # o9 W150 box 8: a `# ` line in a code block is text
             for i, ln in enumerate(lines):
-                if re.match(r"^#{1,2}\s", ln) and i > 0:
+                if i not in _fz_a and re.match(r"^#{1,2}\s", ln) and i > 0:
                     anchor = i
                     break
             out = lines[:anchor] + block + [""] + lines[anchor:]
@@ -10061,6 +21405,9 @@ def main():
     c.add_argument("--quiet", action="store_true", help="suppress per-doc OK lines")
     c.add_argument("--strict", action="store_true",
                    help="promote advisory findings to blocking")
+    c.add_argument("--codes", help="comma-separated codes, e.g. E-STALEPROSE,E-IDORDER: report "
+                                   "only these, and skip the slow checks that cannot emit them "
+                                   "(the blanket-override hook uses it)")
     c.set_defaults(func=cmd_check)
 
     f = sub.add_parser("freshness",
@@ -10087,7 +21434,8 @@ def main():
     a.add_argument("--doc", required=True, help="o7, or a filename, or a path")
     a.add_argument("--kind", default="decision",
                    choices=sorted(KIND_SECTION), help="default: decision")
-    a.add_argument("--owner", help="default: the human for decisions")
+    a.add_argument("--owner", help="default: the human's name for decision, question, todo and "
+                                   "today; orchestrator for the others")
     # ⛔ WAS "(o8 uses DA)" - false since 2026-09-04, when o8 closed DA1-DA23 and moved to D.
     # o8 found it and flagged that it is probably where orchdoc_ids.py's wrong "Decision-Audio"
     # gloss came from: it is the only string in the tooling that asserts anything about a doc's
@@ -10117,13 +21465,25 @@ def main():
     nt.add_argument("--note", help="an existing note id (n3) - to edit or delete it")
     nt.add_argument("--text", help="the note. Newlines become spaces: one note is one line")
     nt.add_argument("--delete", action="store_true",
-                    help="remove the note named by --note")
+                    help="remove the note named by --note. With --id W<N> and no --note, "
+                         "delete a whole instruction item (one `instruct` made): it is kept "
+                         "in §99 as \"Deleted with no action\", with a note saying so")
     nt.add_argument("--unseen", action="store_true",
                     help="with --list: only notes nobody has acknowledged. "
                          "Listing does NOT acknowledge them - --ack does.")
+    nt.add_argument("--show", metavar="NID",
+                    help="print the text of the note NID (W2.n1) exactly as it was typed - real "
+                         "line breaks, blank lines, list markers and indentation, nothing else. "
+                         "Use it to copy website or script text; the file holds it escaped, "
+                         "`--list` and the Stop hook indent each line. From a worktree it also "
+                         "reads the main checkout's copy of the doc.")
     nt.add_argument("--list", dest="list_only", action="store_true",
                     help="read them instead of writing one; --id narrows to one entry")
     nt.add_argument("--by", help="who wrote it; defaults to this install's human")
+    nt.add_argument("--no-land", dest="no_land", action="store_true",
+                    help="write the note locally and do NOT put it on the canonical ref. "
+                         "The default LANDS it, because a note only an orchestrator's own "
+                         "checkout can see is one every other session is blind to.")
     nt.add_argument("--ack", action="store_true",
                     help="mark the instruction named by --note as SEEN, so the Stop hook "
                          "stops surfacing it. Seen, not done - it changes nothing the human "
@@ -10136,7 +21496,63 @@ def main():
     nt.add_argument("--at", help="the visible timestamp; defaults to now")
     nt.add_argument("--json", action="store_true",
                     help="machine-readable result, for the reader's server")
+    nt.add_argument("--queue-landing", dest="queue_landing", action="store_true",
+                    help="write it, then return: the Reader's landing worker puts it on the "
+                         "canonical ref in the background (o9:W123). --no-land wins over this")
+    nt.add_argument("--client-id", dest="client_id",
+                    help="the Reader page's id for this save: the same id with the same request "
+                         "again writes nothing and prints the first answer (o9:W123)")
     nt.set_defaults(func=cmd_note)
+
+    ins = sub.add_parser("instruct",
+                         help="the human's instruction for the WHOLE doc: a new §3 W item carrying it "
+                              "as an INSTRUCTION note, which the Stop hook holds until acked")
+    ins.add_argument("--doc", required=True)
+    ins.add_argument("--text", required=True,
+                     help="the instruction. Newlines become spaces")
+    ins.add_argument("--by", help="who wrote it; defaults to this install's human")
+    ins.add_argument("--at", help="override the timestamp")
+    ins.add_argument("--no-land", action="store_true",
+                     help="write it locally and do NOT put it on the canonical ref")
+    ins.add_argument("--queue-landing", dest="queue_landing", action="store_true",
+                     help="write it, then return: the Reader's landing worker lands it")
+    ins.add_argument("--client-id", dest="client_id",
+                     help="the Reader page's id for this save; a repeat writes nothing")
+    ins.add_argument("--json", action="store_true")
+    ins.set_defaults(func=cmd_instruct)
+
+    td = sub.add_parser("today",
+                        help="§2.0 Do today: add an item (one-off or repeating), tick it off "
+                             "for a day, untick it, or stop a routine")
+    td.add_argument("--doc", required=True)
+    td.add_argument("--add", metavar="TEXT", help="a new item")
+    td.add_argument("--repeat", default="no",
+                    help="no | daily | every N days | weekly | weekly on <day> | "
+                         "monthly on <1-31>  (with --add)")
+    td.add_argument("--due", help="YYYY-MM-DD for a one-off (default today)")
+    td.add_argument("--done", metavar="ID", help="tick an item off for --date (default today)")
+    td.add_argument("--undo", metavar="ID", help="untick it for --date")
+    td.add_argument("--stop", metavar="ID", help="end a routine: moves it to §99")
+    td.add_argument("--priority", metavar="ID",
+                    help="o9:W147: set the human's priority on any entry (with --choice); written as "
+                         "`**Priority:** <choice>`. Don't do archives it to its own §99 subsection")
+    td.add_argument("--choice", help="NOW | High | Medium | Low | Hold for Review | Don't do")
+    td.add_argument("--date", help="YYYY-MM-DD (default today)")
+    td.add_argument("--by", help="who; defaults to this install's human")
+    td.add_argument("--no-land", action="store_true")
+    td.add_argument("--queue-landing", dest="queue_landing", action="store_true",
+                    help="write it, then return: the Reader's landing worker lands it")
+    td.add_argument("--client-id", dest="client_id",
+                    help="the Reader page's id for this change; a repeat changes nothing")
+    td.add_argument("--json", action="store_true")
+    td.set_defaults(func=cmd_today)
+
+    lj = sub.add_parser("land-job",
+                        help="[WRITES] land one change from the OrchDoc Reader's landing queue "
+                             "(.shared/state/reader-landing) - the Reader's worker runs this")
+    lj.add_argument("--job", required=True, help="the job file")
+    lj.add_argument("--json", action="store_true", help="accepted; the result is always JSON")
+    lj.set_defaults(func=cmd_land_job)
 
     rs = sub.add_parser("restamp",
                         help="record a re-review on ONE entry, with the attestation bar "
@@ -10151,7 +21567,8 @@ def main():
     rs.add_argument("--not-mine", action="store_true")
     rs.set_defaults(func=cmd_restamp)
 
-    r = sub.add_parser("resolve", help="flip an entry's Status IN PLACE")
+    r = sub.add_parser("resolve", help="flip an entry's Status IN PLACE - writes the doc "
+                                       "immediately, then re-reads it to verify")
     r.add_argument("id")
     r.add_argument("--doc", required=True)
     r.add_argument("--ruling", required=True, help="what was decided, and by whom")
@@ -10163,11 +21580,29 @@ def main():
                         "so nothing can ever tell you it needs revisiting.")
     r.add_argument("--adopt", action="store_true",
                    help="legacy entry with no Status field: insert one instead of refusing")
+    # ⛔ THIS HELP SAID "default is a dry run" AND THE COMMAND HAS NEVER HAD ONE (measured by
+    # o8's W57 lane, 2026-09-24): `cmd_resolve` writes whether or not --commit is given. Every
+    # caller relies on that - done.py runs it without --commit and expects the write, the Stop
+    # hook's printed remedy omits it, and so do E-DONEBUTOPEN's remedy, orchdoc_view_check's
+    # help, the review-orchestrator-principles skill and the orchestrating-parallel-sessions
+    # skill. Switching to a real dry run would silently stop all of their writes, so the TEXT
+    # is corrected instead. --commit stays accepted, and does nothing, so a command that
+    # passes it keeps working.
     r.add_argument("--commit", dest="dry_run", action="store_false", default=True,
-                   help="actually write (default is a dry run, like release.mjs)")
+                   help="accepted and ignored: resolve always writes (there is no dry run)")
     r.set_defaults(func=cmd_resolve)
     r.add_argument("--not-mine", action="store_true",
                     help="this doc belongs to another orchestrator and they have agreed to the edit")
+    # o9L1328: the OrchDoc Reader's Done / Superseded buttons (see `_resolve_for_reader`).
+    r.add_argument("--json", action="store_true",
+                   help="the Reader's mode: one change, journalled, answered as one JSON line")
+    r.add_argument("--queue-landing", dest="queue_landing", action="store_true",
+                   help="write it, then return: the Reader's landing worker lands it")
+    r.add_argument("--no-land", action="store_true")
+    r.add_argument("--client-id", dest="client_id",
+                   help="the Reader page's id for this change; a repeat changes nothing")
+    r.add_argument("--undo-json", dest="undo_json",
+                   help="the Reader's Undo: the `undo` a first call returned")
 
     mg = sub.add_parser("migrate",
                         help="bring a LEGACY doc to where the other commands work")
@@ -10199,6 +21634,19 @@ def main():
     st.add_argument("--commit", dest="dry_run", action="store_false", default=True)
     st.add_argument("--not-mine", action="store_true")
     st.set_defaults(func=cmd_strike)
+
+    pr = sub.add_parser("priority",
+                        help="propose that the human look at an entry first - always writes the "
+                             "PROPOSED form; his bare mark outranks it")
+    pr.add_argument("id")
+    pr.add_argument("--doc", required=True)
+    pr.add_argument("--commit", dest="dry_run", action="store_false", default=True)
+    pr.add_argument("--not-mine", action="store_true")
+    pr.add_argument("--tier", metavar="TIER",
+                    help="High, Medium, Low, \"Don't do\" or NOW (default NOW). Written as "
+                         "`**Priority:** <tier> (proposed by oN) - <why>`; never a bare NOW")
+    pr.add_argument("--why", metavar="TEXT", help="the reason; required with --tier")
+    pr.set_defaults(func=cmd_priority)
 
     ro = sub.add_parser("reorder",
                         help="sort entry numbers within each section so a reader can stop "
@@ -10311,6 +21759,36 @@ def main():
     v.add_argument("--sha")
     v.add_argument("--repo", help="default: the workspace")
     v.set_defaults(func=cmd_verify)
+
+    pc = sub.add_parser("pictures",
+                        help="print the **Pictures:** block that shows a page's or a folder's "
+                             "pictures inside the entry, folded (the human, 2026-09-29)")
+    pc.add_argument("path", help="the HTML page of pictures, or the folder that holds them")
+    pc.add_argument("--what", default="",
+                    help="what the pictures show: the text after **Pictures:**")
+    pc.set_defaults(func=cmd_pictures)
+
+    # o9 W126 and W127 (the human, 2026-10-01): text the human copies, and pictures he looks at, go IN
+    # the entry. `check` refuses the alternatives (E-COPYBYLINK, E-IMAGEBYPATH).
+    pst = sub.add_parser("paste",
+                         help="put a file's text into an entry, word for word, as a fenced "
+                              "block the human copies with one click (the human, 2026-10-01)")
+    pst.add_argument("id", help="the entry, e.g. T16")
+    pst.add_argument("--doc", required=True, help="o<N> or a path to the OrchDoc")
+    pst.add_argument("--file", required=True, help="the file whose text goes into the entry")
+    pst.add_argument("--not-mine", action="store_true",
+                     help="write to a doc owned by another orchestrator")
+    pst.set_defaults(func=cmd_paste)
+    img = sub.add_parser("image",
+                         help="copy a picture into orchdoc-images/ and embed it in an entry, "
+                              "so the Reader shows it (the human, 2026-10-01)")
+    img.add_argument("id", help="the entry, e.g. W127")
+    img.add_argument("--doc", required=True, help="o<N> or a path to the OrchDoc")
+    img.add_argument("--file", required=True, help="the picture: png, jpg, jpeg, gif or webp")
+    img.add_argument("--alt", default="", help="what the picture shows, for the alt text")
+    img.add_argument("--not-mine", action="store_true",
+                     help="write to a doc owned by another orchestrator")
+    img.set_defaults(func=cmd_image)
 
     s = sub.add_parser("selftest", help="run built-in fixtures")
     s.set_defaults(func=cmd_selftest)

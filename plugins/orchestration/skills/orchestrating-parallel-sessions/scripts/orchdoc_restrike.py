@@ -1,5 +1,7 @@
 """Did a sub-item get REWORDED in the same commit that struck it through?
 
+<!-- subject: orchestration -->
+
 THE HUMAN'S CONUNDRUM, 2026-08-07:
 
     "There needs to be a requirement of a specific output onto the record so that it is
@@ -50,6 +52,11 @@ import difflib
 import pathlib
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 
 try:
@@ -102,13 +109,13 @@ def contained_fraction(needle, hay):
 def commits_for(doc, since):
     rng = ["%s..%s" % (since, od.CANONICAL_REF)] if since else ["-40"]
     r = subprocess.run(["git", "log", "--format=%H", "--no-merges"] + rng + ["--", str(doc)],
-                       capture_output=True, text=True, cwd=str(od.PROJECTS))
+                       capture_output=True, text=True, cwd=str(od.PROJECTS), creationflags=flags())
     return [c for c in r.stdout.split() if c]
 
 
 def diff_lines(sha, doc):
     r = subprocess.run(["git", "show", "--format=", "--unified=0", sha, "--", str(doc)],
-                       capture_output=True, text=True, cwd=str(od.PROJECTS))
+                       capture_output=True, text=True, cwd=str(od.PROJECTS), creationflags=flags())
     added, removed = [], []
     for l in r.stdout.split("\n"):
         if l.startswith("+") and not l.startswith("+++"):
@@ -129,7 +136,7 @@ _MON = {m: i + 1 for i, m in enumerate(
 def commit_time(sha):
     """When git says this commit was authored. The oracle - independent of what the line claims."""
     r = subprocess.run(["git", "show", "-s", "--format=%at", sha],
-                       capture_output=True, text=True, cwd=str(od.PROJECTS))
+                       capture_output=True, text=True, cwd=str(od.PROJECTS), creationflags=flags())
     try:
         return datetime.datetime.fromtimestamp(int(r.stdout.strip()))
     except Exception:

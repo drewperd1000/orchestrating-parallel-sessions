@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Inference-free mailbox watcher for hands-off parallel-session orchestration.
 
+<!-- subject: orchestration -->
+
 Pairs with the orchestrating-parallel-sessions skill. Copy this next to a
 `mailboxes/` directory; one append-only mailbox per lane, named for its id
 (`laneN.md`, or `o<N>L<m>.md` when several orchestrator groups share the dir).

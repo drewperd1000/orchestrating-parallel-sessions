@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Gate 2: a knowledge doc entering the workspace must be REACHABLE, or say it isn't.
 
+<!-- subject: knowledge-routing -->
+
 <!-- route-tags: knowledge gate registration tombstone superseded reachable index dev-docs -->
 
 WHAT THIS IS FOR, measured rather than asserted
@@ -65,6 +67,11 @@ Fails OPEN on any internal error: a broken guard must never block a commit. ASCI
 import os
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 from pathlib import Path
 
@@ -98,7 +105,7 @@ def _root():
     """
     try:
         p = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=10, creationflags=flags())
         if p.returncode == 0 and p.stdout.strip():
             return Path(p.stdout.strip())
     except Exception:
@@ -138,19 +145,32 @@ def tombstone_header(superseded_by, date, by, title, why):
 # Launch INPUTS, not knowledge: consumed once, by one lane, and never searched for again.
 EPHEMERAL = re.compile(r"(-SEED|-PROMPT|-bootstrap|-bridge|-PREVIEW|-SKILL-DRAFT)\.md$", re.I)
 NEVER_GATE = {"CLAUDE.md", "DEV-DOCS-INDEX.md", "ORCHESTRATOR-REGISTRY.md", "README.md",
-              "MEMORY.md", "AUTHORING-CHECKLIST.md",
+              "MEMORY.md", "AUTHORING-CHECKLIST.md", "AUTHORING-CHECKLIST.md",
+              # File U of the writing router, the rules that bind every writing type. The
+              # router check reads it (check_checklist_router.FILES), so it is exempt for the
+              # same reason as the rule files below; added for o9 W156 (lane o9L1065).
+              "AUTHORING-CHECKLIST-UNIVERSAL.md",
               # The script-writing checklist was split into a router + 4 rule files on
               # 2026-08-12, and file 2 was split again into 2 + 2B on 2026-08-13; the
               # companions are the same artifact and carry the same exemption.
               "SCRIPT-CHECKLIST-2-LENGTH.md", "SCRIPT-CHECKLIST-2B-PAUSE.md",
               "SCRIPT-CHECKLIST-3-DROPDOWNS.md",
-              "SCRIPT-CHECKLIST-4-VOICE.md", "SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md"}
+              "SCRIPT-CHECKLIST-4-VOICE.md", "SCRIPT-CHECKLIST-4B-BANNED-WORDS.md",
+              "SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md",
+              # The AT book, a rule file of the same router since o9:D71 (2026-10-05).
+              "SCRIPT-CHECKLIST-AT.md", "SCRIPT-CHECKLIST-AT-B-NIGHT-RAMPS-BREATH.md",
+              # Files 0, 6, 6B and 7, rule files of the same router that this list missed
+              # when they were made (2026-08-17 to 2026-10-02); added for o9 W156.
+              # test_rule_file_lists.py fails when a rule file the router check reads is
+              # missing here.
+              "SCRIPT-CHECKLIST-0-UNIVERSAL.md", "SCRIPT-CHECKLIST-6-REFERENT-AND-STRENGTH.md",
+              "SCRIPT-CHECKLIST-6B-STRENGTH-AND-REACH.md", "SCRIPT-CHECKLIST-7-ARC.md"}
 
 
 def git(args, cwd=None):
     try:
         p = subprocess.run(["git", "-C", str(cwd or ROOT)] + list(args),
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=20, creationflags=flags())
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except Exception:
         return 1, "", ""
@@ -455,7 +475,13 @@ def stale_rows(gone, index_text):
     return [n for n in gone if n.replace("\\", "/") in norm]
 
 
-ROUTE_LOG = Path.home() / ".claude" / "state" / "route-usage.jsonl"
+# The file route.py appends to, found the same way (`$CLAUDE_HOME_STATE_DIR` moves it).
+try:
+    from shared_state import home_state_dir as _home_state_dir
+except ImportError:  # a published copy without shared_state.py keeps the historical path
+    def _home_state_dir():
+        return Path.home() / ".claude" / "state"
+ROUTE_LOG = _home_state_dir() / "route-usage.jsonl"
 
 
 def _this_session():
@@ -597,12 +623,12 @@ def check():
         print()
         # ⛔ THIS REFUSAL OMITTED THE ONE REMEDY THAT FITS AN AUDIT. `detect()` counts
         # WORDS, so it cannot tell "this document is ABOUT X" from "this document says X is
-        # ABSENT" - and a gap analysis is built almost entirely of the second kind. One measured
-        # case: an audit naming a sibling application five times and an analytics vendor nine,
-        # every single mention a denial of the form "not here, by design" or "X is not
-        # referenced anywhere in this repository", was told to declare eight facets. Several of
-        # them would have been false, and a false facet is worse than a missing one because a
-        # searcher lands on the document that says the opposite of what they need.
+        # ABSENT" - and a gap analysis is built almost entirely of the second kind. One
+        # measured case: an audit naming a sibling application five times and an analytics
+        # vendor nine, every single mention a denial of the form "not here, by design" or "X
+        # is not referenced anywhere in this repository", was told to declare eight facets.
+        # Several would have been false, and a false facet is worse than a missing one because
+        # a searcher lands on the document that says the opposite of what they need.
         #
         # ⭐ `declined()` HAS EXISTED FOR EXACTLY THIS AND THIS MESSAGE NEVER NAMED IT. A guard
         # whose printed remedy is the wrong one is the same defect as a guard whose printed
@@ -689,7 +715,10 @@ def check():
         print("            Not applicable? A doc that opts out of routing says so:")
         print("              <!-- unindexed: <why> -->")
         print()
-        # ⛔ RULED BY THE HUMAN 2026-09-08: "lanes may draft, only orchestrators may land."
+        # ⛔ THE RULE (the human, 2026-09-08; scope ruled 2026-10-05 in o9:D69, option A): lanes may
+        # DRAFT a new doc, a pilot script, or the pilot's process log; only orchestrators may
+        # LAND any of the three. His 2026-09-08 words: "lanes may draft, only orchestrators may
+        # land."
         #
         # ⭐ HE ASKED FOR SOMETHING BETTER THAN THE CHECK THIS MESSAGE ENFORCES. His question was
         # whether a headless lane could ping its orchestrator for clearance - "a second pair of
@@ -719,7 +748,8 @@ def check():
         #
         # ⚠️ IT CANNOT BE SHOWN ONLY TO LANES, AND THIS IS NOW MEASURED RATHER THAN ASSUMED. The
         # desktop app saves one JSON file per session under
-        # `AppData/Roaming/Claude/claude-code-sessions/`, holding that session's title, which is
+        # `AppData/Roaming/Claude/claude-code-sessions/` (since 2026-10-28:
+        # `AppData/Local/Claude-Data/claude_*/claude-code-sessions/`), holding that session's title, which is
         # how `orchdoc_stop_check.py` identifies orchestrators. Ran a headless `claude -p` and
         # counted: 1354 files before, 1354 after. A headless lane gets NO file, so title-based
         # detection would find nothing and conclude "not a lane" for exactly the sessions that
@@ -729,11 +759,12 @@ def check():
         # orchestrator writes and which therefore KNOWS the answer without inferring it. See the
         # `orchestrating-parallel-sessions` skill. This message is the backstop for a lane whose
         # seed did not say it.
-        print("            THE RULE (the human, 2026-09-08): lanes may DRAFT a new knowledge doc,")
-        print("            only orchestrators may LAND one. A lane that reaches this refusal")
-        print("            reports the draft to its orchestrator with why it believes the")
-        print("            subject is new - it does not use --no-verify and does not add")
-        print("            <!-- unindexed --> to get past it.")
+        print("            THE RULE (the human, 2026-09-08; scope ruled 2026-10-05 in o9:D69,")
+        print("            option A): lanes may DRAFT a new doc, a pilot script, or the")
+        print("            pilot's process log; only orchestrators may LAND any of the three.")
+        print("            A lane that reaches this refusal reports the draft to its")
+        print("            orchestrator with why it believes the subject is new - it does not")
+        print("            use --no-verify and does not add <!-- unindexed --> to get past it.")
         print()
         print("            Why an orchestrator: the router asks whether an artifact already")
         print("            covers these WORDS, and the overlap check asks whether one shares")

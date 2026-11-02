@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""Enumerate GLOBAL MUTABLE STATE - anything one session can write that another silently reads.
+
+<!-- subject: infrastructure -->
+
+<!-- route-tags: shared state global cache mutable cross-session marker autosave stash
+     collision audit worktree -->
+
+⛔ the human, 2026-08-18, after one `git stash -u` cost three sessions a day of confusion:
+*"Global caches of just about anything is bound to be dangerous."*
+
+He is right, and `git stash` was not the only one. The dangerous property is narrow and worth
+stating exactly:
+
+  ⭐ ONE SESSION WRITES IT, ANOTHER READS IT, AND NEITHER IS TOLD.
+
+That is not the same as "shared". `.shared/secrets/` is shared and safe: it is read-mostly, and a
+write to it is a deliberate act nobody performs by accident. `refs/stash` is shared and unsafe
+because an ordinary local-looking command writes it on your behalf.
+
+Four classes, and only the first is a hazard:
+
+  SILENT     one session's write changes another's behaviour with no signal
+  ANNOUNCED  shared, but a write is visible or reported
+  SCOPED     per-session, per-directory, or per-repo by construction
+  READ-MOSTLY  shared, but writes are rare and deliberate
+
+Usage:  shared_state.py            report
+        shared_state.py --selftest
+"""
+import argparse
+import os
+import pathlib
+import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
+import sys
+
+# ⛔ RECONFIGURE, NEVER REWRAP - this module is now IMPORTED, not only run. Building a new
+# TextIOWrapper around `sys.stdout.buffer` at import time hands the importer a stdout whose
+# underlying buffer is closed when that wrapper is collected: `test_cited_paths.py` died
+# with "I/O operation on closed file" the moment orchdoc.py imported this. `reconfigure`
+# mutates the existing stream and closes nothing.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+WS = pathlib.Path(__file__).resolve().parent.parent.parent
+HOME = pathlib.Path(os.path.expanduser("~"))
+
+
+def git(*a):
+    r = subprocess.run(["git", "-C", str(WS)] + list(a), capture_output=True, text=True,
+                       creationflags=flags())
+    return r.stdout.strip()
+
+
+def main_checkout():
+    """The ONE working tree, never the worktree a script happens to live in.
+
+    ⛔ A LOG IS ONLY A RECORD IF EVERY SESSION APPENDS TO THE SAME FILE. Resolved from
+    `__file__`, a script running inside a worktree writes THAT worktree's copy - so the rows
+    scatter, and when the worktree is removed they go with it.
+
+    ⭐ Measured 2026-09-21, on the log built to stop estimates being the only evidence: two
+    landings wrote their gate-5 rows into a throwaway worktree and I deleted them with it an
+    hour later. The gate reported success both times. Nothing anywhere said the rows had
+    gone somewhere that would not survive the afternoon.
+
+    `git rev-parse --git-common-dir` answers this from any worktree - it names the shared
+    `.git`, whose parent is the main tree. Asked with `-C` the script's own directory, so
+    the answer does not depend on the caller's cwd.
+    """
+    here = pathlib.Path(__file__).resolve().parent
+    fallback = here.parent.parent                      # .shared/scripts -> .shared -> ws
+    try:
+        r = subprocess.run(["git", "-C", str(here), "rev-parse", "--git-common-dir"],
+                           capture_output=True, text=True, creationflags=flags())
+        if r.returncode == 0 and r.stdout.strip():
+            common = pathlib.Path(r.stdout.strip())
+            if not common.is_absolute():
+                common = (here / common).resolve()
+            root = common.parent
+            # ⚠️ VERIFY, do not assume: a bare repo or an unusual layout would hand back a
+            # directory with no `.shared/`, and writing the log there would hide it again.
+            if (root / ".shared" / "scripts").is_dir():
+                return root
+    except Exception:
+        pass
+    return fallback
+
+
+#: Test-isolation overrides. Each is read HERE and nowhere else; unset, production is unchanged.
+#: Measured 2026-09-25 (o9:W92): orchdoc tests run against temp workspaces still appended 15
+#: rows for a throwaway `o901` doc to the shared checkout's gate-refusals.jsonl, because
+#: state_dir() finds the main checkout from THIS file's location, not from the workspace the
+#: caller pointed orchdoc at. A test sets these; see sandbox_env.py.
+SHARED_STATE_ENV = "CLAUDE_SHARED_STATE_DIR"
+HOME_STATE_ENV = "CLAUDE_HOME_STATE_DIR"
+
+
+def state_dir():
+    """`<main checkout>/.shared/state` - the one place cross-session logs may be written.
+
+    `$CLAUDE_SHARED_STATE_DIR` replaces it outright, for tests.
+
+    A copy of these scripts that sits outside a workspace (an installed skill or plugin folder,
+    with no `.shared/scripts` above it) has no main checkout. `main_checkout()` then answers with
+    a folder that is not a workspace, and a log written under it would land inside the installed
+    plugin, which is replaced on every update. Such a copy writes to `<home state>/shared`.
+    """
+    env = os.environ.get(SHARED_STATE_ENV)
+    if env:
+        return pathlib.Path(env)
+    root = main_checkout()
+    if not (root / ".shared" / "scripts").is_dir():
+        return home_state_dir() / "shared"
+    return root / ".shared" / "state"
+
+
+def home_state_dir():
+    """`~/.claude/state` - per-machine markers and logs (route-usage.jsonl, orchdoc-stop/, ...).
+
+    `$CLAUDE_HOME_STATE_DIR` replaces it outright, for tests.
+    """
+    env = os.environ.get(HOME_STATE_ENV)
+    if env:
+        return pathlib.Path(env)
+    return HOME / ".claude" / "state"
+
+
+def _count(path, pattern="*"):
+    p = pathlib.Path(path)
+    if not p.exists():
+        return None
+    if p.is_file():
+        return 1
+    try:
+        return len(list(p.glob(pattern)))
+    except OSError:
+        return None
+
+
+def survey():
+    """[(name, klass, detail, why)] - measured, never asserted."""
+    rows = []
+
+    n_stash = len([x for x in git("stash", "list").split("\n") if x.strip()])
+    rows.append((
+        "refs/stash", "SILENT" if n_stash else "SILENT (empty)",
+        "%d entr(ies), visible from every worktree" % n_stash,
+        "ONE ref for the whole repo. `git stash` reads as local and is not. Cost 64 files "
+        "across three sessions on 2026-08-17. GUARDED by block_shared_tree_ops.py."))
+
+    auto = [b for b in git("branch", "-r").split("\n") if "autosave/" in b]
+    rows.append((
+        "autosave/* branches", "SILENT",
+        "%d branch(es), force-pushed, self-pruning" % len(auto),
+        "⛔ NOT A BACKUP - a rolling net. git_backlog_prune.py deletes them after ~3 days, so "
+        "work living only there is on an invisible countdown. o1 lost 345 lines to exactly this "
+        "shape and recovered them by chance. SURFACED by worktrees.py --risk."))
+
+    st = home_state_dir()
+    files = sorted(p.name for p in st.glob("*")) if st.exists() else []
+    rows.append((
+        "~/.claude/state/", "SILENT",
+        "%d marker file(s): %s" % (len(files), ", ".join(files[:5])),
+        "A marker means 'this happened today'. Any session's write silences every other "
+        "session's check - which is the exact daily-focus bug: a session read a marker its own "
+        "startup hook had written 90 seconds earlier and concluded the banner was already shown."))
+
+    rows.append((
+        "plugin marketplace cache", "ANNOUNCED",
+        "version-keyed; a version-guard hook bumps on content change",
+        "It DID drift 117 lines behind canonical and taught a rule the human had rejected twice. Now "
+        "announced: the guard refuses a content change that leaves the version alone, because "
+        "the cache is keyed by version and a silent edit reaches nobody."))
+
+    rows.append((
+        "mailboxes/", "ANNOUNCED",
+        "%s file(s)" % (_count(WS / "mailboxes") or 0),
+        "Shared directory, but one file per lane and writes are append-shaped. Collisions are "
+        "visible in the file."))
+
+    rows.append((
+        ".shared/secrets/", "READ-MOSTLY",
+        "%s file(s)" % (_count(WS / ".shared" / "secrets") or 0),
+        "Shared by design and safe for it: reads are constant, writes are a deliberate human "
+        "act. Shared is not the hazard - SILENTLY WRITTEN is."))
+
+    rows.append((
+        "git worktrees", "SCOPED",
+        "%d tree(s)" % len([x for x in git("worktree", "list").split("\n") if x.strip()]),
+        "Each has its own index, HEAD and working files. This is the fix for the tree; it does "
+        "NOT scope refs/stash, which is why the guard exists."))
+
+    rows.append((
+        ".codesight/ graphs", "SCOPED",
+        "per-directory",
+        "One graph per scanned root. A stale graph misleads its own readers only."))
+
+    rows.append((
+        "~/.gbrain-catalog/", "READ-MOSTLY",
+        "embedding catalog",
+        "Rebuilt by a maintenance job; queried read-only by sessions."))
+
+    return rows
+
+
+def report():
+    rows = survey()
+    order = {"SILENT": 0, "SILENT (empty)": 1, "ANNOUNCED": 2, "READ-MOSTLY": 3, "SCOPED": 4}
+    rows.sort(key=lambda r: order.get(r[1], 9))
+    print("  GLOBAL MUTABLE STATE - one session writes, another reads\n")
+    for name, klass, detail, why in rows:
+        print("  [%-13s] %s" % (klass, name))
+        print("      %s" % detail)
+        for line in _wrap(why, 86):
+            print("      %s" % line)
+        print()
+    silent = [r for r in rows if r[1].startswith("SILENT") and "empty" not in r[1]]
+    print("  %d of %d classified SILENT - a write changes another session with no signal."
+          % (len(silent), len(rows)))
+    print()
+    print("  ⭐ SHARED IS NOT THE HAZARD. `.shared/secrets/` is shared and safe because writing")
+    print("     it is a deliberate act. The hazard is state an ORDINARY-LOOKING command writes")
+    print("     on your behalf, which is why every SILENT row above needs a guard or a report,")
+    print("     not a note telling people to be careful.")
+    return 0
+
+
+def _wrap(s, n):
+    out, cur = [], ""
+    for w in s.split():
+        if len(cur) + len(w) + 1 > n:
+            out.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        out.append(cur)
+    return out
+
+
+def selftest():
+    rows = survey()
+    ok = len(rows) >= 8 and any(r[1].startswith("SILENT") for r in rows)
+    print("  [%s] survey returns %d row(s) and classifies at least one SILENT"
+          % ("OK " if ok else "FAIL", len(rows)))
+    # ⛔ Every SILENT row must name its guard or its report. A hazard class with no mechanism is
+    # the state this whole audit exists to end - listing it would just be a nicer note.
+    unguarded = [r[0] for r in rows if r[1] == "SILENT"
+                 and not any(k in r[3] for k in ("GUARDED", "SURFACED", "exact"))]
+    ok2 = not unguarded
+    print("  [%s] every SILENT row names a guard or a report%s"
+          % ("OK " if ok2 else "FAIL", "" if ok2 else ": %s" % ", ".join(unguarded)))
+    print("\nselftest %s" % ("PASSED" if (ok and ok2) else "FAILED"))
+    return 0 if (ok and ok2) else 1
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args()
+    sys.exit(selftest() if a.selftest else report())

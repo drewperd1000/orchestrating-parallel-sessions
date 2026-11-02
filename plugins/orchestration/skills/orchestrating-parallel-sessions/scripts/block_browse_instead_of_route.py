@@ -4,7 +4,7 @@
 <!-- subject: knowledge-routing -->
 <!-- route-tags: browse index cornerstone read hook pretooluse route instead of search -->
 
-\1The human, 2026-08-17: *"If every cornerstone page opens with 'this page is a browse view; to find
+The human, 2026-08-17: *"If every cornerstone page opens with 'this page is a browse view; to find
 one thing, run route.py', then it allows the agent to ignore it as a suggestion, not hard-wired
 law."*
 
@@ -39,6 +39,63 @@ MARK = os.path.join(tempfile.gettempdir(), "claude-browse-waved.json")
 BROWSE = re.compile(r"docs[/\\]knowledge[/\\](?!CREATE\.md)[a-z0-9-]+\.md$", re.I)
 
 
+# ⭐ A BASH READ IS THE SAME ACT AS A `Read`, AND IN THIS MODE IT IS THE COMMONER ONE.
+# `cat docs/knowledge/legal.md` sailed straight through while the identical `Read` was stopped -
+# confirmed by running the payload through every registered Bash hook. Bash is the preferred read
+# tool under bypass permissions, so the gate was blind on the path most sessions actually take.
+#
+# ⛔ THE VERBS ARE ENUMERATED, AND THAT IS A MEMBERSHIP TEST - the defect the principles skill
+# spends a whole section on. It is the right error to make HERE, and the direction is the reason:
+# a verb this list misses costs one un-nudged browse, while a false refusal on `git add` or on the
+# generator that WRITES these pages costs the guard its credibility, and a guard people override
+# by reflex takes the real refusals down with it. So the list only ever ADDS a nudge, never
+# removes one, and anything not on it passes.
+#
+# ⚠️ `grep`/`rg` ARE DELIBERATELY ABSENT. Searching inside one page is the opposite of the
+# failure this guards - the failure is reading a whole browse view instead of searching.
+READ_VERB = re.compile(
+    r"^\s*(?:sudo\s+)?(cat|bat|nl|head|tail|sed|less|more|type|Get-Content|gc)\b", re.I)
+SPLIT = re.compile(r"\|\||&&|[|;&\n]|\$\(")
+MD = re.compile(r"[^\s'\"<>|;&()]+\.md\b")
+
+
+def _candidate_paths(payload):
+    """Every path this tool call would READ - from `file_path`, or from a Bash command.
+
+    \u26d4 THE VERB AND THE PATH MUST BE IN THE SAME COMMAND, AND MY FIRST VERSION DID NOT
+    REQUIRE IT. It asked "is there a read verb anywhere?" and "is there a .md path anywhere?"
+    as two separate questions. The guard then refused my own first live command:
+
+        ... ; echo '{"tool_input":{"command":"cat docs/knowledge/x.md"}}' | python <shim> | head -2
+
+    `head -2` supplied the verb at the far end of the pipeline and the path came out of a JSON
+    string being echoed in the middle. **A guard matching a WORD for a ROLE** - written while
+    wiring the very step that names that defect. So the command is split at every separator and
+    only a segment whose FIRST word is a read verb contributes paths.
+
+    \u26d4 THE VERBS ARE STILL ENUMERATED, and that is still a membership test. It is the right
+    error HERE because of its direction: a verb this list misses costs one un-nudged browse,
+    while a false refusal on `git add docs/knowledge/x.md`, or on the generator that WRITES
+    these pages, costs the guard its credibility - and a guard overridden by reflex takes the
+    real refusals down with it. The list only ever ADDS a nudge.
+
+    \u26a0\ufe0f `grep`/`rg` ARE DELIBERATELY ABSENT. Searching inside one page is the opposite
+    of the failure this guards.
+    """
+    ti = payload.get("tool_input") or {}
+    fp = ti.get("file_path") or ti.get("notebook_path") or ""
+    if fp:
+        return [str(fp)]
+    cmd = str(ti.get("command") or "")
+    if not cmd:
+        return []
+    out = []
+    for seg in SPLIT.split(cmd):
+        if seg and READ_VERB.match(seg):
+            out += MD.findall(seg)
+    return out
+
+
 def _waved():
     try:
         with open(MARK, encoding="utf-8") as fh:
@@ -54,8 +111,12 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return 0
-    path = (payload.get("tool_input") or {}).get("file_path") or ""
-    if not path or not BROWSE.search(path.replace("\\", "/")):
+    path = ""
+    for cand in _candidate_paths(payload):
+        if BROWSE.search(str(cand).replace("\\", "/")):
+            path = str(cand)
+            break
+    if not path:
         return 0
 
     key = os.path.basename(path).lower()
@@ -87,13 +148,67 @@ def main():
     print("  failure this whole system was built to stop. The router never has a branch to",
           file=sys.stderr)
     print("  guess wrong.\n", file=sys.stderr)
-    print("  If you genuinely want to browse, re-issue this Read and it will pass.",
+    print("  If you genuinely want to browse, re-issue it and it will pass.",
           file=sys.stderr)
     return 2
 
 
+def _selftest():
+    """Drive it both ways. A guard that has never refused has not been tested, and one that
+    refuses everything is no better - so every FIRE case below has a PASS case beside it."""
+    FIRE = [
+        {"tool_input": {"command": "cat docs/knowledge/legal.md"}},
+        {"tool_input": {"command": "head -40 docs/knowledge/orchestration.md"}},
+        {"tool_input": {"command": "sed -n '1,50p' docs/knowledge/knowledge-routing.md"}},
+        {"tool_input": {"command": "ls -la && cat docs/knowledge/legal.md"}},
+        {"tool_input": {"command": "cat <your-workspace>/docs/knowledge/legal.md"}},
+        {"tool_input": {"file_path": "docs/knowledge/legal.md"}},
+    ]
+    PASS = [
+        {"tool_input": {"command": "git add docs/knowledge/legal.md"}},
+        {"tool_input": {"command": "python .shared/scripts/knowledge_pages.py --write"}},
+        {"tool_input": {"command": "ls docs/knowledge/"}},
+        {"tool_input": {"command": "grep -n bipa docs/knowledge/legal.md"}},
+        {"tool_input": {"command": "cat README.md"}},
+        {"tool_input": {"command": "cat docs/knowledge/CREATE.md"}},
+        {"tool_input": {"file_path": "docs/knowledge/CREATE.md"}},
+        {"tool_input": {"file_path": "ORCHESTRATOR-DECISIONS-o9.md"}},
+        {"tool_input": {}},
+        # \u2b50 THE ONE THAT CAUGHT THE FIRST VERSION, a minute after it was registered:
+        # `head -2` at the end of the pipeline supplied the verb, and the path came out of a
+        # JSON string being echoed in the middle.
+        {"tool_input": {"command":
+            "echo '{\"command\":\"cat docs/knowledge/legal.md\"}' | python hook.py | head -2"}},
+        {"tool_input": {"command": "echo cat docs/knowledge/legal.md"}},
+        {"tool_input": {"command": "python x.py && head -5 notes.md"}},
+    ]
+    bad = 0
+    for p in FIRE:
+        hit = [c for c in _candidate_paths(p)
+               if BROWSE.search(str(c).replace("\\", "/"))]
+        if not hit:
+            bad += 1
+            print("  [FAIL] should FIRE, saw nothing: %r" % (p["tool_input"],))
+    for p in PASS:
+        hit = [c for c in _candidate_paths(p)
+               if BROWSE.search(str(c).replace("\\", "/"))]
+        if hit:
+            bad += 1
+            print("  [FAIL] should PASS, would fire on %s: %r" % (hit, p["tool_input"]))
+    print("selftest: %d case(s), %d failure(s)" % (len(FIRE) + len(PASS), bad))
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     try:
         sys.exit(main())
-    except Exception:
+    except Exception as exc:
+        # fail OPEN - and say so, as additionalContext JSON on stdout (hook_context.py)
+        try:
+            from hook_context import crash_text, emit
+            emit("PreToolUse", crash_text("block_browse_instead_of_route.py", exc))
+        except Exception:
+            pass
         sys.exit(0)

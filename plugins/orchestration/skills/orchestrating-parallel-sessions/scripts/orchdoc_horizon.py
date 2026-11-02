@@ -1,5 +1,7 @@
 """Ratify a 30/60/90 vision, then notice - mechanically - when it is not happening.
 
+<!-- subject: orchestration -->
+
 WHY THIS EXISTS. A plan written for a first-time user ended with:
 
     ⚠️ If at 30 days you have three impressive prototypes and no working system, stop and go

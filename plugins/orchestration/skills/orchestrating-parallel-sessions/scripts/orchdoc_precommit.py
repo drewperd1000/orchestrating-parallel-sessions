@@ -2,6 +2,8 @@
 """
 Pre-commit guard: an OrchDoc may only be committed to the canonical branch.
 
+<!-- subject: orchestration -->
+
 WHY PREVENTION, NOT DETECTION
 -----------------------------
 o7, 2026-08-06: "Detection asks 'did this doc end up somewhere bad?' - a question about
@@ -17,7 +19,7 @@ WHY IT IS NEEDED AT ALL, given `orchdoc.py commit` already lands on main
 correct from ANY checked-out branch. Nothing forces anyone to use it. On 2026-08-06 o1 -
 the session that had just spent a day proving the two-states problem and had personally
 landed 174 uncommitted lines - committed its 189-line audit report to a feature branch
-with a plain `git commit`, within the hour.\1The human never saw it.
+with a plain `git commit`, within the hour. The human never saw it.
 
 Measured context, so the scale is honest: 216 OrchDoc commits reached `main` correctly
 and 14 went to a branch created 2026-08-01. This is a five-day regression, not a
@@ -33,6 +35,9 @@ lane committing product code on its own branch never sees this.
   install:  python .shared/scripts/orchdoc_precommit.py --install
   test:     python .shared/scripts/orchdoc_precommit.py --selftest
 
+A second mode, --refuse-shared-main, is its own line in the same hook: it refuses any commit on
+the shared checkout's `main` (see refuse_shared_main).
+
 NOTE ON DURABILITY: `.git/hooks/` is not versioned, so this does not survive a fresh
 clone. `--install` is idempotent and belongs in the workspace setup path. The guard is
 a backstop; `orchdoc.py commit` remains the road.
@@ -43,7 +48,13 @@ ASCII output only (Windows console rule). Exit 1 refuses the commit; exit 0 allo
 import os
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -51,8 +62,23 @@ try:
 except Exception:
     pass
 
-PROJECTS = Path(r"<your-workspace>")
+# The workspace's main checkout, from workspace_paths, never spelled out (o9L1015, 2026-10-03).
+# On the laptop it is the folder this line used to name, also when the commit is made in a
+# worktree, because MAIN_CHECKOUT is the parent of the git common dir. In a cloud VM it is the
+# clone. While this line named the laptop's folder, a cloud VM's OrchDoc check and
+# --refuse-shared-main ran git against a folder that does not exist there and passed every commit
+# without checking anything.
+try:
+    from workspace_paths import MAIN_CHECKOUT as PROJECTS
+except ImportError:  # a partial delivery must not take the tool down
+    PROJECTS = Path.home() / "<your-workspace>"
 CANONICAL_BRANCH = "main"
+#: The scripts folder the installed hook runs (its `S=` line), as sh spells it: the main
+#: checkout's, also for a commit made in a worktree, which runs the same hook file. On the laptop
+#: this is the text the line held when it was spelled out; cloud_session_start.py points it at
+#: the clone it installs the hook in.
+HOOK_SCRIPTS = (Path(PROJECTS) / ".shared" / "scripts").as_posix()
+_S_LINE = 'S="%s"\n' % HOOK_SCRIPTS
 # ⛔ THIS BODY HAD DRIFTED BEHIND THE HOOK ACTUALLY ON DISK, and the drift was invisible because
 # `install()` sees the string "orchdoc_precommit" in the existing file and returns "already
 # installed" without comparing anything. The live hook had been hand-extended to chain
@@ -62,12 +88,38 @@ CANONICAL_BRANCH = "main"
 # ⭐ A TEMPLATE THAT IS ONLY CONSULTED WHEN THE TARGET IS ABSENT IS NEVER CHECKED AGAINST IT.
 # That is the same shape as a hand-kept index: the copy people read and the copy that runs drift
 # apart silently, and the one that runs wins. `--check-hook` below now compares them.
+#
+# ⛔ A GUARD'S VERDICT IS ITS EXIT CODE, AND A FAILED PRINT USED TO CHANGE IT. o10, 2026-09-29:
+# `git commit ... 2>&1 | head -30` closed the pipe while stale_overwrite_guard.py printed
+# BLOCKED. The print failed, the guard's catch-all exited 0 (or Python exited 120 because it could
+# not flush), the hook refuses only on 9, and the refused commit landed (PWA 826e726e). Every
+# guard has that catch-all on purpose, because a crash must not block every commit, so the fix is
+# here and not in each guard: the hook holds a guard's output until the guard exits, then passes
+# it on. The exit code is settled before any line reaches the reader, and a print by the hook
+# that fails cannot change it. `test_hook_verdict_closed_pipe.py` drives every guard line.
+#
+# ⚠️ The guard lines stay `python "$S/<guard>"`, because `_invoked_guards` and two tests read
+# that shape, so inside the hook `python` IS this function. PYTHONUNBUFFERED keeps a guard's
+# stdout and stderr lines in the order it wrote them. UTF-8 because a guard's output now always
+# goes to a pipe, where Windows Python would encode cp1252 and crash, which here means allow, on
+# the first character outside it.
+VERDICT_FIRST = r"""# `python` below is this function. It holds a guard's output until the guard exits, so the
+# exit code, which is the verdict, cannot be changed by a reader that stopped reading early.
+trap '' PIPE
+python() {
+    OUT=$(PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 command python "$@" 2>&1)
+    RC=$?
+    [ -n "$OUT" ] && printf '%s\n' "$OUT" >&2
+    return $RC
+}
+"""
+
 HOOK_BODY = """#!/bin/sh
 # Installed by .shared/scripts/orchdoc_precommit.py - see that file for the reasoning.
 # Each guard exits 9 to REFUSE. Any other non-zero is a crash and must NOT block the commit.
-S="<your-workspace>/.shared/scripts"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+""" + _S_LINE + """TOP=$(git rev-parse --show-toplevel 2>/dev/null)
 
+""" + VERDICT_FIRST + """
 python "$S/orchdoc_precommit.py" --check || exit 1
 
 python "$S/knowledge_gate.py" --check
@@ -81,6 +133,35 @@ python "$S/owns_guard.py" --check
 python "$S/stale_overwrite_guard.py" "$TOP"
 [ $? -eq 9 ] && exit 1
 
+# the human, 2026-09-24: every process a tool launches must be invisible. Refuses a staged script under
+# .shared/scripts/ that launches a process without creationflags. Reads the committing tree's index.
+python "$S/check_no_window.py" --staged
+[ $? -eq 9 ] && exit 1
+
+# o9:W92, 2026-09-25: six test runs wrote into the shared checkout or ~/.claude because the tests
+# hardcoded those paths. Refuses a staged test_*.py that does so; sandbox_env.py is the fix.
+python "$S/check_test_isolation.py" --staged
+[ $? -eq 9 ] && exit 1
+
+# D64 Phase 1, 2026-10-02: a home folder spelled out in live code finds nothing in a cloud VM or on
+# a second computer. Reads only the lines this commit ADDS; workspace_paths.py is the fix. Starts in
+# warn mode (hook_mode.py, name check_home_paths): it prints and exits 0 until set to block.
+python "$S/check_home_paths.py" --staged
+[ $? -eq 9 ] && exit 1
+
+# o9 lane o9L1197, 2026-10-10: RULE-CODES-INDEX.md is generated from the script-checklist boxes.
+# Refuses a commit that stages a checklist (or the page) while the STAGED page does not match the
+# STAGED checklists. Fix: `python .shared/scripts/rule_codes_index.py --write`, stage the page.
+python "$S/rule_codes_index.py" --precommit
+[ $? -eq 9 ] && exit 1
+
+# 2026-09-24: a commit on the SHARED checkout's `main` stays there unpushed, and delivery can no
+# longer move `main` forward (it fell 709 commits behind). Keys on the committing tree's PATH, so a
+# worktree - which runs this same hook file - passes. The Bash-tool hook refuses the same commit
+# earlier; this covers every other way of committing.
+python "$S/orchdoc_precommit.py" --refuse-shared-main
+[ $? -eq 9 ] && exit 1
+
 exit 0
 """
 
@@ -88,7 +169,7 @@ exit 0
 def git(args, cwd=PROJECTS):
     try:
         p = subprocess.run(["git", "-C", str(cwd)] + args,
-                           capture_output=True, text=True, timeout=20)
+                           capture_output=True, text=True, timeout=20, creationflags=flags())
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except Exception:
         return 1, "", ""
@@ -136,6 +217,97 @@ def check():
     return 1
 
 
+# ---------------------------------------------------------------------------------------------
+# --refuse-shared-main: NO COMMIT ON THE SHARED CHECKOUT'S `main`, however it is made.
+#
+# ⛔ THE INCIDENT, 2026-09-24 (o1). o10's lanes committed straight onto the shared checkout's
+# `main` - three commits nobody pushed, one holding 8 PNGs that existed nowhere else. Nothing
+# lands on that `main` except by delivery, so once it held commits of its own it could not be
+# fast-forwarded: it fell 709 commits behind and every diff there read +133,773 / -50,616.
+# block_shared_tree_ops.py refuses such a commit when the Bash tool runs it; this refuses it
+# from a terminal, the PowerShell tool, an editor or a script.
+#
+# ⭐ IT KEYS ON THE PATH, because the hook FILE is shared: every worktree of this repo runs this
+# same `.git/hooks/pre-commit`, and a worktree's commit is the documented path. It refuses only
+# when the committing tree's top level IS the shared checkout and `main` is checked out there.
+# Product repos have their own hook body without this line, and even if one ran it, their top
+# level is not this path.
+#
+# ⭐ WHY IT LIVES HERE AND NOT IN A NEW FILE: this script is already in the hook and already in
+# the published skill. A new file named by the hook would print "can't open file" on every commit
+# in a published copy until the publisher shipped it, and shipping a guard needs a GUARDS.md
+# section in the skills repo. PROJECTS comes from workspace_paths since o9L1015 (2026-10-03), so in
+# a published copy, as in a cloud VM's clone, this mode guards that copy's own main checkout; it
+# used to name the laptop's folder, which a sanitised copy rewrote to a placeholder that never
+# matched. A cloud session that commits on `main` is refused too: BUILD-RULES.md rule 4 has it
+# commit only on its own branch.
+#
+# THE ESCAPE: SHARED_MAIN_COMMIT_OK="<why, 10 or more characters>" on that one command.
+# Without it the only way past is `git commit --no-verify`, which also switches off
+# stale_overwrite_guard, knowledge_gate, owns_guard and check_no_window for that commit - so a
+# narrow escape makes the deliberate exception the safer one to take. It prints on every use,
+# and a value too short to be a reason is refused like no value at all.
+# ---------------------------------------------------------------------------------------------
+
+SHARED_MAIN_ESCAPE = "SHARED_MAIN_COMMIT_OK"
+REFUSE = 9
+
+
+def _same_dir(a, b):
+    norm = lambda p: os.path.normcase(os.path.normpath(os.path.realpath(str(p))))  # noqa: E731
+    try:
+        return norm(a) == norm(b)
+    except (OSError, ValueError):
+        return False
+
+
+def refuse_shared_main(cwd=None):
+    """9 when this commit would land on the shared checkout's checked-out `main`, else 0.
+
+    git runs a pre-commit hook from the top of the committing working tree, so the tree is
+    read from the current directory - never from PROJECTS, which is the thing compared against.
+    Any doubt allows: a guard that cannot tell must not block a commit.
+    """
+    cwd = cwd or os.getcwd()
+    rc, top, _ = git(["rev-parse", "--show-toplevel"], cwd=cwd)
+    if rc != 0 or not top or not _same_dir(top, PROJECTS):
+        return 0
+    rc, head, _ = git(["symbolic-ref", "-q", "HEAD"], cwd=cwd)
+    if rc != 0 or head != "refs/heads/" + CANONICAL_BRANCH:
+        return 0
+    why = os.environ.get(SHARED_MAIN_ESCAPE, "").strip()
+    if len(why) >= 10:
+        print("[shared-main] ALLOWED by %s: %s" % (SHARED_MAIN_ESCAPE, why[:200]),
+              file=sys.stderr)
+        print("              This commit is on the shared checkout's `main`. Push it now, or"
+              " the next delivery cannot move `main` and will rescue it to origin.",
+              file=sys.stderr)
+        return 0
+    print("[shared-main] REFUSED: a commit on the SHARED checkout's `%s`." % CANONICAL_BRANCH,
+          file=sys.stderr)
+    print("              %s" % top, file=sys.stderr)
+    print("", file=sys.stderr)
+    print("    A commit here stays on this checkout's `main` and nowhere else. Nothing pushes it,",
+          file=sys.stderr)
+    print("    and once `main` holds a commit origin does not, delivery can no longer move it",
+          file=sys.stderr)
+    print("    forward. On 2026-09-24 three such commits had left it 709 commits behind.",
+          file=sys.stderr)
+    print("", file=sys.stderr)
+    print("    Commit in YOUR worktree instead, where the only files are yours:", file=sys.stderr)
+    print("      python .shared/scripts/worktrees.py --setup o<N>", file=sys.stderr)
+    print("    In a cloud session, commit on the session's own branch (BUILD-RULES.md rule 4).",
+          file=sys.stderr)
+    print("    An OrchDoc lands from anywhere with:", file=sys.stderr)
+    print("      python .shared/scripts/orchdoc.py commit --doc o<N> --commit", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("    Genuinely need this commit here, and will push it yourself right now? Put the",
+          file=sys.stderr)
+    print("    reason on the command:  %s=\"<why>\" git commit ..." % SHARED_MAIN_ESCAPE,
+          file=sys.stderr)
+    return REFUSE
+
+
 # ⛔ THE PRODUCT REPOS HAD A HOOK AND IT WAS BROKEN IN ALL SEVENTEEN, identically. Measured
 # 2026-09-08: every one carried ONE `python ...` line and THREE `[ $? -eq 9 ] && exit 1` lines
 # testing the exit status of nothing. `product-app`' copy opens mid-sentence - a comment
@@ -151,16 +323,27 @@ def check():
 # for the wrong repository. `knowledge_gate`, `owns_guard` and `stale_overwrite_guard` all
 # resolve their own repo via `git rev-parse --show-toplevel`, so they travel correctly.
 PRODUCT_GUARDS = ("knowledge_gate.py", "owns_guard.py", "stale_overwrite_guard.py")
-GUARD_SCRIPTS = ("orchdoc_precommit.py",) + PRODUCT_GUARDS
+# ⚠️ check_no_window.py and check_test_isolation.py are WORKSPACE-ONLY: they check staged files
+# under .shared/scripts/, a folder no product repo has, so in their chain they would check nothing.
+# check_home_paths.py (D64 Phase 1) reads the whole staged diff and could travel, but its skip list
+# names this workspace's history folders, so it is in the workspace hook only for now.
+#
+# ⚠️ "--refuse-shared-main" is a MODE of orchdoc_precommit.py, listed by its flag because the
+# audits below count `python ...<entry>` lines. Listing the script name again would find the
+# `--check` line and report this guard present in a hook that never runs it. Workspace-only too:
+# it only ever refuses at the shared checkout's path.
+GUARD_SCRIPTS = (("orchdoc_precommit.py",) + PRODUCT_GUARDS
+                 + ("check_no_window.py", "check_test_isolation.py", "check_home_paths.py",
+                    "rule_codes_index.py", "--refuse-shared-main"))
 
 PRODUCT_HOOK_BODY = """#!/bin/sh
 # Installed by .shared/scripts/orchdoc_precommit.py --install-all
 # Each guard exits 9 to REFUSE. Any other non-zero is a crash and must NOT block the commit.
 # orchdoc_precommit --check is absent on purpose: it is pinned to the workspace repo and would
 # answer for the wrong index here.
-S="<your-workspace>/.shared/scripts"
-TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+""" + _S_LINE + """TOP=$(git rev-parse --show-toplevel 2>/dev/null)
 
+""" + VERDICT_FIRST + """
 python "$S/knowledge_gate.py" --check
 [ $? -eq 9 ] && exit 1
 
@@ -200,6 +383,52 @@ def sibling_repos():
         if (child / ".git").is_dir():
             out.append(child)
     return out
+
+
+def memory_repo():
+    """The notes repo, which `sibling_repos()` structurally CANNOT reach.
+
+    ⛔ IT IS NOT UNDER THE WORKSPACE. `sibling_repos()` walks `PROJECTS.iterdir()`, and the
+    memory repo lives at `~/.claude/projects/<slug>/memory` - a different tree entirely. So this
+    was never a hook someone forgot to install: **no re-run of `--install-all` could ever have
+    reached it**, and `--check-hook --all` reported "every repo runs its full guard chain" while
+    the repo holding most of the notes ran nothing at all.
+
+    ⭐ THAT IS THE WORST SHAPE AN AUDIT CAN HAVE - a clean report whose corpus silently
+    excludes the thing being asked about. Same defect this file already records for the
+    seventeen product hooks: **a guard that is not installed reads, from every direction,
+    exactly like a guard that is passing.**
+
+    the human ruled it in on 2026-09-18 (o9:D38): *"In general, having gates that refuse improper
+    commits is critical to our operations structure, yes?"*
+
+    It takes PRODUCT_HOOK_BODY, not HOOK_BODY, for the reason recorded on PRODUCT_GUARDS:
+    `orchdoc_precommit --check` pins `git()` to `cwd=PROJECTS`, so run from here it would
+    inspect the WORKSPACE's index and answer for the wrong repository. The other three guards
+    each resolve their own repo, so they travel correctly.
+
+    ⚠ Returns a LIST, and an empty one when the path is absent or is not a real repo: a
+    machine without the notes checkout must not fail the install for every other repo.
+    """
+    try:                              # lazy: --check runs on every commit and never needs this
+        from workspace_paths import MEM
+    except Exception:
+        return []
+    p = Path(MEM)
+    return [p] if (p / ".git").is_dir() else []
+
+
+def _rows():
+    """(repo, hook body) for EVERY repo the installer covers - the one list, built once.
+
+    ⛔ `install_all()` AND `check_hook(--all)` EACH BUILT THIS LINE SEPARATELY, which is the
+    drift this file exists to complain about: the installer and the auditor could disagree about
+    which repos exist, and the auditor would then certify a set the installer never wrote to.
+    One function, so "what gets installed" and "what gets checked" cannot come apart.
+    """
+    return ([(PROJECTS, HOOK_BODY)]
+            + [(r, PRODUCT_HOOK_BODY) for r in sibling_repos()]
+            + [(r, PRODUCT_HOOK_BODY) for r in memory_repo()])
 
 
 def _invoked_guards(text):
@@ -260,7 +489,7 @@ def check_hook(all_repos=False):
     """
     if all_repos:
         bad = 0
-        rows = [(PROJECTS, HOOK_BODY)] + [(r, PRODUCT_HOOK_BODY) for r in sibling_repos()]
+        rows = _rows()
         for repo, body in rows:
             status, detail = _audit_one(repo, body)
             if status in ("broken", "missing"):
@@ -308,6 +537,29 @@ def _check_hook_one():
     return 0
 
 
+def _backup(target, cur):
+    """Save `cur`, the hook about to be replaced, beside `target`, never over an earlier backup.
+
+    ⛔ Every replaced hook used to go to one name, `pre-commit.pre-orchdoc`. The first install
+    put each repo's hand-written hook there, and the next reinstall would have written the
+    previous orchdoc hook over it: in 17 of 19 repos on 2026-09-29 (o9, W111), with nothing
+    said. The first backup now keeps its name for good, and a later one gets a dated name.
+    Returns the backup's path.
+    """
+    backup = target.with_suffix(".pre-orchdoc")
+    if backup.exists():
+        if backup.read_text(encoding="utf-8", errors="replace") == cur:
+            return backup
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = target.with_name("%s.pre-orchdoc.%s" % (target.name, stamp))
+        n = 1
+        while backup.exists():
+            n += 1
+            backup = target.with_name("%s.pre-orchdoc.%s-%d" % (target.name, stamp, n))
+    backup.write_text(cur, encoding="utf-8")
+    return backup
+
+
 def install_one(repo, body):
     """Write `body` as repo's pre-commit hook, backing up anything different. (status, detail)."""
     hooks = _hooks_dir(repo)
@@ -321,8 +573,7 @@ def install_one(repo, body):
         if _same(cur, body):
             return "ok", "already current"
         status, why = _audit_one(repo, body)
-        backup = target.with_suffix(".pre-orchdoc")
-        backup.write_text(cur, encoding="utf-8")
+        backup = _backup(target, cur)
         detail = "replaced (%s); previous saved as %s" % (why, backup.name)
     target.write_text(body, encoding="utf-8", newline="\n")
     try:
@@ -339,7 +590,7 @@ def install_all():
     having one: each was written separately, three of them lost guard invocations, and no
     command existed that could have said so.
     """
-    rows = [(PROJECTS, HOOK_BODY)] + [(r, PRODUCT_HOOK_BODY) for r in sibling_repos()]
+    rows = _rows()
     for repo, body in rows:
         status, detail = install_one(repo, body)
         print("  [%-8s] %-42s %s" % (status, repo.name, detail))
@@ -372,12 +623,10 @@ def install():
             print("[note] the installed hook DIFFERS from the template.")
             if missing:
                 print("       it is missing: %s" % ", ".join(missing))
-            backup = target.with_suffix(".pre-orchdoc")
-            backup.write_text(cur, encoding="utf-8")
+            backup = _backup(target, cur)
             print("[note] previous hook backed up to %s" % backup.name)
         else:
-            backup = target.with_suffix(".pre-orchdoc")
-            backup.write_text(cur, encoding="utf-8")
+            backup = _backup(target, cur)
             print("[note] existing pre-commit backed up to %s" % backup.name)
     target.write_text(HOOK_BODY, encoding="utf-8")
     try:
@@ -386,6 +635,8 @@ def install():
         pass
     print("[ok] installed: %s" % target)
     print("     OrchDoc commits are now refused on any branch but '%s'."
+          % CANONICAL_BRANCH)
+    print("     Any commit on the shared checkout's '%s' is refused (--refuse-shared-main)."
           % CANONICAL_BRANCH)
     return 0
 
@@ -422,6 +673,8 @@ if __name__ == "__main__":
             sys.exit(check_hook(all_repos="--all" in sys.argv))
         if arg == "--selftest":
             sys.exit(selftest())
+        if arg == "--refuse-shared-main":
+            sys.exit(refuse_shared_main())
         sys.exit(check())
     except Exception:
         sys.exit(0)   # fail open: a broken guard must never block a commit

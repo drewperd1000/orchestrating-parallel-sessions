@@ -54,6 +54,11 @@ Exit 9 refuses. Exit 0 allows. Fails OPEN on any internal error.
 import argparse
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 from pathlib import Path
 
@@ -81,7 +86,7 @@ def _root():
     """
     try:
         p = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=10, creationflags=flags())
         if p.returncode == 0 and p.stdout.strip():
             return pathlib.Path(p.stdout.strip())
     except Exception:
@@ -92,13 +97,63 @@ def _root():
 ROOT = _root()
 
 
+def _text(b):
+    """Bytes from git as text, with line endings translated the way text=True translated them.
+
+    The working copy is read with read_text(), which also translates, so both sides of the
+    comparison in weakened() still split into the same lines.
+    """
+    return b.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def git(*a, cwd=None):
+    """(rc, stdout, stderr) as text.
+
+    ⛔ BYTES IN, DECODED HERE (o9, 2026-09-24, reported by o10 from lane o10L128). This used
+    text=True, which decodes inside subprocess's reader THREAD. `git show HEAD:<file>` on a
+    PNG hands that thread byte 0x89 - the first byte of every PNG - and the thread dies with
+    `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x89`, printing a traceback on every
+    commit that modified a screenshot. The commit still went through only because the main
+    thread then failed too and the except below returned (1, "", "").
+
+    Binary files are now skipped before anything reads them (see binary_staged). Decoding with
+    errors="replace" here is for the other case: a TEXT file that is not valid UTF-8, which
+    git's numstat calls text and which must not print the same traceback.
+    """
     try:
         p = subprocess.run(["git", "-C", str(cwd or ROOT)] + list(a),
-                           capture_output=True, text=True, timeout=20)
-        return p.returncode, p.stdout, p.stderr
+                           capture_output=True, timeout=20, creationflags=flags())
+        return p.returncode, _text(p.stdout), _text(p.stderr)
     except Exception:
         return 1, "", ""
+
+
+def binary_staged():
+    """Staged paths git itself calls binary: `-` in both columns of `git diff --numstat`.
+
+    ⭐ GIT'S OWN TEST, not a second one. It is the NUL-in-the-first-8000-bytes check plus any
+    `binary` / `-diff` in .gitattributes, so this agrees with what `git diff` shows the author.
+    A binary file cannot carry promise text, and reading one as UTF-8 feeds the check garbage.
+    """
+    rc, out, _ = git("diff", "--cached", "--numstat", "-z")
+    if rc != 0:
+        return set()
+    found, toks, i = set(), out.split("\0"), 0
+    while i < len(toks):
+        parts = toks[i].split("\t")
+        if len(parts) != 3:
+            i += 1
+            continue
+        added, deleted, path = parts
+        # With -z a rename or copy leaves the path field empty and puts the old and new paths
+        # in the next two fields.
+        if path == "":
+            paths, i = toks[i + 1:i + 3], i + 3
+        else:
+            paths, i = [path], i + 1
+        if added == "-" and deleted == "-":
+            found.update(p for p in paths if p)
+    return found
 
 
 def regions(text):
@@ -203,7 +258,10 @@ def check(msg_path=None):
         except OSError:
             ruling = None
     bad = []
+    binary = binary_staged()
     for rel in staged:
+        if rel in binary:
+            continue                                          # no promise text in a binary
         rc, old, _ = git("show", ":1:%s" % rel)               # merge base, if any
         rc2, head, _ = git("show", "HEAD:%s" % rel)
         if rc2 != 0:
@@ -219,8 +277,9 @@ def check(msg_path=None):
 
     if not bad:
         n = sum(1 for rel in staged
-                if git("show", "HEAD:%s" % rel)[1] and OPEN_RE.search(git("show",
-                                                                          "HEAD:%s" % rel)[1]))
+                if rel not in binary
+                and git("show", "HEAD:%s" % rel)[1] and OPEN_RE.search(git("show",
+                                                                           "HEAD:%s" % rel)[1]))
         if n:
             # ⛔ NARROW ON PURPOSE. "none weakened" asserted a clean bill of health for a check
             # that reads text survival, not meaning. The pass line is read by someone about to
@@ -281,10 +340,22 @@ HOOK_BODY = """#!/bin/sh
 # commitment_guard - installed by commitment_guard.py --install
 # ⛔ commit-msg, NEVER pre-commit: pre-commit runs before the message exists, so the
 #    documented ruling escape is unreachable from there. See the module docstring.
+%s
 python "%s" "$1"
 [ $? -eq %d ] && exit 1
 true
 """
+
+
+def hook_body(script):
+    """The commit-msg hook text for `script`.
+
+    It carries orchdoc_precommit.VERDICT_FIRST, the one copy of the block that holds a guard's
+    output until it exits: a reader that stops early (`git commit ... | head`) made the refusal
+    print fail and the refused commit land (o10, 2026-09-29).
+    """
+    from orchdoc_precommit import VERDICT_FIRST   # lazy: the hook run itself never needs it
+    return HOOK_BODY % (VERDICT_FIRST.rstrip("\n"), script, REFUSE)
 
 
 def install():
@@ -295,7 +366,7 @@ def install():
     disagreeing, which is exactly the state a single hook was chosen to avoid.
     """
     script = str((pathlib.Path(__file__)).resolve())
-    body = HOOK_BODY % (script.replace("\\", "/"), REFUSE)
+    body = hook_body(script.replace("\\", "/"))
     repos = [WS] + [d for d in WS.iterdir() if d.is_dir() and (d / ".git").is_dir()]
     n_add = n_strip = 0
     for r in repos:
@@ -314,6 +385,12 @@ def install():
         print("  [OK ] %s" % r.name)
     print("  installed on commit-msg in %d repo(s); stripped a stale pre-commit line in %d"
           % (n_add, n_strip))
+    if n_add == 0:
+        # o9, 2026-09-29: run from a worktree, WS is the worktree, whose .git is a file, so this
+        # found no repo, wrote nothing and still exited 0. Nothing installed is a failure.
+        sys.stderr.write("  [FAIL] no repo with a .git/hooks folder under %s. Run it from the "
+                         "main checkout, or set CLAUDE_WORKSPACE to it.\n" % WS)
+        return 2
     return 0
 
 
@@ -404,7 +481,8 @@ def selftest():
             if "commitment_guard" not in line or line.strip().startswith("#"):
                 continue
             cmd = line.split(";")[0].strip()
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                               creationflags=flags())
             checked += 1
             # exit 2 is argparse refusing the arguments - the invocation is wrong, and the
             # hook's `|| true` tail would turn that into a silent approval.

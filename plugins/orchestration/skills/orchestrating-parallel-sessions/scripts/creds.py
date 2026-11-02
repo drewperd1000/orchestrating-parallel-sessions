@@ -1,5 +1,7 @@
 """What credentials exist, and does this one actually work - asked so a wrong answer is hard.
 
+<!-- subject: secrets-and-access -->
+
 TWO RECURRING FAILURES, and they are opposite mistakes about the same fact.
 
   1. "THE MCP IS DOWN, SO I HAVE NO ACCESS."
@@ -59,6 +61,11 @@ import os
 import pathlib
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 
 try:
@@ -68,7 +75,11 @@ except Exception:
     pass
 
 HERE = pathlib.Path(__file__).resolve().parent
-SECRETS = HERE.parent / "secrets"
+# The main checkout's secrets folder on any machine (o9 W139); a worktree has none of its own.
+try:
+    from workspace_paths import SECRETS_DIR as SECRETS
+except Exception:  # a partial delivery: the folder beside this one, as before
+    SECRETS = HERE.parent / "secrets"
 
 WORKS = "WORKS"
 LIKELY_BAD = "LIKELY-BAD"          # the correct probe ran and the vendor rejected it
@@ -96,7 +107,7 @@ def curl(args, timeout=25):
     distinguish a bad token from a blocked request."""
     try:
         r = subprocess.run(["curl", "-s", "-S", "--max-time", str(timeout)] + args,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, creationflags=flags())
         return r.returncode, r.stdout, r.stderr
     except FileNotFoundError:
         return None, "", "curl not installed"
@@ -121,7 +132,7 @@ def probe_claude_headless():
     try:
         r = subprocess.run(["claude", "-p", "Reply with exactly: OK", "--model", "haiku"],
                            capture_output=True, text=True, timeout=90,
-                           env=env, stdin=subprocess.DEVNULL)
+                           env=env, stdin=subprocess.DEVNULL, creationflags=flags())
     except FileNotFoundError:
         return CANNOT_TELL, "claude CLI not on PATH"
     except subprocess.TimeoutExpired:
@@ -136,7 +147,7 @@ def probe_claude_headless():
     try:
         r2 = subprocess.run(["claude", "-p", "Reply with exactly: OK", "--model", "haiku"],
                             capture_output=True, text=True, timeout=90,
-                            env=env, stdin=subprocess.DEVNULL)
+                            env=env, stdin=subprocess.DEVNULL, creationflags=flags())
     except Exception as e:
         return CANNOT_TELL, str(e)[:110]
     if "OK" in (r2.stdout or ""):

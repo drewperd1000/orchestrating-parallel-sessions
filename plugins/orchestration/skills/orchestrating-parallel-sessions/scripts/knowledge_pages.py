@@ -19,7 +19,8 @@ complete. So the SHAPE is authored (`knowledge_subjects.json`) and the CONTENT i
 artifact whose tags or FACETS intersect a node. Adding a node is a deliberate act; filling one
 is not.
 
-⛔ THE FIRST EIGHT SUBJECTS WERE DERIVED FROM TAG FREQUENCY, WHICH IS A MEASURE OF THE PAST.\1The human, 2026-08-17: *"These are some that I would expect, but not necessarily the organized
+⛔ THE FIRST EIGHT SUBJECTS WERE DERIVED FROM TAG FREQUENCY, WHICH IS A MEASURE OF THE PAST.
+The human, 2026-08-17: *"These are some that I would expect, but not necessarily the organized
 taxonomy I would expect. That taxonomy feels a bit shotgun."* A taxonomy is a claim about the
 business; counting what happened to get written agrees with that only by accident. The tree is
 now business-shaped, and a node must pass four tests before it earns a place - stated in
@@ -55,6 +56,11 @@ import sys
 # which is why none of this shipped anywhere until 2026-08-13.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
+try:
+    from no_window import flags  # noqa: E402
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -64,17 +70,139 @@ except Exception:
 OUT = WS / "docs" / "knowledge"
 from mentions import ROUTE_TAGS as TAG_RE  # noqa: E402 - ONE definition, see that module
 from mentions import declaration_region, declares, outside_fences  # noqa: E402
+import private_folders  # noqa: E402 - the folders outsiders write, ONE definition
+import leftover_files  # noqa: E402 - untracked files origin/main deleted, ONE definition
 
 # ⛔ ONE DEFINITION OF THE OWNERSHIP MARKER, IMPORTED BY EVERY READER. A marker format is a
 # contract between every tool that reads it, and three copies of a regex is three chances to
 # drift. `route.py` and `knowledge_gate.py` import this rather than carrying their own.
 #
-# ⭐ BOTH SPELLINGS ARE READ; `cornerstone` IS THE ONE TO WRITE.\1The human's word for a node is
+# ⭐ BOTH SPELLINGS ARE READ; `cornerstone` IS THE ONE TO WRITE. The human's word for a node is
 # cornerstone; the marker already deployed on nine artifacts and taught in CREATE.md says
 # `subject`. Rewriting nine files would be cheap, but the taught vocabulary lives in four places
 # and a rename that misses one is a silent un-declaration - the document keeps a line that looks
 # like a declaration and expands to nothing. An alternation costs nothing and cannot miss.
 MARKER_RE = re.compile(r"<!--\s*(?:cornerstone|subject):\s*([a-z0-9-]+)\s*-->")
+
+# ⭐ A SOURCE OF TRUTH DECLARES ITSELF, IN THE SAME PLACE AND THE SAME SHAPE AS ITS CORNERSTONE.
+# `<!-- sot: legal -->` says "for this domain, this document is authoritative". The map is then a
+# VIEW over the declarations, which is the human's index rule: never a hand-kept list.
+#
+# ⛔ THE DOMAIN IS NOT THE CORNERSTONE. A cornerstone is where a document is FILED; a SOT
+# domain is what it is authoritative FOR, and one cornerstone can hold several (legal holds the
+# privacy SOT; research-and-science holds both the science bank and the sourcing hub). Keeping
+# them separate is what lets the duplicate check mean something.
+SOT_RE = re.compile(r"<!--\s*sot:\s*([a-z0-9-]+)\s*-->")
+
+
+def sot_of(text, path=None):
+    """The domain this artifact DECLARES itself the source of truth for, or None.
+
+    ⛔ VIA `declares`, NOT A BARE SEARCH - and the first version got this wrong in the most
+    on-the-nose way available. It used `SOT_RE.search` over the whole file, so THIS FILE
+    matched its own docstring example and the generator listed ITSELF as the source of truth for
+    `legal`. **A documented example counted as an instance** - the third time in one day, after
+    a docstring re-arming the check it documents and a marker table counting its own rows.
+
+    `declares` answers the question the same way for every reader: inside the declaration
+    region, outside fences.
+    """
+    return declares(text or "", SOT_RE, path) or None
+
+# ⛔ THE MAP READ WORKING-TREE FILES, so every row was a fact about one machine at one moment
+# rather than about the repository. A row backed by a committed marker and a row backed by an
+# unsaved edit were INDISTINGUISHABLE in the output.
+#
+# ⛔ AND IT HAS ALREADY BEEN WRONG TWICE, SILENTLY BOTH TIMES. The human found two rows resting on
+# uncommitted edits in repos he does not own (o9:T8.n1, 2026-09-18: *"This needs to be guarded
+# against, ESPECIALLY with any SOT"*), and one of them was the half that makes the science
+# duplicate visible - without it the map reports ONE claimant and looks clean, which is the
+# exact state the duplicate check exists to prevent. o10 found the other, and how they found it
+# is the argument for this code: `release.mjs` refused to run with DIRTY_TREE, a gate that knows
+# nothing about sot markers and was looking for something else entirely.
+#
+# ⭐ TWO CATCHES, ZERO OF THEM BY THE INSTRUMENT. o10's words: *"a check that finds a defect by
+# side effect will not find the next one."*
+#
+# The ref is the repo's own default branch, resolved per artifact, because the corpus spans
+# several repos (the workspace plus the nested product repos) and each has its own.
+_SOT_STATE_CACHE = {}
+
+
+def _git(args, cwd):
+    import subprocess
+    try:
+        r = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True,
+                           timeout=30, creationflags=flags())
+    except (OSError, ValueError):
+        return None
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.decode("utf-8", "replace")
+
+
+def _default_ref(root):
+    """The repo's default remote branch, as a ref that resolves here."""
+    if root in _SOT_STATE_CACHE:
+        return _SOT_STATE_CACHE[root]
+    ref = None
+    out = _git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], root)
+    if out and out.strip():
+        ref = out.strip().replace("refs/remotes/", "", 1)
+    if not ref:
+        for cand in ("origin/main", "origin/master"):
+            if _git(["rev-parse", "--verify", "--quiet", cand + "^{commit}"], root):
+                ref = cand
+                break
+    _SOT_STATE_CACHE[root] = ref
+    return ref
+
+
+def committed_sot(path, domain):
+    """Does the DEFAULT BRANCH's copy of this file declare the same sot domain?
+
+    Returns (state, detail) where state is "committed", "uncommitted" or "unknown".
+
+    ⭐ IT CALLS `sot_of` ON THE COMMITTED BLOB rather than re-deriving the marker with a
+    regex. One reader, two texts. A second reader of this marker is the contract defect
+    `memory/marker_format_is_a_contract.md` is about, and `sot_of`'s own docstring records
+    what a bare search did here: it matched a docstring EXAMPLE and listed the generator
+    itself as the source of truth for `legal`.
+
+    ⛔ "unknown" IS NOT "fine". An answer this cannot get is reported, never swallowed - the
+    whole defect being fixed is a row that looks settled while resting on nothing.
+    """
+    p = pathlib.Path(path)
+    root = _git(["rev-parse", "--show-toplevel"], p.parent)
+    if not root or not root.strip():
+        return "unknown", "not inside a git repository"
+    root = pathlib.Path(root.strip())
+    ref = _default_ref(root)
+    if not ref:
+        return "unknown", "no origin/HEAD, origin/main or origin/master in %s" % root.name
+    try:
+        rel = p.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return "unknown", "cannot express the path relative to %s" % root.name
+    blob = _git(["show", "%s:%s" % (ref, rel)], root)
+    if blob is None:
+        return "uncommitted", "no such file on %s - the artifact itself is uncommitted" % ref
+    if sot_of(blob, path) == domain:
+        return "committed", ref
+    return "uncommitted", "the marker is absent from %s, so it exists only in a working tree" % ref
+
+
+def sot_states(arts):
+    """{id(artifact): (state, detail)} for the artifacts that DECLARE - and only those.
+
+    One git call or three per declaring artifact, of which there are a handful; running this
+    over the whole ~1000-artifact corpus would cost a process per file to be told "no marker".
+    """
+    return {id(a): committed_sot(a["path"], a["sot"])
+            for a in arts if a.get("sot")}
+
 
 # ⛔ A MARKER INSIDE A CODE FENCE IS AN EXAMPLE, NOT A CLAIM - the same distinction route.py
 # already draws for miss receipts, and for the identical reason: ANY doc that TEACHES a marker
@@ -132,7 +260,7 @@ CORNERSTONES = _load_tree()
 # taxonomy the map is lying. That is the drift the "an index must be generated" rule exists to
 # stop, arriving through a side door.
 #
-# ⭐ So the vendor breakdown is GENERATED into this node's page from the facet table.\1The human gets
+# ⭐ So the vendor breakdown is GENERATED into this node's page from the facet table. The human gets
 # the shape he asked for and nobody maintains it: adding a platform to the vocabulary adds its
 # row on the next run. Capabilities (secrets, deploys, backup, tooling) stay as authored children
 # because they cut ACROSS vendors and so cannot be expressed as vendor sections at all.
@@ -187,8 +315,11 @@ def owner_of(text):
     return m.group(1) if m else None
 
 
-def harvest():
-    """Every artifact carrying route-tags, a facet, or an ownership marker.
+def harvest(base=None, skipped=None):
+    """Every artifact carrying route-tags, a facet, or an ownership marker, less the LEFTOVERS:
+    untracked files whose path origin/main's history deleted (leftover_files.py). `base` and
+    `skipped` mean what they mean for dev_docs_index.harvest: the land step's pinned commit
+    (strict), or None (origin/main; everything kept when the test cannot run, as before).
 
     ⭐ FACETS CARRY THE MASS. Measured 2026-08-17: 49 artifacts carry route-tags and NINE carry
     an ownership marker, but 182 carry a platform/access/component facet. Membership built from
@@ -246,7 +377,7 @@ def harvest():
     # here twice is what broke the cornerstone sheet. Measured 2026-08-17: this harvester
     # reached 198 artifacts while route.py reached 1,326, and NEITHER entered a product repo.
     # The candidate sheet built from the 198 was judging 15% of the corpus while reading as a
-    # survey of all of it.\1The human: *"the referenced docs were only just barely better than
+    # survey of all of it. The human: *"the referenced docs were only just barely better than
     # randomly assigned."*
     #
     # ⭐ The one exclusion this store still ASKS for is a declared slice of that enumeration,
@@ -254,12 +385,44 @@ def harvest():
     # source puts a middleman in front of the answer. (Voice notes used to be the second ask;
     # they are now excluded for every consumer - the human ruled them out of this process on
     # 2026-08-17.) Both are rows in corpus.EXCLUSIONS, with counts, where a reader sees them.
+    # ⛔ A TOMBSTONED DOC IS NOT A LIVE ENTRY, AND LISTING IT IS THE FAILURE THE INDEX RULE NAMES.
+    # Measured 2026-09-17: four generated pages carried a row for `LEGAL-CLAIMS-SOT.md` AFTER it
+    # was superseded - and once the replacement landed, `legal.md` listed BOTH, side by side, with
+    # nothing saying which was current. An index whose whole value is being current was offering
+    # the reader a dead document and a live one as equals.
+    #
+    # ⭐ THE SHAPE IS IMPORTED, NEVER RE-WRITTEN. `knowledge_gate.TOMBSTONE_OPEN` is the contract,
+    # and its own docstring says it is imported by anything that reads a tombstone. A second
+    # regex here would be a second implementation of one format, which is how a marker format
+    # silently stops meaning the same thing to two readers.
+    #
+    # ⚠️ THIS REMOVES IT FROM THE MAP, NOT FROM THE CORPUS. `route.py` still finds the old words
+    # and forwards to the replacement, which is the entire point of keeping the text. What is
+    # withdrawn is only the claim "here is a document about this subject".
+    try:
+        from knowledge_gate import TOMBSTONE_OPEN
+    except Exception:                     # never let a decoration break the map
+        TOMBSTONE_OPEN = None
+
     from corpus import files as corpus_files
     out = []
+    tombstoned = []
+    private = 0
     for kind, p in corpus_files(include_generated=False):
+        # ⛔ NEVER READ: a file under a folder named app-feedback or email_briefing holds text
+        # an outsider wrote, and corpus.py lists the whole memory store, the email briefing's
+        # folder included. Dropped here BEFORE it is opened, and counted, never named
+        # (o9:W149 review fix 2; private_folders.py is the one definition).
+        if private_folders.has_private_part(p):
+            private += 1
+            continue
         try:
             t = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
+            continue
+        # A receipt, not a silent drop: the count is printed, so a page that shrinks says why.
+        if TOMBSTONE_OPEN is not None and TOMBSTONE_OPEN.search(t):
+            tombstoned.append(p)
             continue
         # ⛔ A DECLARATION IS NOT "A MARKER NEAR THE TOP". This read was `[:8000]`, route.py's
         # was 3000 and knowledge_gate's 4000, so one doc could be routable and absent from the
@@ -273,9 +436,28 @@ def harvest():
         # changes what they mean rather than fixing where they were found.
         fac = facet_words(t[:8000])
         owner = owner_of(t)
-        if tags or fac or owner:
+        sot = sot_of(t, p)
+        if tags or fac or owner or sot:
             out.append({"kind": kind, "path": p, "tags": tags, "facets": fac,
-                        "owner": owner})
+                        "owner": owner, "sot": sot})
+    if tombstoned:
+        print("   %d tombstoned artifact(s) excluded from the map (route.py still forwards them):"
+              % len(tombstoned))
+        for p in tombstoned:
+            print("      %s" % p.name)
+    if private:
+        print("   %d file(s) under a folder named %s skipped unread (outsiders' text)"
+              % (private, " or ".join(private_folders.NAMES)))
+    # ⛔ A LEFTOVER IS NOT AN ARTIFACT (o9:W149, o9's ruling of 2026-10-03). The file list comes
+    # from corpus.py, which stays as it is, so leftovers are dropped here, after the harvest:
+    # a doc deleted or moved on origin/main that deliver.py left on disk would otherwise come
+    # back as a page entry, and in every count on INDEX.md.
+    left = []
+    out = leftover_files.drop(out, WS, base, left)
+    if left:
+        print(leftover_files.note(len(left)))
+    if skipped is not None:
+        skipped.extend(left)
     return out
 
 
@@ -448,6 +630,78 @@ def render_index(arts):
     if bad:
         L += ["## Declarations naming a node that does not exist", ""]
         L += ["- `%s` in `%s`" % (s, n) for s, n in bad]
+        L += [""]
+    L += render_sot_map(arts)
+    return L
+
+
+def sot_rows(arts):
+    """[(domain, [artifacts])] - the declarations, grouped. A domain with two claimants is the
+    finding this exists to surface."""
+    by = {}
+    for a in arts:
+        if a.get("sot"):
+            by.setdefault(a["sot"], []).append(a)
+    return sorted(by.items())
+
+
+def render_sot_map(arts):
+    """The sources of truth, as a VIEW over what each one declares about itself.
+
+    ⭐ WHY IT LIVES IN THE KNOWLEDGE MAP AND NOT IN ITS OWN FILE. A source of truth is the
+    document you read FIRST about a subject, which is what a cornerstone already means. This is
+    the cornerstone tree with one added assertion - **and this one is authoritative** - so a
+    second tree would only be something to keep in step with the first.
+    """
+    rows = sot_rows(arts)
+    L = ["", "---", "", "## Sources of truth", "",
+         "**Generated from a `<!-- sot: <domain> -->` marker declared ON each document.** For "
+         "these subjects there is ONE authoritative document, and every other mention is a "
+         "consumer of it. If what you need is not here, no document has claimed the title - "
+         "which is a finding, not a gap.", "",
+         "⚠️ **Run the generator from the FULL checkout, never a worktree.** A worktree "
+         "holds only tracked files and does not contain the nested product repos, so "
+         "regenerating there silently DROPS rows - measured at 4 lost across 5 pages before "
+         "this note existed. The corpus reaches 996 artifacts from the main checkout and 801 "
+         "from a worktree.", ""]
+    if not rows:
+        L += ["_No document declares itself a source of truth yet._", ""]
+        return L
+    states = sot_states(arts)
+    _MARK = {"committed": "committed",
+             "uncommitted": "\u26d4 **UNCOMMITTED**",
+             "unknown": "\u26a0\ufe0f unknown"}
+    L += ["| domain | the source of truth | filed under | marker |",
+          "|---|---|---|---|"]
+    for domain, group in rows:
+        for a in group:
+            st, _why = states.get(id(a), ("unknown", "not checked"))
+            L.append("| `%s` | %s | %s | %s |"
+                     % (domain, _link(a), a.get("owner") or "-", _MARK[st]))
+
+    # ⛔ LOUD, AND ABOVE THE DUPLICATES BLOCK. An uncommitted marker is worse than a duplicate:
+    # a duplicate is visible and wrong, an uncommitted one DISAPPEARS and takes its row with it,
+    # leaving a map that looks clean. The human's "ESPECIALLY with any SOT" is that priority order.
+    bad = [(d, a, states[id(a)]) for d, g in rows for a in g
+           if states.get(id(a), ("unknown",))[0] != "committed"]
+    if bad:
+        L += ["", "\u26d4 **%d row(s) rest on a marker that is NOT committed on its repo's "
+              "default branch.** Discard that working-tree edit and the row disappears with "
+              "no error anywhere - and if the row was one of two claimants, what is left "
+              "reports a single source of truth and looks correct. Commit the marker."
+              % len(bad), ""]
+        for d, a, (st, why) in bad:
+            L.append("- `%s`: %s - %s (%s)" % (d, _link(a), _MARK[st], why))
+        L += [""]
+
+    dupes = [(d, g) for d, g in rows if len(g) > 1]
+    if dupes:
+        L += ["", "⛔ **%d domain(s) have MORE THAN ONE claimant.** Two documents both "
+              "asserting the title for one subject is the sprawl a source of truth exists to "
+              "end, and until it is resolved a reader landing on either has no way to know the "
+              "other exists." % len(dupes), ""]
+        for d, g in dupes:
+            L.append("- `%s`: %s" % (d, ", ".join(_link(a) for a in g)))
         L += [""]
     return L
 

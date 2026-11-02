@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Emit a correct, self-describing local timestamp. Never type one by hand.
 
+<!-- subject: orchestration -->
+
 THE FOOTGUN (the human named it, 2026-08-06)
 ---------------------------------------
 o9 wrote 22 attestation timestamps as `2026-08-07T02:30:00-07:00`. Today was the 6th. The

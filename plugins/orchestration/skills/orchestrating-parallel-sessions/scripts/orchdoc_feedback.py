@@ -1,5 +1,7 @@
 """Compose a pre-filled GitHub issue so reporting a defect costs one command.
 
+<!-- subject: orchestration -->
+
 WHY BOTHER, when the repo already has issue templates: because the gap between "I should
 report this" and "I have reported this" is where reports die. By the time someone has opened a
 browser, found the repo, chosen a template and re-typed what happened, the moment has passed
@@ -21,6 +23,11 @@ workspace and publishing it, which is not a thing this should ever do quietly.
 import argparse
 import pathlib
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 import urllib.parse
 
@@ -37,7 +44,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 def version():
     """Best-effort provenance. Absent is fine; wrong would not be."""
     for args in (["log", "--oneline", "-1"], ["describe", "--tags", "--always"]):
-        r = subprocess.run(["git", "-C", str(HERE)] + args, capture_output=True, text=True)
+        r = subprocess.run(["git", "-C", str(HERE)] + args, capture_output=True, text=True,
+                           creationflags=flags())
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()[:80]
     return "(unknown)"

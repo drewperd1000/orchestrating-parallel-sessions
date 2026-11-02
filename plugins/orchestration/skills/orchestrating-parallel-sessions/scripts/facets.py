@@ -4,7 +4,7 @@
 <!-- subject: knowledge-routing -->
 <!-- route-tags: facet platform access mechanism component retired misconception vocabulary naming -->
 
-\1The human, 2026-08-13: *"if a platform is involved, the platform MUST be included... If it involves a
+The human, 2026-08-13: *"if a platform is involved, the platform MUST be included... If it involves a
 specific mechanism for accessing it... Any potential MISconceptions about how it is accessed."*
 
 A SUBJECT fixes the topic. It does not fix the four things a searcher most often types instead:
@@ -266,10 +266,21 @@ def facet_aliases(text):
 NEVER_FACET = {"CLAUDE.md", "DEV-DOCS-INDEX.md", "MEMORY.md", "Memory2.md", "README.md",
                "ORCHESTRATOR-REGISTRY.md",
                # The script-writing canon: a rule family read start-to-finish, like
-               # CLAUDE.md. knowledge_gate already exempts it; this file did not.
-               "AUTHORING-CHECKLIST.md", "SCRIPT-CHECKLIST-2-LENGTH.md",
+               # CLAUDE.md. knowledge_gate's NEVER_GATE exempts the same files; it lacked
+               # AUTHORING-CHECKLIST-UNIVERSAL.md (file U) until o9 W156 (lane o9L1065, 2026-10-05).
+               "AUTHORING-CHECKLIST.md", "AUTHORING-CHECKLIST-UNIVERSAL.md",
+               "SCRIPT-CHECKLIST-2-LENGTH.md",
                "SCRIPT-CHECKLIST-2B-PAUSE.md", "SCRIPT-CHECKLIST-3-DROPDOWNS.md",
-               "SCRIPT-CHECKLIST-4-VOICE.md", "SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md"}
+               "SCRIPT-CHECKLIST-4-VOICE.md", "SCRIPT-CHECKLIST-4B-BANNED-WORDS.md",
+               "SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md",
+               # The AT book, a rule file of the same router since o9:D71 (2026-10-05).
+               "SCRIPT-CHECKLIST-AT.md", "SCRIPT-CHECKLIST-AT-B-NIGHT-RAMPS-BREATH.md",
+               # Files 0, 6, 6B and 7, rule files of the same router that this list missed
+               # when they were made (2026-08-17 to 2026-10-02); added for o9 W156.
+               # test_rule_file_lists.py fails when a rule file the router check reads is
+               # missing here.
+               "SCRIPT-CHECKLIST-0-UNIVERSAL.md", "SCRIPT-CHECKLIST-6-REFERENT-AND-STRENGTH.md",
+               "SCRIPT-CHECKLIST-6B-STRENGTH-AND-REACH.md", "SCRIPT-CHECKLIST-7-ARC.md"}
 
 # ⛔ LAUNCH INPUTS, NOT KNOWLEDGE - the same exclusion knowledge_gate already applies, which
 # this file failed to inherit. A lane seed names every platform its lane will touch, so it

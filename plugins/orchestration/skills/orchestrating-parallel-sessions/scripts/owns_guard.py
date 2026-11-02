@@ -1,6 +1,8 @@
 """A fact owned by a cornerstone may not be restated anywhere else. Enforced at commit.
 
-\1The human, 2026-08-17: *"We need a hook attached to this that forces any agent attempting to write a
+<!-- subject: knowledge-routing -->
+
+The human, 2026-08-17: *"We need a hook attached to this that forces any agent attempting to write a
 new doc that concerns this info to either edit it in the cornerstone, or justify why they need a
 new doc, and if they create a new doc, to document the new doc in the cornerstone. It must be
 forced at every step."*
@@ -39,6 +41,11 @@ import io
 import pathlib
 import re
 import subprocess
+try:
+    from no_window import flags
+except ImportError:  # a partial delivery must not take the tool down
+    def flags(extra=0):
+        return extra
 import sys
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -62,7 +69,7 @@ from mentions import PLACEHOLDER, is_derived  # noqa: E402  - ONE definition, se
 def _root():
     try:
         p = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True,
-                           text=True, timeout=10)
+                           text=True, timeout=10, creationflags=flags())
         if p.returncode == 0 and p.stdout.strip():
             return pathlib.Path(p.stdout.strip())
     except Exception:
@@ -197,7 +204,8 @@ def offenders(paths):
 def staged():
     try:
         r = subprocess.run(["git", "-C", str(ROOT), "diff", "--cached", "--name-only",
-                            "--diff-filter=ACM"], capture_output=True, text=True, timeout=20)
+                            "--diff-filter=ACM"], capture_output=True, text=True, timeout=20,
+                           creationflags=flags())
         return [ROOT / f for f in r.stdout.split("\n")
                 if f.strip().endswith((".md", ".py")) and (ROOT / f).exists()]
     except Exception:
