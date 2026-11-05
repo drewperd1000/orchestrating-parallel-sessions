@@ -206,6 +206,38 @@ PARTIAL, WEAK or VERIFIED MISS, and only the last is permission to create.
 
 ---
 
+## `copy_guard.py` — finds an instruction to copy text kept somewhere else
+
+**What it refuses.** Through `orchdoc.py`: an open entry, or new text for one, that tells the
+reader to copy, paste, run or type something from a file or URL (`E-COPYBYLINK`). A payload
+already shown in inline code, a link that is only there to look at, and a path naming a secret do
+not count. It is a detector with no hook of its own, so `orchdoc.py check`, `add`, `note` and
+`resolve` all ask the same question.
+
+**The failure.** A reader already looking at a document was sent to a URL to fetch text they
+could have been shown, and the URL returned 404.
+
+**When it fires:** put the text in the entry, inside a fence or inline code. `orchdoc.py paste
+--file` copies a file's text into the entry for you.
+
+---
+
+## `ingress_taint.py` — takes the shell away from a session that read an outsider's text
+
+**What it refuses.** Every Bash call, for the rest of the session, once that session has read a
+path or run a command you named as ingress. It does not read the command, because argument
+patterns are documented as unreliable. Name your ingress paths in `INGRESS_TAINT_READ_RE` and
+`INGRESS_TAINT_CMD_RE`; the file's opening comment lists every setting.
+
+**The failure.** A session holding a shell, secrets and push access reads text a stranger wrote.
+Telling it to ignore instructions in that text is a request, and this removes the capability.
+
+**When it fires:** finish what you can with Read, Write and Edit, then send your orchestrator the
+name of what you read and the exact command you still need, and stop. A fresh lane that never saw
+the text runs it. No flag reopens the shell, on purpose.
+
+---
+
 ## The pattern underneath all of them
 
 ⭐ **An instrument answering about ITSELF, read as an answer about the world.** It appeared eight

@@ -207,7 +207,7 @@ BARE_VERSION = re.compile(r"(?i)-v\d+\.md$|-FINAL\.md$")
 # that name as a script version, so check 10 of check_checklist_router.py failed every box
 # copied from the proposal the human approved, for sharing words with the proposal itself. The name
 # is the reliable sign: every proposal in the corpus is named `...-PROPOSED-RULES...`, and no
-# script is. Only the bare-version arm skips it. A name that also marks a the human rewrite is still
+# script is. Only the bare-version arm skips it. A name that also marks a human rewrite is still
 # a version file, whatever else it says (is_versioned below).
 RULES_PROPOSAL = re.compile(r"(?i)-PROPOSED-RULES(?:[-_ .]|$)")
 
@@ -272,7 +272,7 @@ def is_versioned(path):
         return True
     if RULES_PROPOSAL.search(os.path.basename(p)):
         return False
-    # o10L317/L321 (W235 step 5): after the library rename a the human text is `<NAME> v<N> THE HUMAN.md`, which REWRITE_SUFFIX does
+    # o10L317/L321 (W235 step 5): after the library rename a human text is `<NAME> v<N> THE HUMAN.md`, which REWRITE_SUFFIX does
     # not see. It is still a rewrite, so a library name whose parser kind is "rewrite" is a training-loop artifact.
     # The old pilot texts (`versions/PIL/...-v3.md`) became `versions/<NAME> v<N> <AUTHOR>.md`; the name no longer says
     # which ones were pilots, and treating every text under versions/ as versioned would read 159 more files than the
@@ -280,7 +280,7 @@ def is_versioned(path):
     # (check_checklist_router.version_files) keeps reading the files its baseline names.
     info = parse_script_name(os.path.basename(p))
     if info.version is not None and info.kind == "rewrite" and not info.in_app:
-        # A the human text of origin FCI is the human's finished text of the app's own script (it was versions/FCI/...-owner-final,
+        # A human text of origin FCI is the human's finished text of the app's own script (it was versions/FCI/...-owner-final,
         # a name that was never a rewrite name). It is a final, not a waypoint, so it was never a version file here.
         return library_origin(path) != "FCI"
     if bool(BARE_VERSION.search(p)) and any(c in p for c in CORPUS_DIRS):
@@ -336,7 +336,7 @@ def blocks(all_findings):
 # time is OPTIONAL, because every line written before that day records only a date. A date alone
 # stays valid, is shown as a date alone, and has no time made up for it.
 #
-# A THE HUMAN REWRITE. The human, 2026-10-01 14:24, verbatim: *"Even in the scripts rewrites, the original
+# A HUMAN REWRITE. The human, 2026-10-01 14:24, verbatim: *"Even in the scripts rewrites, the original
 # model should still be indicated. Currently, it reads "Authored: 2026-10-01 | Model: none | By:
 # the human" It should read "Authored: 2026-10-01 13:59 | Model: Opus 5.5 | Rewrite By: the human""*. So:
 #
@@ -370,7 +370,7 @@ PROV_TITLE = re.compile(r"^#[ \t]+\S")
 PROV_FIELD = re.compile(r"^\s*(authored|model|(?:rewrite[ \t]+)?by)\s*:\s*(.*?)\s*$", re.I)
 # `YYYY-MM-DD`, or `YYYY-MM-DD HH:MM` (24-hour, US Pacific).
 PROV_STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T]+(\d{2}):(\d{2}))?$")
-# What a the human rewrite's Model said BEFORE 2026-10-01. Still READ; no longer written.
+# What a human rewrite's Model said BEFORE 2026-10-01. Still READ; no longer written.
 PROV_REWRITE_MODEL = "none"
 PROV_REWRITE_BY = "the human"
 PROCESS_LOG = re.compile(r"(?i)process[-_ ]?log")
@@ -380,7 +380,7 @@ PROV_SCOPE = ("working_corpus_o8/pilots", "working_corpus_o8/sc-replacements",
 # o10L278 (W226 batch 2): pilots and new-at-scripts moved into script-library/. Inside it the hook keeps
 # the same two groups it had, and nothing wider (batch 1 left PROV_SCOPE alone on purpose: a whole-library
 # scope would demand a provenance line on every library script, a rule decision for o10 and the human):
-#   - a the human rewrite, wherever it sits in the library (the name carries the suffix);
+#   - a human rewrite, wherever it sits in the library (the name carries the suffix);
 #   - the former pilot / new-at-scripts files: versions/PIL, versions/NAT, versions/NATI.
 LIBRARY_DIR = "script-library"
 # o10L356 (W235 step 7): the old `/versions/PIL/`, `/versions/NAT/`, `/versions/NATI/` folder marks are gone. The step-5
@@ -769,8 +769,8 @@ def build_provenance_line(authored, model, by, rewrite=False):
                                                     "Rewrite By" if rewrite else "By", by)
 
 
-def owner_provenance_line(authored=None, model=None):
-    """The line a the human rewrite carries: `> Authored: <Pacific date and time of this save> |
+def human_provenance_line(authored=None, model=None):
+    """The line a human rewrite carries: `> Authored: <Pacific date and time of this save> |
     Model: <the ORIGINAL script's model> | Rewrite By: the human`.
 
     `authored` is a stamp to use instead of now (a date alone is accepted); `model` is the
@@ -792,10 +792,20 @@ def set_provenance_line(text, line):
     title_i, slot_i, _ = provenance_slot(lines)
     if slot_i is not None and parse_provenance_line(lines[slot_i]) is not None:
         lines[slot_i] = line
+        at = slot_i
     elif title_i is not None:
         lines.insert(title_i + 1, line)
+        at = title_i + 1
     else:
         lines.insert(0, line)
+        at = 0
+    # W66: a text line directly under a `>` line is drawn inside the quote box, so keep one
+    # blank line after the provenance line. Only a blank line is added; no script text changes.
+    nxt = lines[at + 1] if at + 1 < len(lines) else None
+    # A following `>` line (o8's edit record) is left as it is: it is a quote, not script text.
+    if (nxt is not None and nxt.strip() and not nxt.lstrip().startswith(">")
+            and not END_HEADER.match(nxt)):
+        lines.insert(at + 1, "")
     return nl.join(lines)
 
 
@@ -810,7 +820,7 @@ def strip_provenance_line(text):
 
 
 def provenance_problems(text, rewrite):
-    """[(code, detail)] for `text`'s FM4 line; [] when it is right. `rewrite` = a the human rewrite."""
+    """[(code, detail)] for `text`'s FM4 line; [] when it is right. `rewrite` = a human rewrite."""
     p = parse_provenance(text)
     if p is None:
         return [("NO-PROVENANCE", "no `> Authored: ... | Model: ... | By: ...` line under the "
@@ -834,14 +844,14 @@ def provenance_problems(text, rewrite):
                                      or not p.get("rewrite")
                                      or by.lower() != PROV_REWRITE_BY.lower()):
         out.append(("BAD-PROVENANCE",
-                    "a the human rewrite names the model of the ORIGINAL script it was made from "
+                    "a human rewrite names the model of the ORIGINAL script it was made from "
                     "(`unknown` when nothing records it, never `none`) and says `Rewrite By: "
                     "the human`, not the agent's line (got Model: %s | %s: %s)" % (model, label, by)))
     if not rewrite and model.lower() == PROV_REWRITE_MODEL:
         out.append(("BAD-PROVENANCE", "an agent's file names the model that wrote it - `none` "
                                       "is not a model"))
     if not rewrite and p.get("rewrite"):
-        out.append(("BAD-PROVENANCE", "`Rewrite By:` is only for a the human rewrite; an agent's "
+        out.append(("BAD-PROVENANCE", "`Rewrite By:` is only for a human rewrite; an agent's "
                                       "file says `By: <lane>`"))
     return out
 
@@ -913,7 +923,7 @@ def status_on_ref(path, ref="origin/main"):
 #: ruling:<ref>` into the approved file's header; July's approvals read `the human <date> app:<hash>`. Either, in the header
 #: of the file AS `ref` HOLDS IT, is the human's own act on that exact file (o9 W204 review, o9L1276). The human, in chat
 #: 2026-10-12: "Approve should mark a script final. I'll only ever use it for that."
-APPROVED_BY_DREW = re.compile(r"(?m)^## Approved-By:[ \t]*the human[ \t]+\d{4}-\d{2}-\d{2}")
+APPROVED_BY_HUMAN = re.compile(r"(?m)^## Approved-By:[ \t]*the human[ \t]+\d{4}-\d{2}-\d{2}")
 
 
 def _header_part(text):
@@ -927,7 +937,7 @@ def approved_on_ref(text):
     """True when `text` (a file as the ref holds it) carries the human's `## Approved-By:` line above its END SCRIPT HEADER.
     A text with no END line has no header, so the line does not count there (o9 W204, lane o9L1282)."""
     head = _header_part(text)
-    return bool(head and APPROVED_BY_DREW.search(head))
+    return bool(head and APPROVED_BY_HUMAN.search(head))
 
 
 def is_final(text):
@@ -945,7 +955,7 @@ def is_final(text):
     m = HEADER.search(head)
     if m and (m.group(2) or "").strip().lower() == "final":
         return True
-    return bool(APPROVED_BY_DREW.search(head)) and _header_part(text) is not None
+    return bool(APPROVED_BY_HUMAN.search(head)) and _header_part(text) is not None
 
 
 #: A landed ruling that a script is final (o9 W204). Only OrchDocs as `ref` holds them count, so an
@@ -956,13 +966,33 @@ MAX_ORCHDOCS = 12
 ENTRY_SPLIT = re.compile(r"(?m)^(?=#{2,3} )")
 ENTRY_RESOLVED = re.compile(r"\*\*Status:\*\*\s*RESOLVED\b")
 #: the human's own words in quotes, containing the word final, close behind the word the human; or "the human ruled ... final".
-OWNER_QUOTE_FINAL = re.compile(
-    "\\bDrew\\b[^\\n\"“]{0,120}[\"“]([^\"”\\n]*\\bfinal\\b[^\"”\\n]*)[\"”]", re.I)
-OWNER_RULED_FINAL = re.compile(r"\bthe human\s+ruled\b[^\n.]{0,120}\bfinal\b", re.I)
+#: The name comes from orchdoc.human_name() (`human_final_patterns`), not from this file.
+_FINAL_PATTERNS = {}
+
+
+def human_final_patterns(name=None):
+    """(HUMAN_QUOTE_FINAL, HUMAN_RULED_FINAL) for `name`, default orchdoc.human_name(); cached per name.
+
+    orchdoc is imported only here and only when no name is given, so importing this module stays cheap.
+    If the name cannot be learned the neutral word is used, which matches nothing in a real entry and
+    so fails closed, like every other error on this path."""
+    if name is None:
+        try:
+            import orchdoc
+            name = orchdoc.human_name()
+        except Exception:
+            name = "THE HUMAN"
+    pats = _FINAL_PATTERNS.get(name)
+    if pats is None:
+        n = re.escape(name)
+        pats = _FINAL_PATTERNS[name] = (
+            re.compile("\\b" + n + "\\b[^\\n\"“]{0,120}[\"“]([^\"”\\n]*\\bfinal\\b[^\"”\\n]*)[\"”]", re.I),
+            re.compile(r"\b" + n + r"\s+ruled\b[^\n.]{0,120}\bfinal\b", re.I))
+    return pats
 NEGATED_FINAL = re.compile(r"\b(?:not|never|non|isn't|aren't)[-\s]*final\b|n't\s+final\b", re.I)
 
 
-def owner_final_ruling(path, ref="origin/main", top=None):
+def human_final_ruling(path, ref="origin/main", top=None):
     """Where a RESOLVED OrchDoc entry on `ref` names this script and records the human ruling it final, as
     "<file>: <heading>"; None when there is none. The script is matched by its file name, or by its label
     (SC-Sl-N-15-012) as a whole token. When the entry names the label with a version (`SC-Sl-N-15-012 v7`,
@@ -975,6 +1005,7 @@ def owner_final_ruling(path, ref="origin/main", top=None):
             if rc:
                 return None
             top = top.strip()
+        quote_final, ruled_final = human_final_patterns()
         base = os.path.basename(path)
         info = parse_script_name(base)
         key = info.name_key or ""
@@ -1000,8 +1031,8 @@ def owner_final_ruling(path, ref="origin/main", top=None):
                     versions = {int(v) for v in named_version.findall(entry)}
                     if versions and info.version not in versions:
                         continue        # the ruling is about another version of this script
-                said = [m.group(1) for m in OWNER_QUOTE_FINAL.finditer(entry)]
-                said += [m.group(0) for m in OWNER_RULED_FINAL.finditer(entry)]
+                said = [m.group(1) for m in quote_final.finditer(entry)]
+                said += [m.group(0) for m in ruled_final.finditer(entry)]
                 if any(not NEGATED_FINAL.search(x) for x in said):
                     return "%s: %s" % (name, entry.strip().split("\n", 1)[0][:100])
     except Exception:
@@ -1012,7 +1043,7 @@ def owner_final_ruling(path, ref="origin/main", top=None):
 def final_ground(path, ref="origin/main", shown=None):
     """Why a `final` the ref does not hold may still be written, or None. Two grounds, both read off `ref` only:
     the file as `ref` holds it carries the human's `## Approved-By:` line (the Reader's Approve button), or a RESOLVED
-    OrchDoc entry on `ref` records the human ruling it final (owner_final_ruling). `shown` is ref_show's answer when the
+    OrchDoc entry on `ref` records the human ruling it final (human_final_ruling). `shown` is ref_show's answer when the
     caller already has it. Fails closed: any error returns None."""
     try:
         top, text = shown if shown is not None else ref_show(path, ref)
@@ -1020,7 +1051,7 @@ def final_ground(path, ref="origin/main", shown=None):
             return None
         if approved_on_ref(text):
             return "Approved-By: the human on %s" % ref
-        return owner_final_ruling(path, ref, top=top)
+        return human_final_ruling(path, ref, top=top)
     except Exception:
         return None
 
@@ -1171,7 +1202,7 @@ def provenance_message(path, text, probs, rewrite, new):
     lines, _ = _split(text)
     title_i, slot_i, _ = provenance_slot(lines)
     now = pacific_stamp()
-    want = (owner_provenance_line(
+    want = (human_provenance_line(
                 now, "<the ORIGINAL script's model, as that script records it, e.g. "
                      "claude-opus-5-5 - or unknown>") if rewrite else
             build_provenance_line(now, "<your exact model id, e.g. claude-opus-5-5>",
@@ -1201,7 +1232,7 @@ def provenance_message(path, text, probs, rewrite, new):
            "is a NEW script (on no git ref), so this write was REFUSED." if new else
            "has no correct provenance line. ADVISORY - the write went through.",
            "; ".join(d for _, d in probs), where, want,
-           "  (Only a the human rewrite says `Rewrite By: the human`, and its Model is the original\n"
+           "  (Only a human rewrite says `Rewrite By: the human`, and its Model is the original\n"
            "  script's, not the agent's.)\n"
            if not rewrite else
            "  (The Reader's save writes this line itself when the human saves a rewrite; this is the\n"

@@ -41,7 +41,7 @@ MARK = "NOW"
 # asking for it.
 #
 # ⛔ NOTHING CAN VERIFY WHICH OF US TYPED IT - every commit in this workspace is authored
-# "the human Perd", so git cannot tell an orchestrator from the human, and an uncommitted edit
+# "the human", so git cannot tell an orchestrator from the human, and an uncommitted edit
 # has no author at all. That is the same wall the attribution finding hit tonight.
 #
 # ⭐ SO THE SHAPE CARRIES THE CLAIM AND THE TOOLING MAKES THE HONEST SHAPE THE CHEAP ONE:

@@ -37,12 +37,14 @@ another copy holds (o9 W109): --sync writes it, into the live cache too. Exit 2 
 missing entirely.
 """
 import argparse
+import glob
 import hashlib
 import json
 import os
 import pathlib
 import shutil
 import subprocess
+import time
 try:
     from no_window import flags
 except ImportError:  # a partial delivery must not take the tool down
@@ -128,7 +130,22 @@ TOOLS = ["orchdoc.py", "pause_cues.py", "reader_full_rewrite.py", "script_note_s
          "reader_library_runner.py",
          # workspace_paths.checkout_of imports it inside the function (585b2bca4, o9 W139, the
          # no-git-process lookup); a skill copy of workspace_paths.py without it fails there.
-         "checkout_lookup.py"]
+         "checkout_lookup.py",
+         # o9:W149 box 20: modules that route.py, knowledge_gate.py, knowledge_pages.py and
+         # orchdoc_sweep.py import at module level or inside a function. A skill copy of the
+         # importer without them fails on import. They ship with their importer, see
+         # COMPANIONS; test_tool_drift_companions.py fails when an import is missing here.
+         "mentions.py", "facets.py", "corpus.py", "memory_index.py", "sweep_read.py"]
+
+# o9:W149 box 21(a): a module that no copy holds yet but that a shipped tool imports.
+# survey() treats it as shipped wherever one of its importers is, so --sync writes it beside
+# them. Without this a tracked module that no copy holds is left as "(no mirrored copy)",
+# which is how the importers reached the plugin cache without it.
+COMPANIONS = {"mentions.py": ["route.py", "knowledge_gate.py", "knowledge_pages.py"],
+              "facets.py": ["route.py", "knowledge_gate.py", "knowledge_pages.py"],
+              "corpus.py": ["route.py", "knowledge_pages.py"],
+              "memory_index.py": ["route.py"],
+              "sweep_read.py": ["orchdoc_sweep.py"]}
 
 # o9 W136: a tool -> the folder of parts beside it that it runs (orchdoc.py runs each
 # orchdoc_parts/<name>.py in its own namespace). Each part is surveyed and synced as a tool of
@@ -327,6 +344,37 @@ def survey_skills(explicit_ref=None, from_worktree=False):
     return rows, live
 
 
+# One hour: far longer than any sync, so a temp this old has no live writer behind it.
+STALE_TEMP_SECONDS = 3600
+REPLACE_WAITS = (0.1, 0.2, 0.4, 0.8)
+
+
+def _sweep_stale_temps(path):
+    """Delete the temp files a sync killed mid-write left beside `path`, so they do not pile up.
+    Only old ones: a young one may belong to a concurrent sync, which has its own pid in the name."""
+    for old in path.parent.glob(".%s.*.tmp" % glob.escape(path.name)):
+        try:
+            if time.time() - old.stat().st_mtime > STALE_TEMP_SECONDS:
+                old.unlink()
+        except OSError:
+            pass
+
+
+def _replace_retrying(tmp, path):
+    """os.replace, retried on PermissionError. A process reading the target through Python's own
+    open() holds it without delete-sharing, which on Windows refuses a rename and allows the
+    in-place write this replaced, so a brief reader would otherwise turn into a failed sync
+    (deliver.write_bytes_durably retries for the same reason). A holder that outlasts the waits
+    is reported as a failure, with the original intact."""
+    for wait in REPLACE_WAITS:
+        try:
+            os.replace(str(tmp), str(path))
+            return
+        except PermissionError:
+            time.sleep(wait)
+    os.replace(str(tmp), str(path))
+
+
 def _write_verified(path, blob):
     """Write, re-read, hash. None when the bytes on disk now equal the source, else why not.
 
@@ -334,15 +382,26 @@ def _write_verified(path, blob):
     the source holds. Counting writes ATTEMPTED is how "synced 6" was printed over content
     that had not arrived.
     """
+    # o9 W278: write a temp file beside the target, verify ITS hash, then os.replace, so a sync
+    # killed mid-write cannot leave a truncated copy. The name ends in .tmp and is not the tool's
+    # name, so no walker (name match, *.py glob, SKILL.md) counts it as a copy.
+    tmp = path.parent / (".%s.%d.tmp" % (path.name, os.getpid()))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(blob)
-        got = path.read_bytes()
+        _sweep_stale_temps(path)
+        tmp.write_bytes(blob)
+        got = tmp.read_bytes()
+        if hashlib.sha256(got).digest() != hashlib.sha256(blob).digest():
+            return "re-read %s, source %s" % (hashlib.sha256(got).hexdigest()[:8],
+                                              hashlib.sha256(blob).hexdigest()[:8])
+        _replace_retrying(tmp, path)
     except OSError as e:
         return "%s: %s" % (type(e).__name__, str(e)[:90])
-    if hashlib.sha256(got).digest() != hashlib.sha256(blob).digest():
-        return "re-read %s, source %s" % (hashlib.sha256(got).hexdigest()[:8],
-                                          hashlib.sha256(blob).hexdigest()[:8])
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
     return None
 
 
@@ -429,6 +488,30 @@ def provably_older(path, rel, cache):
 # The file whose folder in a copy is where every tracked tool belongs in that copy.
 ANCHOR = "orchdoc.py"
 
+_WALKED = {}
+
+
+def _find(root, name):
+    """Every path under `root` named `name`: what `root.rglob(name)` returned, from ONE walk of
+    `root` kept for the run. o9:W277: this survey made ~190 separate rglob calls, each a full
+    walk of the marketplace and the cache, and that was 6 of the 9 seconds a report-only run
+    took, which a landing cannot afford. survey() starts from fresh walks. normcase: rglob
+    matches without regard to case on Windows, and a copy named Orchdoc.py is still a copy."""
+    root = pathlib.Path(root)
+    if root not in _WALKED:
+        index = {}
+        for here, dirs, files in os.walk(str(root)):
+            if ".git" in dirs:
+                dirs.remove(".git")
+            for n in dirs + files:
+                index.setdefault(os.path.normcase(n), []).append(pathlib.Path(here) / n)
+        _WALKED[root] = index
+    return list(_WALKED[root].get(os.path.normcase(name), ()))
+
+
+def _forget_walks():
+    _WALKED.clear()
+
 
 def _anchor_dirs(label, root):
     """The folders in this copy where the tracked tools belong: each folder holding its
@@ -444,7 +527,7 @@ def _anchor_dirs(label, root):
         root = _live_cache_dir()
     if root is None or not root.exists():
         return []
-    return sorted({p.parent for p in root.rglob(ANCHOR)})
+    return sorted({p.parent for p in _find(root, ANCHOR)})
 
 
 def _shipped(tool):
@@ -454,7 +537,7 @@ def _shipped(tool):
     full MIRRORS list is read even under --cache-only, because the marketplace is where a
     newly shipped tool appears first."""
     for _label, root in MIRRORS:
-        if root.exists() and next(root.rglob(tool), None) is not None:
+        if root.exists() and _find(root, tool):
             return True
     return False
 
@@ -470,6 +553,7 @@ def survey(from_worktree=False, mirrors=None):
     moves both halves together so they cannot drift apart again.
     """
     rows = []
+    _forget_walks()  # o9:W277 review: a sync or a caller may have written since the last survey
     used = MIRRORS if mirrors is None else mirrors
     anchors = [(label, d) for label, root in used for d in _anchor_dirs(label, root)]
     for tool in TOOLS:
@@ -481,10 +565,10 @@ def survey(from_worktree=False, mirrors=None):
         # from its source only in CRLF agrees, so it is never DRIFTED and never written.
         for label, root in used:
             if root.exists():
-                copies += [(label, _file_digest(p), p) for p in root.rglob(tool)]
+                copies += [(label, _file_digest(p), p) for p in _find(root, tool)]
         # o9 W109 (lane o9L1156): a tool that has shipped is expected in EVERY copy, so a copy
         # that lacks it is drift, reported as "missing" at the path --sync writes it to.
-        if copies or _shipped(tool):
+        if copies or _shipped(tool) or any(_shipped(i) for i in COMPANIONS.get(tool, ())):
             for label, d in anchors:
                 p = d / tool
                 if not p.is_file():

@@ -141,6 +141,27 @@ except Exception:
     pass
 
 CANONICAL_CANDIDATES = ("origin/main", "origin/master")
+PRODUCTION_REF = "origin/production"
+
+# ⭐ A BRANCH CUT FROM PRODUCTION ON PURPOSE IS COMPARED WITH PRODUCTION (o9, 2026-11-02, reported
+# by o7). In the product-website repo o7 cut `o7L96-edge` from origin/production to put new
+# components on a hidden production route; main's newer lines were never meant to be in it, and
+# rule A refused the commit with only `--no-verify` as the way out. When origin/production exists,
+# main is not in HEAD, and HEAD carries no history of main's that production lacks (its
+# merge-base with main is already in production), AND the branch says it came from production,
+# the canonical ref is origin/production. Everything else keeps main/master.
+#
+# ⛔ THE GRAPH ALONE CANNOT TELL THE TWO APART, so the graph test is not enough by itself. Both
+# app repos promote by fast-forward (o9L994 measured 0 commits on origin/production that are not
+# on origin/main, in both), so a branch cut from main at a commit production was later promoted
+# to has the same shape as o7's branch. Judged against production, that stale branch could drop
+# every line main gained since, with no refusal: the exact loss this file exists to stop. So the
+# branch must also DECLARE production, by either of two records git writes itself when you run
+# `git worktree add -b x <dir> origin/production` or `git checkout -b x origin/production`:
+#   its upstream is origin/production, or its reflog's first entry reads
+#   "branch: Created from origin/production".
+# o7L96-edge carries both. No branch, no record, an unreadable record: origin/main, which refuses.
+# To declare it after the fact: `git branch --set-upstream-to=origin/production`.
 MAX_REPORT = 12
 
 
@@ -173,8 +194,39 @@ def canonical_ref(repo):
     for ref in CANONICAL_CANDIDATES:
         rc, _, _ = git(repo, ["rev-parse", "--verify", "--quiet", ref])
         if rc == 0:
-            return ref
+            return _production_if_cut_from_it(repo, ref)
     return None
+
+
+def _production_if_cut_from_it(repo, main_ref):
+    if git(repo, ["rev-parse", "--verify", "--quiet", PRODUCTION_REF])[0] != 0:
+        return main_ref
+    if git(repo, ["merge-base", "--is-ancestor", main_ref, "HEAD"])[0] == 0:
+        return main_ref                   # HEAD already holds main: an ordinary branch
+    rc, base, _ = git(repo, ["merge-base", "HEAD", main_ref])
+    base = base.strip()
+    if rc != 0 or not base:
+        return main_ref
+    # HEAD has no history of main's that production lacks: it was cut from production.
+    if git(repo, ["merge-base", "--is-ancestor", base, PRODUCTION_REF])[0] != 0:
+        return main_ref
+    # The graph allows production; only the branch's own record says it meant to.
+    return PRODUCTION_REF if _declares_production(repo) else main_ref
+
+
+def _declares_production(repo):
+    rc, branch, _ = git(repo, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    branch = branch.strip()
+    if rc != 0 or not branch:
+        return False                      # detached HEAD: nothing declares anything
+    rc, up, _ = git(repo, ["rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                           branch + "@{upstream}"])
+    if rc == 0 and up.strip() == PRODUCTION_REF:
+        return True
+    rc, log, _ = git(repo, ["reflog", "show", "--format=%gs", "refs/heads/" + branch, "--"])
+    lines = [l.strip() for l in log.splitlines() if l.strip()] if rc == 0 else []
+    return bool(lines) and lines[-1] in ("branch: Created from " + PRODUCTION_REF,
+                                         "branch: Created from refs/remotes/" + PRODUCTION_REF)
 
 
 def inherited_origin(repo):
@@ -232,11 +284,39 @@ GENERATED_PATHS = frozenset((
     # out on purpose: people edit it, and the publisher only reads it.
     ".shared/cloud/MANIFEST.json",
     ".shared/cloud/hooks.json",
+    # ⛔ THE APP'S LIBRARY BUILD STAMP (asked by o10, 2026-11-02, lane o10L703; built by o9L999).
+    # `file_script.py cmd_build_app` writes it whole through `save_json` on every `build --app`
+    # (workspace_commit, a sha256 per import file, ...), and its own note says "Do not edit by
+    # hand". The unattended library sync (`library_sync.py`) commits it, and a rebuild that
+    # changes many import files rewrites most of the last stamp's lines, which rule B refused
+    # as undoing the previous sync. Its history in the product-app repo is build and sync
+    # commits only. The sibling `voice_scripts/RETIRED-SLUGS.json` is left out on purpose.
+    # NOT ADDED: `script-library/_build/MANIFEST.json`. Release, revise, file --type,
+    # sync-bodies and approve patch it one entry at a time (load, change entries, save), and
+    # it holds the baseline hashes `build --strict` compares against, so a stale copy would
+    # lose real state.
+    "voice_scripts/LIBRARY-BUILD.json",
 ))
 
 
 def is_generated(path):
     return path.replace("\\", "/").strip() in GENERATED_PATHS
+
+
+# Per-file checksum lines of these files are recalculated by every batch that touches the file, so
+# a later batch replacing the earlier batch's lines is not an undo (o9L1001, W270). Every other
+# line of the file stays protected, which is why the path is not in GENERATED_PATHS.
+CHECKSUM_LINE_PATHS = frozenset((
+    "script-library/_build/MANIFEST.json",
+))
+_CHECKSUM_LINE = re.compile(r'^\s*"(sha256|bytes)":\s')
+
+
+def without_checksum_lines(path, lines):
+    """`lines` minus per-file checksum lines, for the paths in CHECKSUM_LINE_PATHS only."""
+    if path.replace("\\", "/").strip() not in CHECKSUM_LINE_PATHS:
+        return set(lines)
+    return {l for l in lines if not _CHECKSUM_LINE.match(l)}
 
 
 def _staged_all(repo):
@@ -318,6 +398,7 @@ def check(repo):
 
         arrived = set(ref_blob.split("\n")) - set((base_blob or "").split("\n"))
         arrived.discard("")
+        arrived = without_checksum_lines(path, arrived)
         have = set(staged.split("\n"))
         missing = sorted(l for l in arrived if l not in have and l.strip())
         if missing:
@@ -399,8 +480,9 @@ def check_undoes_commit(repo):
             continue
         if head_blob is False or staged is False:
             continue                       # binary: rule A reports these, line diffing cannot
-        removed = {l.strip() for l in head_blob.split("\n") if _interesting(l)} \
-            - {l.strip() for l in staged.split("\n")}
+        removed = without_checksum_lines(
+            path, {l.strip() for l in head_blob.split("\n") if _interesting(l)}
+            - {l.strip() for l in staged.split("\n")})
         if len(removed) < MIN_ADDED:
             continue
 
@@ -411,7 +493,7 @@ def check_undoes_commit(repo):
             if "\x1f" not in row:
                 continue
             sha, subject = row.split("\x1f", 1)
-            added = _added_lines(repo, sha.strip(), path)
+            added = without_checksum_lines(path, _added_lines(repo, sha.strip(), path))
             if len(added) < MIN_ADDED:
                 continue
             hit = added & removed
@@ -545,9 +627,10 @@ def report(findings, stream=sys.stderr):
     p("    not merging one. On 2026-09-08 that silently removed another session's whole")
     p("    change from main, three times, with the commit still sitting in the log.\n")
     p("    DO THIS INSTEAD")
-    p("      git fetch origin && git rebase origin/main      # then re-apply your edit")
+    ref0 = findings[0][1] if findings else "origin/main"
+    p("      git fetch origin && git rebase %s      # then re-apply your edit" % ref0)
     p("    or, to see exactly what you are missing first:")
-    p("      git diff origin/main -- <path>\n")
+    p("      git diff %s -- <path>\n" % ref0)
     p("    Deliberate, and you have read what you are removing? `git commit --no-verify`.")
     p("    That is a claim you looked, and it stays in the reflog as one.")
 

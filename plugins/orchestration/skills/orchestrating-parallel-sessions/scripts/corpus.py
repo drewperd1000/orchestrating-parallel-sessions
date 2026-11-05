@@ -56,6 +56,7 @@ import textwrap
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM, MAIN_CHECKOUT  # noqa: E402
+import private_folders  # noqa: E402 - the folders outsiders write, ONE definition
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -101,6 +102,15 @@ def _under(root):
 
 
 EXCLUSIONS = [
+    Exclusion(
+        "folders outsiders write",
+        "o9:W149 box 15 (2026-11-04): a file under a folder named app-feedback or "
+        "email_briefing holds text that whoever emailed the human or filled in the form wrote, and "
+        "no session reads it. Keeping its NAME out of the corpus keeps it out of route.py's "
+        "answers and every generated page. A folder-NAME test (private_folders), because the "
+        "folders sit in more than one place.",
+        lambda p, o: private_folders.has_private_part(p)),
+
     Exclusion(
         "CLAUDE.md - the two push-channel copies",
         "global + workspace: already in every session's context before it asks, so indexing "
@@ -254,7 +264,7 @@ def _walk_md(root, prune=PRUNE):
 # separate decision for o10 (listed in the o10L321 report).
 _TXT_BEFORE_RENAME = ("BSS",)
 _IN_APP_NAME = re.compile(r" \(in app\)\.md\Z")
-_DREW_NAME = re.compile(r" v[1-9]\d* THE HUMAN(?: duplicate)?\.md\Z")
+_HUMAN_NAME = re.compile(r" v[1-9]\d* THE HUMAN(?: duplicate)?\.md\Z")
 
 
 def _library_origin(p):
@@ -307,7 +317,7 @@ def _live_text_names(d):
     for n in listing:
         if _IN_APP_NAME.search(n) and (pathlib.Path(d) / n).is_file() and _header_says_live(pathlib.Path(d) / n):
             names.add(n)
-    # A flat `versions/` folder holds old texts (a THE HUMAN rewrite there carries `App: live` and a Stage line
+    # A flat `versions/` folder holds old texts (a HUMAN rewrite there carries `App: live` and a Stage line
     # too); the record file belongs to the script folder above it, never to versions/ itself.
     fs = None if pathlib.Path(d).name == "versions" else _file_script()
     if fs is not None:
@@ -329,17 +339,17 @@ def _keep_from_live_folder(p):
     `<NAME> v<N> <AUTHOR>[ (in app)].md` in a flat `versions/`, so the old test on a `versions/PIL/`
     folder and on a `...rewrite.md` name no longer finds anything. The same two shapes now read:
     a pilot file is a file whose origin is PIL (its `## Origin:` line, else the frozen table of logs and notes;
-    training_header.library_origin), and a the human rewrite is a `<NAME> v<N> THE HUMAN.md` file or an old
-    `...rewrite.md` name. The text in the app (`(in app)`) and every other origin stay out. A THE HUMAN file of
+    training_header.library_origin), and a human rewrite is a `<NAME> v<N> THE HUMAN.md` file or an old
+    `...rewrite.md` name. The text in the app (`(in app)`) and every other origin stay out. A HUMAN file of
     another origin (FCI: the human's final of the app's own text, versions/FCI) stays out, as the old rule did."""
     if _IN_APP_NAME.search(p.name) or p.name in _live_text_names(p.parent):
         return False
     origin = _library_origin(p)
     if _is_pilot_file(p):
         return True
-    if origin and _DREW_NAME.search(p.name):
+    if origin and _HUMAN_NAME.search(p.name):
         return False
-    return bool(_DREW_NAME.search(p.name) or p.stem.casefold().endswith("rewrite"))
+    return bool(_HUMAN_NAME.search(p.name) or p.stem.casefold().endswith("rewrite"))
 
 
 def _kept_script_library_md(stage_dir):
@@ -506,7 +516,7 @@ def stores():
     # moved there too, so they were in this corpus before the move (as working_corpus_o8/pilots)
     # and fell out of it by it. 3-final/ stays out as a whole - the `(in app)` texts and the versions/FVA,
     # FVS, FCS, FVN files are the app's own scripts. Only the moved pilot files come back, by the
-    # two shapes the move gave them: anything under a `versions/PIL/` folder, and the the human
+    # two shapes the move gave them: anything under a `versions/PIL/` folder, and the human
     # rewrite files (`...rewrite.md`) beside it. A NAMED RULE, not a pattern over 3-final.
     d = WS / "script-library" / "3-final"
     if d.exists():
@@ -678,7 +688,7 @@ def selftest():
     t("no live script's app version file (versions/FVA, FVS, FCS, FCI, SCRI...) is in the corpus",
       not [p for _k, p in files()
            if sl in p.parents and _version_file_folder(p) is not None and not _is_pilot_file(p)
-           and not _DREW_NAME.search(p.name) and _folder_is_live(_version_file_folder(p))])
+           and not _HUMAN_NAME.search(p.name) and _folder_is_live(_version_file_folder(p))])
     t("a non-live draft's text is IN the corpus (the not-yet-placed drafts)",
       any(sl in p.parents and _is_live_text_name(p.name) and not _header_says_live(p) for _k, p in files())
       or any(sl in p.parents and _version_file_folder(p) is not None
@@ -710,7 +720,7 @@ def selftest():
     mk("sleep/N1/versions/N1 v1 o8.md", hdr % "PIL")
     mk("sleep/N1/versions/N1 v2 o5.md", hdr % "FCS")
     mk("sleep/N1/versions/N1 v3 o3.md", hdr % "BSS")
-    mk("sleep/N1/N1 v5 THE HUMAN.md", "a the human rewrite")
+    mk("sleep/N1/N1 v5 THE HUMAN.md", "a human rewrite")
     mk("sleep/N1/versions/N1 v6 THE HUMAN.md", hdr % "FCI")
     mk("sleep/N2/N2 v2 o8.md", draft_hdr)
     mk("sleep/N2/versions/N2 v1 o8.md", hdr % "PIL")

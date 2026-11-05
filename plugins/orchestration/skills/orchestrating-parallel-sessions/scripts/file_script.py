@@ -34,7 +34,7 @@ Modes
                             owns carry over from the old record file, and no import file or stamp changes
                             revise, release, file and sync-bodies refuse to change the text of a record that carries
                             `## Approved-By:` (the human approved it) unless the run passes --owner-ruling <ref>; see
-                            script-library/README.md (the the human-approved mark) and script-library/THE HUMAN-APPROVED.csv
+                            script-library/README.md (the human-approved mark) and script-library/THE HUMAN-APPROVED.csv
   drift   --git-repo R --rev C
                             read only: build the import files and compare them with the app's blobs at C
   check                  list misfiled scripts, label clashes, lines without a code;
@@ -145,7 +145,7 @@ HEADER_ORDER.insert(HEADER_ORDER.index("Source-position") + 1, "App")
 # 198 files that carry it: without a place of its own it was written after Source-File, and a rewrite of the file moved it.
 # HEADER_ORDER itself stays the list of fields `file`/`revise` own. A live revise (`cmd_revise`) gives the new record file the
 # Opening its new text declares; when the new text declares none it keeps the old record's valid Opening, as
-# check_script.inherited_opening does for a the human rewrite (o10L363 M3, `declared_opening`). The draft revise
+# check_script.inherited_opening does for a human rewrite (o10L363 M3, `declared_opening`). The draft revise
 # (`revise_unreleased`) takes its Opening only from the new draft's own header.
 RENDER_ORDER = list(HEADER_ORDER)
 RENDER_ORDER.insert(RENDER_ORDER.index("App") + 1, "Opening")
@@ -331,7 +331,7 @@ _STAGE_LINE = re.compile(r"^##\s+Stage:", re.M)
 
 
 def _is_record_header(path):
-    """True when the file has a library header: the END marker, and a `## Stage:` line above it. A the human rewrite that
+    """True when the file has a library header: the END marker, and a `## Stage:` line above it. A human rewrite that
     still holds the pilot's own front matter above the marker (a Type, a Source, a Word-bank, no Stage) is a text,
     not a second record file (o10L318 H1)."""
     try:
@@ -424,7 +424,7 @@ def family_of(header, pn):
 def headerless_record_names(folder):
     """The files directly in the folder whose NAME is a record file's (`<NAME> v<N> <AUTHOR>[ (in app)].md`, not a log,
     note or ` duplicate`) but that carry no `<!-- END SCRIPT HEADER -->` line, as [(path, in_app)]. record_files leaves
-    them out; a damaged header (CRLF endings, a deleted marker) is one. A the human rewrite (not `(in app)`) is never listed:
+    them out; a damaged header (CRLF endings, a deleted marker) is one. A human rewrite (not `(in app)`) is never listed:
     the Reader saves it without a header (o10L329, review o10L326 X1)."""
     folder = Path(folder)
     try:
@@ -438,7 +438,7 @@ def headerless_record_names(folder):
         pn = training_header.parse_script_name(n)
         if pn.version is None or pn.kind not in RECORD_KINDS:
             continue
-        # o10L329 (review o10L326 X1): a the human rewrite (`<NAME> v<N> THE HUMAN.md`) is never a damaged record file. The Reader saves
+        # o10L329 (review o10L326 X1): a human rewrite (`<NAME> v<N> THE HUMAN.md`) is never a damaged record file. The Reader saves
         # one with its header stripped into any folder that holds a versioned text, with or without a record file beside
         # it. A headerless `(in app)` the human file is still reported: the text in the app always carries the header.
         if pn.kind == "rewrite" and not pn.in_app:
@@ -449,7 +449,7 @@ def headerless_record_names(folder):
         if _is_record_header(p):
             continue                                     # a record file: record_files has it
         if pn.in_app:
-            # the text in the app always carries the header; a the human text with the pilot's front matter above the marker and no
+            # the text in the app always carries the header; a human text with the pilot's front matter above the marker and no
             # Stage is a normal text (o10L318 H1)
             if not _carries_header(p) or pn.kind != "rewrite":
                 out.append((p, True))
@@ -948,7 +948,7 @@ _REWRITE_VERSION_FORM = re.compile(r"^v?\d+$", re.I)
 
 def rewrite_of_value(header):
     """The label (or `<TYPE>-<ID>`) a header's `## Rewrite-Of:` line names, else "". The Reader's own `## Rewrite-Of: v<K>`
-    (the version of a draft a the human rewrite pairs with, reader_scripts.REWRITE_OF_RE) is not a label and is ignored here."""
+    (the version of a draft a human rewrite pairs with, reader_scripts.REWRITE_OF_RE) is not a label and is ignored here."""
     v = ((header or {}).get("Rewrite-Of") or "").strip().strip("`'\"")
     return "" if not v or _REWRITE_VERSION_FORM.match(v) else v
 
@@ -2973,7 +2973,7 @@ def validate_ruling(ruling):
 
 
 def approval_row(lib, h):
-    """The THE HUMAN-APPROVED.csv row of an approved record, or a LibraryError when the CSV has none (the registry and
+    """The HUMAN-APPROVED.csv row of an approved record, or a LibraryError when the CSV has none (the registry and
     the header must agree before any command changes the text)."""
     sid = h.get("ID", "").strip()
     for r in read_approved_csv(lib):
@@ -3071,7 +3071,7 @@ def record_ruling_in_csv(lib, h, new_hash, entry, note_for=None):
 # the human writes comments in two braces `{{...}}` and review notes in three `{{{...}}}`. A text that holds a comment where a
 # note belongs hashes to a different value once the braces are made three (the draft rule removes a note and keeps a comment's
 # words), so the edit reads as drift from the human's approval although no spoken word changed. The rule: when a text file in the
-# script's folder still hashes to the THE HUMAN-APPROVED.csv row, and that file's spoken lines with every note and comment removed
+# script's folder still hashes to the HUMAN-APPROVED.csv row, and that file's spoken lines with every note and comment removed
 # equal the record's spoken lines with every note and comment removed, the row takes the record's hash with a note saying only
 # notes changed, and no ruling is needed. Any other difference leaves the record drifted, and the existing refusals stand.
 # Used by `approve` (before any step) and `release` (before its checks). A refusal here quotes no script text: it names no line.
@@ -3169,7 +3169,7 @@ NOTES_ONLY_NOTE_RE = re.compile(r"only notes changed \(hash ([0-9a-f]{12}) to ([
 
 
 def notes_only_note_entry(note):
-    """The match of the LAST ` | `-separated entry of a THE HUMAN-APPROVED.csv note when the notes-only rule wrote it, else None.
+    """The match of the LAST ` | `-separated entry of a HUMAN-APPROVED.csv note when the notes-only rule wrote it, else None.
     An earlier notes-only entry followed by any other entry is history and is not returned."""
     parts = [x.strip() for x in note.split(" | ")]
     return NOTES_ONLY_NOTE_RE.fullmatch(parts[-1]) if parts and parts[-1] else None
@@ -3221,7 +3221,7 @@ def notes_only_text_for(folder, p, want, prefix=False):
 
 
 def cmd_repair_notes_only_note(lib, apply=False):
-    """o10L452: correct the note of a THE HUMAN-APPROVED.csv row whose last entry, written by the notes-only rule, names an "after"
+    """o10L452: correct the note of a HUMAN-APPROVED.csv row whose last entry, written by the notes-only rule, names an "after"
     hash the row's text_sha256 no longer holds (a release moved the hash after the rule ran, before release kept the note in
     step). A row is corrected only when its record hashes to text_sha256 (what `check` recomputes) and a text in the record's
     folder hashes to the note's "before" hash with the same spoken lines once notes, comments and pause cues are removed.
@@ -3259,7 +3259,7 @@ def cmd_repair_notes_only_note(lib, apply=False):
 
 
 def approved_report(lib, rows):
-    """(errors, notes) about the the human-approved scripts: rows is read_all(lib). Errors: a CSV row whose script has no
+    """(errors, notes) about the human-approved scripts: rows is read_all(lib). Errors: a CSV row whose script has no
     record, a record without the row's Approved-By line (or with another), an Approved-By line with no row, a ruling
     line that disagrees with the row, and a record whose approved-text sha256 differs from the row's. Notes: a row
     whose sha256 is UNKNOWN, and a row whose note says UNRULED (the human has not ruled on a known difference)."""
@@ -3717,7 +3717,7 @@ def cmd_sync_bodies(lib, source, accept_app_edit=False, notes=None, ruling=None)
             entry["sha256"] = hashlib.sha256(data).hexdigest()
             entry["bytes"] = len(data)
             new_entries[rel] = entry
-    # o10 W239: a the human-approved script's text is not pulled from the app without the human's ruling either
+    # o10 W239: a human-approved script's text is not pulled from the app without the human's ruling either
     ruling = validate_ruling(ruling)
     rulings = {}
     for rel, pos, label, title, path, h, chunk in changed:
@@ -4046,7 +4046,7 @@ def damaged_record_files(lib):
     """Problems for a record-file name that has no header line (a new-style file whose `<!-- END SCRIPT HEADER -->`
     marker is missing or damaged, for instance by CRLF endings). Without this the folder drops out of iter_scripts,
     `check` and INDEX.md with no message. Reported: a headerless file in the record-file shape in a folder that has no
-    record file, and a headerless `(in app)` file anywhere (the text in the app always carries the header). A the human
+    record file, and a headerless `(in app)` file anywhere (the text in the app always carries the header). A human
     rewrite without a header, beside a record file or not, is normal and is not reported. An agent-named text with no
     header at all (no END line) IS reported, and so is one that still shows a `## Stage:`, `## Label:` or `## ID:` line;
     one with the END line and only the pilot's front matter (a lane cut) is a plain text (headerless_record_names)."""
@@ -5493,7 +5493,7 @@ OUTSIDE_FINAL = ("%s is not in script-library/3-final, so `%s` will not put its 
 
 def cmd_release(lib, target, use_git=True, ruling=None):
     """Put a held script into the app. W245 (addition C): when the record's only difference from the human's approved text is in
-    notes and comments, the THE HUMAN-APPROVED.csv row takes the new hash first (adopt_notes_only_hash), so the checks below see no
+    notes and comments, the HUMAN-APPROVED.csv row takes the new hash first (adopt_notes_only_hash), so the checks below see no
     drift; if the release then refuses, the CSV is put back as it was. See _cmd_release for the release itself."""
     csv_path = Path(lib.dir) / APPROVED_CSV
     csv_old = csv_path.read_bytes() if csv_path.is_file() else None
@@ -7004,7 +7004,7 @@ def main(argv=None):
                                            "(refuses any difference that is not the withheld scripts; dry run unless --apply)")
     rb.add_argument("--apply", action="store_true", help="write MANIFEST.json; without it nothing changes")
     rn = sub.add_parser("repair-notes-only-note",
-                        help="correct a THE HUMAN-APPROVED.csv note whose notes-only entry names a hash the row no longer holds "
+                        help="correct a HUMAN-APPROVED.csv note whose notes-only entry names a hash the row no longer holds "
                              "(a release moved it after the notes-only rule ran; o10L452); dry run unless --apply")
     rn.add_argument("--apply", action="store_true", help="write THE HUMAN-APPROVED.csv; without it nothing changes")
     ap2 = sub.add_parser("approve", help="approve a script: move its folder to 3-final and put the approved text in the app; prints one JSON line",

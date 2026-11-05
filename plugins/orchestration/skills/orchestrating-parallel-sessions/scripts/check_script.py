@@ -78,7 +78,7 @@ from script_notes import read_script, strip_comments, strip_strikes  # noqa: E40
 from private_folders import (NAMES as PRIVATE_NAMES, in_private_folder,  # noqa: E402
                              is_link, is_private_name)
 import script_git_dates  # noqa: E402  (first-add date of a file, for the reuse note)
-import training_header  # noqa: E402  (REWRITE_SUFFIX: what a the human-rewrite name is)
+import training_header  # noqa: E402  (REWRITE_SUFFIX: what a human-rewrite name is)
 import pause_cues  # noqa: E402  (PA0: the one canonical pause-cue form, o10L639)
 import file_script  # noqa: E402  (record_files: the one definition of a library record file)
 
@@ -1651,7 +1651,7 @@ def family_stem(path):
     """A version-insensitive stem, so v1/v2/v3 of ONE script are one family."""
     s = os.path.basename(path)
     # o10L321 (review o10L318 H2): a library text is `<NAME> v<N> <AUTHOR>[ (in app)].md`, and every version of one
-    # script, the text in the app and a the human rewrite share NAME. parse_script_name reads NAME as name_key, so that
+    # script, the text in the app and a human rewrite share NAME. parse_script_name reads NAME as name_key, so that
     # is the family. Left to the rules below, "v2 o8" and "v3 THE HUMAN" kept words in the stem and split one script
     # into many families.
     pn = training_header.parse_script_name(s)
@@ -1829,7 +1829,7 @@ def discover_corpus(roots, exts=(".md", ".txt"), base=None):
 # record files under <root>/script-library/ (file_script.record_files): a `<NAME> v<N> <AUTHOR>[ (in
 # app)].md` file outside versions/ whose header holds a `## Stage:` line (the name the renamed
 # library gives each script's current text), or a SCRIPT.md where one is still left, plus the human's
-# rewrites outside versions/ (is_drew_text, o3:W35 at 5a825cd5). versions/ and the other SKIP_DIRS
+# rewrites outside versions/ (is_human_text, o3:W35 at 5a825cd5). versions/ and the other SKIP_DIRS
 # are skipped as before. --corpus / --corpus-at-sc still name other folders on purpose. A script being checked
 # that is not in the corpus is still compared against it (reuse_index_for).
 # test_check_script_reuse_corpus.py.
@@ -1838,7 +1838,7 @@ def discover_corpus(roots, exts=(".md", ".txt"), base=None):
 # local copy of file_script._is_record_header until o10's rename landed on main (b281458f). It now
 # asks record_files(), so the HV6 corpus and file_script agree on what a record file is: every record
 # file in a folder (not only the first), with ` duplicate` copies and the human's rewrites left out. The human's
-# rewrites join the corpus through is_drew_text, never through record_files.
+# rewrites join the corpus through is_human_text, never through record_files.
 # test_check_script_reuse_record_header.py checks the corpus equals the record_files set.
 def _record_set(folder):
     """The normalised absolute paths of file_script.record_files(folder); empty for versions/ and
@@ -1862,35 +1862,35 @@ def _record_set(folder):
 # through file_script.record_files, the second by its own name parse plus a `## Stage:|Label:|ID:` line in the first
 # 8000 bytes. They agreed on all 1377 .md files in script-library/ at the merge (23f3c8a1). They differed only on
 # cases the library does not hold: a header with `## Label:` or `## ID:` but no `## Stage:`, a file with no END
-# marker, a ` duplicate` copy, and a the human rewrite (not `(in app)`) whose header has a `## Stage:` line. This one
+# marker, a ` duplicate` copy, and a human rewrite (not `(in app)`) whose header has a `## Stage:` line. This one
 # function keeps the single definition of a record file (record_files, SF3) and adds the one rule of
-# _is_record_text that record_files lacks: a the human rewrite that is not the app's text is never a record text (it was
-# never SCRIPT.md, o10L344). The HV6 corpus still uses _record_set and adds the human's rewrites through is_drew_text.
+# _is_record_text that record_files lacks: a human rewrite that is not the app's text is never a record text (it was
+# never SCRIPT.md, o10L344). The HV6 corpus still uses _record_set and adds the human's rewrites through is_human_text.
 # test_check_script_reuse_record_header.py and test_check_script_final_type.py cover both callers.
 def is_library_record(path):
     """True for the record text of its folder: a file_script.record_files file (SCRIPT.md in a tree from
     before W235 step 7, see _record_set, or a `<NAME> v<N> <AUTHOR>[ (in app)].md` file whose header holds a `## Stage:` line above the END marker,
-    outside versions/, not a ` duplicate` copy) that is not a the human rewrite outside the app (is_drew_text)."""
+    outside versions/, not a ` duplicate` copy) that is not a human rewrite outside the app (is_human_text)."""
     p = os.path.abspath(path)
-    return os.path.normcase(p) in _record_set(os.path.dirname(p)) and not is_drew_text(p)
+    return os.path.normcase(p) in _record_set(os.path.dirname(p)) and not is_human_text(p)
 
 
 # ⛔ THE HUMAN'S REWRITES: COMPARED AGAINST, NEVER REPORTED (o3:W35 as ruled at 5a825cd5, lane o9L1188).
-# A the human rewrite that is not the app's text - `<NAME> v<N> THE HUMAN.md` without ` (in app)`, or an older
+# A human rewrite that is not the app's text - `<NAME> v<N> THE HUMAN.md` without ` (in app)`, or an older
 # "<stem> - the human rewrite.md" name - is the human's own writing. HV6-REUSE prints nothing for the file
 # itself (analyse() skips the check), but the file stays in the comparison set, so an agent script that
 # copies the human's lines is still reported against it. It joins the family of every corpus file in its
 # folder, so a record is never reported against the human's rewrite of itself. An older name must
-# also end the way OWNER_REWRITE_MD says (a "-TRIMMED-for-approval" cut was made by a lane and is
+# also end the way HUMAN_REWRITE_MD says (a "-TRIMMED-for-approval" cut was made by a lane and is
 # checked). A `v<N> THE HUMAN (in app).md` file is a record file and is checked like any final.
-# test_check_script_reuse_drew_rewrite.py.
-def is_drew_text(path):
+# test_check_script_reuse_owner_rewrite.py.
+def is_human_text(path):
     """True for the human's rewrite that is not the app's text (training_header.parse_script_name:
     kind "rewrite", in_app False)."""
     sn = training_header.parse_script_name(os.path.basename(path))
     if sn.kind != "rewrite" or sn.in_app:
         return False
-    return sn.version is not None or bool(OWNER_REWRITE_MD.search(os.path.basename(path)))
+    return sn.version is not None or bool(HUMAN_REWRITE_MD.search(os.path.basename(path)))
 
 
 # ⛔ ONLY THE HUMAN'S NEWEST TEXT IN A FOLDER IS COMPARED AGAINST (o9 W226, ruled by o9; lane o9L1415).
@@ -1898,37 +1898,37 @@ def is_drew_text(path):
 # them outside versions/ stayed in the corpus, so a line the human had already replaced in a newer version
 # of the same script (v2 THE HUMAN while v3 THE HUMAN exists) still made another script's copy of that old line
 # a reuse row. The exception now covers the newest the human text of each script folder: the highest
-# version among the folder's the human texts (is_drew_text); an unversioned "- the human rewrite.md" name counts
+# version among the folder's the human texts (is_human_text); an unversioned "- the human rewrite.md" name counts
 # as older than any versioned one and is the newest only when it is alone; equal versions are all kept.
-# is_drew_text is unchanged, so a the human text is still never reported itself and still joins its folder's
-# family. test_check_script_reuse_drew_newest.py.
-def _drew_version_key(path):
+# is_human_text is unchanged, so a human text is still never reported itself and still joins its folder's
+# family. test_check_script_reuse_owner_newest.py.
+def _human_version_key(path):
     sn = training_header.parse_script_name(os.path.basename(path))
     return -1 if sn.version is None else sn.version
 
 
-def is_newest_drew_text(path):
-    """True when `path` is a the human text (is_drew_text) and no other the human text in its folder has a higher
+def is_newest_human_text(path):
+    """True when `path` is a human text (is_human_text) and no other the human text in its folder has a higher
     version. Unversioned the human names rank below every versioned one."""
-    if not is_drew_text(path):
+    if not is_human_text(path):
         return False
     folder = os.path.dirname(os.path.abspath(path))
-    mine = _drew_version_key(path)
+    mine = _human_version_key(path)
     try:
         names = os.listdir(folder)
     except OSError:
         return True
     for fn in names:
         p = os.path.join(folder, fn)
-        if fn.endswith(".md") and p != os.path.abspath(path) and is_drew_text(p) and os.path.isfile(p):
-            if _drew_version_key(p) > mine:
+        if fn.endswith(".md") and p != os.path.abspath(path) and is_human_text(p) and os.path.isfile(p):
+            if _human_version_key(p) > mine:
                 return False
     return True
 
 
 def default_reuse_corpus(root=None):
     """The library record files (file_script.record_files, through _record_set) and the human's newest text
-    in each script folder (is_newest_drew_text) under <root>/script-library/ that carry the header
+    in each script folder (is_newest_human_text) under <root>/script-library/ that carry the header
     marker; root defaults to WORKSPACE."""
     lib = os.path.join(root or WORKSPACE, "script-library")
     found = set()
@@ -1939,7 +1939,7 @@ def default_reuse_corpus(root=None):
         records = _record_set(dirpath)
         for fn in filenames:
             p = os.path.abspath(os.path.join(dirpath, fn))
-            if (fn.endswith(".md") and (os.path.normcase(p) in records or is_newest_drew_text(p))
+            if (fn.endswith(".md") and (os.path.normcase(p) in records or is_newest_human_text(p))
                     and not is_link(p) and is_script(p)):
                 found.add(p)
     return sorted(found)
@@ -2050,14 +2050,14 @@ def _build_reuse_index(paths, family_paths=()):
             for q in by_base[r]:
                 union(p, q)
 
-    # the human's rewrite is the same script as the record file in its folder (is_drew_text block). The
+    # the human's rewrite is the same script as the record file in its folder (is_human_text block). The
     # folder, not opening_record(): after o10's rename a record may be `v<N> THE HUMAN (in app).md`,
     # which opening_record() does not pick.
     by_folder = {}
     for p in nodes:
         by_folder.setdefault(os.path.normcase(os.path.dirname(os.path.abspath(p))), []).append(p)
     for p in nodes:
-        if is_drew_text(p):
+        if is_human_text(p):
             for q in by_folder[os.path.normcase(os.path.dirname(os.path.abspath(p)))]:
                 union(p, q)
 
@@ -2074,7 +2074,7 @@ def _build_reuse_index(paths, family_paths=()):
             live_by_key.setdefault(k[1:], set()).add(p)
     # o9L1209 SF: every join is computed from the families as they stand BEFORE any join, so the
     # result does not depend on file order; a family that already has a non-retired member (through
-    # a file-name stem, a `## Source:` or a the human rewrite) is never joined, so this rule cannot merge
+    # a file-name stem, a `## Source:` or a human rewrite) is never joined, so this rule cannot merge
     # two live families (live slugs collide: SC `doitnow` spans 3 families); and the retired
     # members of one family must all point at the same one live family, else none joins.
     pre = {p: find(p) for p in nodes}
@@ -2667,7 +2667,7 @@ def paraphrase_hits(path, extra_skip=()):
 
 def paraphrase_warnings(path):
     """[(code, text)] for the HV6-PARAPHRASE warnings of `path`: none for the human's text, as HV6-REUSE."""
-    if is_drew_text(path):
+    if is_human_text(path):
         return []
     skip = set()
     try:
@@ -2742,12 +2742,12 @@ def _header_id(path):
     return m.group(1) if m else None
 
 
-# ⛔ A THE HUMAN REWRITE WITH NO ID LINE TAKES ITS FOLDER'S ID (o10L339 MF-A, lane o9L1189). Six of the human's
+# ⛔ A HUMAN REWRITE WITH NO ID LINE TAKES ITS FOLDER'S ID (o10L339 MF-A, lane o9L1189). Six of the human's
 # rewrites carry the pilot's front matter, with no `## ID:` or `## Label:` line. Their id came from
 # the file name, which o10's rename changed (SC-05-PILOT-...-v4 became SC-Sl-D-08-001), so their
 # baseline rows went stale and eight finals blocked. Such a rewrite now takes the id of its folder's
 # record file (file_script.record_files, the first one with an id line), else the folder name: both
-# survive a file rename. test_check_script_reuse_drew_rewrite.py.
+# survive a file rename. test_check_script_reuse_owner_rewrite.py.
 def script_id(path):
     """A script's id for the reuse baseline: its `## ID:` header, else its `## Label:`; for the human's
     rewrite with neither, its folder's record file's id, else the folder name; else the folder
@@ -2757,7 +2757,7 @@ def script_id(path):
         own = _header_id(p)
         if own:
             _ID_CACHE[p] = own
-        elif is_drew_text(p):
+        elif is_human_text(p):
             folder = os.path.dirname(p)
             ids = [i for i in (_header_id(str(r)) for r in file_script.record_files(folder)
                                if os.path.normcase(os.path.abspath(str(r))) != os.path.normcase(p)) if i]
@@ -2793,7 +2793,7 @@ def load_reuse_baseline(root):
 # is every corpus file in one script folder. The finding named its alphabetically first file, so a
 # final that copied the human's `v9 THE HUMAN.md` was reported against the record `v2 o5 (in app).md` beside
 # it, which holds none of the copied lines. It now names the member holding the most of the shared
-# 10-grams; a tie goes to the first by path. test_check_script_reuse_drew_rewrite.py.
+# 10-grams; a tie goes to the first by path. test_check_script_reuse_owner_rewrite.py.
 def _overlap_rows(path):
     """[(other family's representative, [(gram index, gram, [ids of family members holding it])])]
     for every overlap of `path`, in the HV6-REUSE index of its tree. The representative is the
@@ -2955,7 +2955,7 @@ def reuse_baseline_rows(root):
     """Every (script id, other script id, 10-gram) overlap the library finals of `root` have."""
     rows = set()
     for p in default_reuse_corpus(root):
-        if not library_final(p) or is_drew_text(p):
+        if not library_final(p) or is_human_text(p):
             continue
         sid = script_id(p)
         for _other, hits in _overlap_rows(p):
@@ -4009,7 +4009,7 @@ def rx_hits(rx, text):
 # cannot tell a whole-sentence menu from a phrase menu, so it would be a guess.
 # o3 ruled (2026-10-08) that SC90 binds AT scripts too, so SC and AT are both
 # checked; an unclassified type is not. A doubled full stop "]].." is flagged
-# once, as SC90-MENU-DOUBLED-STOP (menu_stop_hits). Files named *-owner-rewrite.md in any spelling (OWNER_REWRITE_MD; the human's
+# once, as SC90-MENU-DOUBLED-STOP (menu_stop_hits). Files named *-owner-rewrite.md in any spelling (HUMAN_REWRITE_MD; the human's
 # own waypoint edits, kept as a record, older than the rule) and anything under
 # .edit-history/ are never checked.
 # An option that ends in one of these keeps its period: it belongs to the word.
@@ -4054,7 +4054,7 @@ def library_final(path):
 
 
 # the human's rewrite of a script, named "<stem>-owner-rewrite.md", "<stem> - the human rewrite.md",
-# "<stem>_DREW_REWRITE.md" and so on: any letter case, with space, hyphen or underscore
+# "<stem>_OWNER_REWRITE.md" and so on: any letter case, with space, hyphen or underscore
 # as the separator, directly before ".md". Built on training_header.REWRITE_SUFFIX, the
 # one definition of a rewrite name (reader_scripts.py uses it too), anchored at ".md".
 # A version number after "rewrite" is still the human's file ("- the human rewrite v2.md",
@@ -4062,16 +4062,16 @@ def library_final(path):
 # Any other text after "rewrite" is still checked: "-the human-rewrite-TRIMMED-for-approval.md"
 # was cut by a lane (o8L155), not by the human. The old test, endswith("-owner-rewrite.md"),
 # missed every spaced name (o9, 2026-10-08).
-OWNER_REWRITE_MD = re.compile(training_header.REWRITE_SUFFIX.pattern + r"(?:[- ]?v\d+)?\.md$")
+HUMAN_REWRITE_MD = re.compile(training_header.REWRITE_SUFFIX.pattern + r"(?:[- ]?v\d+)?\.md$")
 
 
 def sc90_exempt(path):
     p = path.replace("\\", "/")
     if "/.edit-history/" in p.lower():
         return True
-    if OWNER_REWRITE_MD.search(os.path.basename(p)):
+    if HUMAN_REWRITE_MD.search(os.path.basename(p)):
         return True
-    # o10L329 (review o10L326 X5): after the library rename the human's rewrite is `<NAME> v<N> THE HUMAN.md`, which OWNER_REWRITE_MD
+    # o10L329 (review o10L326 X5): after the library rename the human's rewrite is `<NAME> v<N> THE HUMAN.md`, which HUMAN_REWRITE_MD
     # does not see. Same exemption for it. Not the `(in app)` text: that was SCRIPT.md before and was checked then. The
     # lane-trimmed copy (`...-the human-rewrite-TRIMMED-for-approval.md`) is now `<NAME> v<N> o8.md`, so it stays checked.
     info = training_header.parse_script_name(os.path.basename(p))
@@ -4169,14 +4169,14 @@ def opening_of(text):
     return m.group(1).strip().lower() if m else ""
 
 
-def is_drew_rewrite_name(path):
+def is_human_rewrite_name(path):
     """True when the file name is the human's rewrite: an old "-owner-rewrite" name in any case and
     separator, or a new `<NAME> v<N> THE HUMAN.md` name. training_header.parse_script_name decides."""
     return training_header.parse_script_name(path).kind == "rewrite"
 
 
 def opening_record(path):
-    """The record file of the script a the human rewrite belongs to, or None.
+    """The record file of the script a human rewrite belongs to, or None.
 
     The record is the file that is not the human's (not a rewrite, log or note) and carries the library header (an END SCRIPT
     HEADER line). A rewrite in a `versions/` folder looks one folder up. Among several candidates the highest version
@@ -4241,7 +4241,7 @@ def _versions_fallback(folder, path):
 
 
 def inherited_opening(path):
-    """o9 W-opening (the human's rewrites, 2026-10-09): the `## Opening:` value a the human rewrite with
+    """o9 W-opening (the human's rewrites, 2026-10-09): the `## Opening:` value a human rewrite with
     no line of its own takes from its record file (opening_record), as (value, record path).
     ("", None) when the record has no valid value or there is no record."""
     rec = opening_record(path)
@@ -4454,10 +4454,10 @@ def analyse(path):
     # cap on enrichment: the human ruled explicitly that the floor band is a minimum,
     # not a ceiling. All bands hold "unless I say otherwise."
     opening = opening_of(raw) if kind == "SC" else ""
-    # A the human rewrite with no `## Opening:` line of its own is timed with its record file's
+    # A human rewrite with no `## Opening:` line of its own is timed with its record file's
     # value (o5 does not edit the human's files). Its own line, when present, wins.
     opening_from = None
-    if kind == "SC" and not opening and is_drew_rewrite_name(path):
+    if kind == "SC" and not opening and is_human_rewrite_name(path):
         opening, opening_from = inherited_opening(path)
     first_words = first_block_words(spoken)
     spoken_words, spoken_if_negative = words, words
@@ -4630,8 +4630,8 @@ def analyse(path):
                          "'run' as a process being executed - %s: \"%s\" "
                          "[SOFT ban, judge it]" % (why, _clip(phrase, 80))))
 
-    # the human's rewrite (not the app's text) gets no HV6-REUSE output (is_drew_text block).
-    for other, n_grams, phrases, status, scale in ([] if is_drew_text(path)
+    # the human's rewrite (not the app's text) gets no HV6-REUSE output (is_human_text block).
+    for other, n_grams, phrases, status, scale in ([] if is_human_text(path)
                                                    else reuse_detail_scaled(path)):
         # Reuse between two library finals was invisible until family_stem() stopped
         # making every SCRIPT.md one family (2026-10-08). An overlap FROZEN in the reuse

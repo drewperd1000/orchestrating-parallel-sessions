@@ -807,11 +807,11 @@ def _names_blocker(entry):
 OPTION_ENTRY_RE = re.compile(r"^[DQ]\d")
 
 
-def is_drew_option(entry):
+def is_human_option(entry):
     """True when `entry` is an open D or Q entry owned by the human, so its boxes are options."""
     return bool(entry and OPTION_ENTRY_RE.match(entry["id"])
                 and od.status_of(entry["body"]) not in od.TERMINAL_STATUS
-                and od.owner_is_drew(entry["body"]))
+                and od.owner_is_human(entry["body"]))
 
 
 def doc_boxes(text, name):
@@ -819,7 +819,7 @@ def doc_boxes(text, name):
 
     A box is an unticked `- [ ]` outside a code fence, a `<details>` fold and a generated
     region, and not an option inside an open decision or question owned by the human
-    (`is_drew_option`). Each carries: key, line, entry (id, or "none" when no entry holds it -
+    (`is_human_option`). Each carries: key, line, entry (id, or "none" when no entry holds it -
     a box cut off by a heading), the entry's line range, its text, and whether the entry names
     a blocker.
     """
@@ -838,7 +838,7 @@ def doc_boxes(text, name):
         if any(lo <= i - 1 <= hi for lo, hi in derived):
             continue
         e = cover[i]
-        if is_drew_option(e):
+        if is_human_option(e):
             continue
         body = _box_text(lines, i)
         if e is not None:

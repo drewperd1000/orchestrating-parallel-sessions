@@ -15,7 +15,7 @@ expensive, undefined, and its omission is invisible at the moment it happens.
 So this is not a reminder and not a document. It is a GATE plus a GENERATOR:
 
   - GATE      `check` exits NON-ZERO on any violated invariant. It does not advise.
-  - GENERATOR `plate` rewrites the the human-facing index FROM the entries, so the index can
+  - GENERATOR `plate` rewrites the human-facing index FROM the entries, so the index can
               never disagree with them. A hand-maintained index is a second copy of the
               truth, and the second copy is always the one that rots.
 
@@ -52,6 +52,10 @@ INVARIANTS - each one traces to an observed failure, not a preference
              "It's fine to keep them for your own inner processes, but I don't want to see
              them." Inline code is exempt, old lines never trip it, and `add` refuses a title
              that carries one. Pattern: orchdoc_ids.PRE_LABEL.
+  E-WORDSELSEWHERE An open entry the human owns, opened 2026-11-03 or later, sends him to a PR, branch
+             or source file to READ words (wording, copy, message, label ...) without quoting
+             them in the entry (o9:W274). Quote them numbered, each labelled with where it
+             shows; the PR or file may follow as the source.
   E-BURIEDASK An unchecked `- [ ]` sub-item this landing ADDS or REWORDS, inside an open entry
              that is not a Q, D or T, asks the human to act ("the human rules on whether ...", "does he
              want it changed?"). The human, 2026-10-15 (o9:W219): the plate lists entries, so a
@@ -563,7 +567,7 @@ def owner_text(body):
 
 
 # THE HUMAN'S NAME IS DATA, NOT CODE. The plate is the entries whose Owner field names the person
-# who reads it. That name used to be one fixed word written into `owner_is_drew`, so a copy of this
+# who reads it. That name used to be one fixed word written into `owner_is_human`, so a copy of this
 # tool used by anyone else found an empty plate: every entry they filed for themselves counted as
 # somebody else's. The name is now the one the plate heading already uses (`human_name()`: the
 # `human_name` key of the workspace's `.orchdoc-config.json`, else the first name on the Claude
@@ -615,7 +619,7 @@ def _human_owner_re():
     return rx
 
 
-def owner_is_drew(body):
+def owner_is_human(body):
     r"""True when an entry's Owner field MENTIONS the human - the one test for "this is his".
 
     "the human" is the human this workspace is for, as `human_owner_names()` says: the name in
@@ -1547,21 +1551,20 @@ def done_when(body):
 # ⭐ THE HUMAN'S NAME, IN ONE PLACE. It was written literally at four sites - a comparison, a
 # docstring and two comments - which made it four facts instead of one and left the publisher
 # refusing lines it had no mechanical way to rewrite. A `Done-when:` value naming the human is
-# vocabulary this tool defines, so it belongs in a constant like every other token here.
-OWNER_TOKEN = "owner"
+# vocabulary this tool defines; it is read from human_name() when the condition is checked.
 
 
 def done_when_satisfied(cond, opened_iso, root):
     """(satisfied, evidence). ⛔ Only ever True on DEMONSTRABLE satisfaction.
 
-    Unknown forms, unevaluatable conditions and OWNER_TOKEN all return False - silence, not a
+    Unknown forms, unevaluatable conditions and the human's name all return False - silence, not a
     guess. A guard that refuses correct work trains bypass, and a bypassed guard is worth less
     than none (o11, 2026-08-19).
     """
     if not cond:
         return False, ""
     low = cond.strip().lower()
-    if low == OWNER_TOKEN:
+    if low == human_name().lower():            # a Done-when naming the human (human_name(), not a fixed word)
         return False, "closes on the owner's word - no mechanical signal by declaration"
     if low.startswith("path:"):
         rel = cond.split(":", 1)[1].strip()
@@ -3429,9 +3432,23 @@ _BA_VERBS = (r"rules?|reads?|confirms?|judges?|answers?|decides?|says?|chooses?|
              r"re-?reviews?|reviews?|gives?|replies|names?|signs? off|marks?|tells?|sends?|"
              r"listens?|looks?|checks?|opens?|rejects?|accepts?|settles?|weighs?|selects?|"
              r"okays?|specif(?:y|ies)|states?|rates?|keeps?")
-_BA_ACTOR_RE = re.compile(r"\b(?:the human|he)\s+(?:(?:then|also|still|next|first|now)\s+)?(?:%s)\b"
-                          % _BA_VERBS, re.I)
-_BA_WHETHER_RE = re.compile(r"\bDrew\s+(?:[\w'-]+\s+){0,3}whether\b", re.I)
+_BA_CACHE = {}
+
+
+def _ba_patterns():
+    """(actor, whether, named, asked) patterns for the human's name from human_name(), cached per name.
+
+    Built when first used, not at import: `human_name()` is defined further down and reads files."""
+    n = re.escape(human_name())
+    pats = _BA_CACHE.get(n)
+    if pats is None:
+        pats = _BA_CACHE[n] = (
+            re.compile(r"\b(?:%s|he)\s+(?:(?:then|also|still|next|first|now)\s+)?(?:%s)\b"
+                       % (n, _BA_VERBS), re.I),
+            re.compile(r"\b%s\s+(?:[\w'-]+\s+){0,3}whether\b" % n, re.I),
+            re.compile(r"\b%s\b" % n, re.I),
+            re.compile(r"\b(?:he|him)\b|\b%s\b(?![’']s)" % n, re.I))
+    return pats
 _BA_COND_RE = re.compile(r"\b(?:when|after|once|if|until|before|since|because|while|unless)\b", re.I)
 # A POINTER names a Q, D or T entry as the place the question now lives: a Reader link, or an id
 # after "entry", "see", "answer to", "waits on", "tracked in". A bare "his D3 ruling" is not one.
@@ -3450,9 +3467,10 @@ def buried_ask_in(text):
     if _BA_POINTER_RE.search(text):
         return False
     bare = _BA_QUOTE_RE.sub(" ", text)
-    if not re.search(r"\bDrew\b", bare, re.I):
+    actor_re, whether_re, named_re, asked_re = _ba_patterns()
+    if not named_re.search(bare):
         return False
-    for m in _BA_ACTOR_RE.finditer(bare):
+    for m in actor_re.finditer(bare):
         clause = re.split(r"[.;:\n]", bare[:m.start()])[-1]
         if _BA_COND_RE.search(clause):
             continue          # "When the human rules on D74: dispatch ..." is a trigger, not a request
@@ -3460,10 +3478,10 @@ def buried_ask_in(text):
                      bare[m.end():m.end() + 40], re.I):
             continue          # "the human reads lane sessions sometimes" is a habit, not a request
         return True
-    if _BA_WHETHER_RE.search(bare):
+    if whether_re.search(bare):
         return True
     for sent in re.findall(r"[^.!;?]*\?", bare):          # each sentence that ends in "?"
-        if re.search(r"\b(?:he|him)\b|\bDrew\b(?![’']s)", sent, re.I):
+        if asked_re.search(sent):
             return True
     return False
 
@@ -3570,11 +3588,12 @@ def _selftest_buried_ask():
     """The selftest fixture for E-BURIEDASK: an added ask fires; a pointer, a checked box and an
     old sub-item do not."""
     head = "# Doc\n\n## PLATE\n\n### W9998 - entry\n**Status:** OPEN - **Owner:** o99\n\n"
-    base = (head + "- [ ] the human rules on whether the title stays.\n").split("\n")
-    fire = (head + "- [ ] the human rules on whether the title stays.\n"
-            "- [ ] the human reads the draft and gives notes.\n").split("\n")
-    point = (head + "- [ ] the human reads the draft (now its own entry, Q4).\n").split("\n")
-    checked = (head + "- [x] the human reads the draft and gives notes.\n").split("\n")
+    who = human_name().title()
+    base = (head + "- [ ] %s rules on whether the title stays.\n" % who).split("\n")
+    fire = (head + "- [ ] %s rules on whether the title stays.\n" % who
+            + "- [ ] %s reads the draft and gives notes.\n" % who).split("\n")
+    point = (head + "- [ ] %s reads the draft (now its own entry, Q4).\n" % who).split("\n")
+    checked = (head + "- [x] %s reads the draft and gives notes.\n" % who).split("\n")
     return (len(buried_ask_text_findings(base, fire)) == 1
             and not buried_ask_text_findings(base, base)
             and not buried_ask_text_findings(base, point)
@@ -4649,7 +4668,7 @@ ADVISORY = {"W-STALLED", "W-DEADCITE", "W-SHACITE", "W-LINECITE", "W-BADLINEREF"
             "W-WALLOFTEXT", "W-PICTURENOTSHOWN", "W-CLOUDREF"}
 # o9 W126 and W127 (the human, 2026-10-01): text the human copies, and pictures he looks at, go IN the
 # entry. The checks are in the block that starts at `fenced_lines`.
-BLOCKING |= {"E-COPYBYLINK", "E-IMAGEBYPATH", "E-PRELABEL", "E-BURIEDASK"}
+BLOCKING |= {"E-COPYBYLINK", "E-IMAGEBYPATH", "E-PRELABEL", "E-BURIEDASK", "E-WORDSELSEWHERE"}
 ADVISORY |= {"W-PASTEDRIFT", "W-PICUNTRACKED"}
 # o9:W258: notes are the human's; a `NOTE from o<N>` line is for its owner to clean up.
 ADVISORY |= {"W-ORCHNOTE"}
@@ -5065,9 +5084,9 @@ def build_plate_block(entries, raw_lines=None):
         #
         # ⭐ AND IT IS THE SHARED FUNCTION, not a second copy of the same sentence. The first
         # version of this fix left the generator matching on its own capture while the checker
-        # used owner_is_drew - two definitions of one question, which is the defect o10 caught
+        # used owner_is_human - two definitions of one question, which is the defect o10 caught
         # reappearing three lines below the comment describing it.
-        if not owner_is_drew(e["body"]):
+        if not owner_is_human(e["body"]):
             held += 1
             continue
         title = strip_decoration(e["title"])
@@ -6099,9 +6118,9 @@ def _guard_open(e, force_open=()):
                                      and status_of(e["body"]) not in TERMINAL_STATUS)
 
 
-def _drew_acts(e):
+def _human_acts(e):
     """An entry the human acts on: a T item, or any entry whose Owner names him."""
-    return bool(re.match(r"^T\d", e["id"])) or owner_is_drew(e["body"])
+    return bool(re.match(r"^T\d", e["id"])) or owner_is_human(e["body"])
 
 
 def _entry_insert_at(lines, e, starts):
@@ -6236,7 +6255,7 @@ def copy_findings(doc_name, entries, lines, force_open=(), roots=None, only=None
             continue
         if not _guard_open(e, force_open):
             continue
-        acts = _drew_acts(e)
+        acts = _human_acts(e)
         a, b = _own_span(e, starts, len(lines))
         rows, _notes = _guard_lines(lines, live, fz, a, b)
         seen = set()
@@ -6825,12 +6844,12 @@ def image_findings(doc_name, entries, lines, force_open=(), roots=None, only=Non
                                    "%s names a picture by a shortened path, %s, instead of "
                                    "showing it" % (e["id"], raw),
                                    _unknown_picture_fix(slug, e["id"], "find the file")))
-            elif kind == "gone" and _drew_acts(e):
+            elif kind == "gone" and _human_acts(e):
                 out.append(Finding("E-IMAGEBYPATH", line,
                                    "%s names the picture %s, which is not on this computer, "
                                    "instead of showing it" % (e["id"], raw),
                                    _unknown_picture_fix(slug, e["id"], "find or remake it")))
-            elif kind == "name" and IMAGE_NAME_REFUSES and _drew_acts(e):
+            elif kind == "name" and IMAGE_NAME_REFUSES and _human_acts(e):
                 out.append(Finding("E-IMAGEBYPATH", line,
                                    "%s names the picture %s without showing it, and no file by "
                                    "that name is here" % (e["id"], raw),
@@ -7630,6 +7649,150 @@ def _selftest_copy_guards(fixtured):
     return ok
 
 
+# ---- E-WORDSELSEWHERE: the human is sent to a PR, branch or file to READ words ----------------------
+# o9 W274 (the human, 2026-11-03). o10 Q40 item 2 listed the member-facing wording for a screen and then
+# said "The draft words are in `stanzaCopy.ts` on the PR ... read them in the PR before release."
+# He has to leave the entry to read what he is being asked to approve. The words go IN the entry;
+# the PR or file may follow as the source, never in place of them.
+#
+# THE HEURISTIC. An entry's body is cut into units: a list item with its continuation lines, or a
+# paragraph. A SENTENCE trips it when it holds a pointer away from the doc ("in the PR", "the
+# branch", "PR 588", a GitHub /pull/ URL, or a path ending .ts .tsx .js .py .json .md) AND it
+# SENDS the human there for words, in one of two shapes:
+#   - it says where words are: a wording word (wording, words, copy, text, message, label, string,
+#     phrasing, script line) followed within four words by "is/are/sits/lives in/on/at"
+#     ("The draft words are in `stanzaCopy.ts` on the PR");
+#   - it tells him to read them there ("read them in the PR", "review it on the branch"), in a
+#     unit that names a wording word.
+# A wording word and a path in one sentence is NOT enough. Measured 2026-11-03 (o9L1007) on the
+# 145 open the human entries in the 11 docs, restamped to that day: the looser test fired on 30, and
+# about 25 of them were ordinary entries ("the pause cue out of the text (`handler.py` ...)",
+# "power words ... exactly SG7's handrail in `SCRIPT-CHECKLIST-6B-...md`"). This test fires on 2:
+# o10 Q40, and o10 D158 ("The copy you most likely saw is in `SCRIPT-CHECKLIST-2-LENGTH.md`"),
+# which a quoted line would clear.
+# It is cleared when its unit or the unit right after it holds a `>` blockquote or a fenced block;
+# when the two together hold at least TWO double-quoted spans of 4+ words (two, not one, because
+# the Q40 sentence itself quotes one message and still sent the human to the PR for the rest); or when
+# two or more NUMBERED items follow it, nested under its list item or straight after its
+# paragraph: the words written out as a plain numbered list, which is what the fix asks for.
+# Only entries opened on or after WORDS_ELSEWHERE_FROM are reported; older ones were written
+# before the rule, and a blocking code must not fail them.
+WORDS_ELSEWHERE_FROM = "2026-11-03"
+_WE_WORDS = r"(?:wording|words?|copy|texts?|messages?|labels?|strings?|phrasing|script lines?)"
+_WE_WORD_RE = re.compile(r"\b%s\b" % _WE_WORDS, re.I)
+_WE_LOCATE_RE = re.compile(
+    r"\b%s\b(?:\s+[^\s|]+){0,4}?\s+(?:is|are|sits?|lives?|lies?|stays?)\s+(?:only\s+)?"
+    r"(?:in|on|at)\b" % _WE_WORDS, re.I)
+# "see" and "check" are left out: "see the guard comment in `welcomeEmail.ts`" points at code.
+_WE_READ_AT_RE = re.compile(
+    r"\b(?:read|review|edit|approve)\b[^.;|]{0,80}?\b(?:in|on|at)\s+"
+    r"(?:the\s+(?:PR|pull request|branch|file|draft)\b|PR\s*#?\d+|\[|`|https?://)", re.I)
+_WE_POINTER_RE = re.compile(
+    r"\b(?:in|on|see|read|from|at)\s+the\s+(?:PR|pull request|branch)\b|\bthe\s+branch\b"
+    r"|\bPR\s*#?\d+\b|github\.com/[^\s)]+/pull/\d+|[\w./\\-]+\.(?:tsx?|jsx?|py|json|md)\b", re.I)
+_WE_ITEM_RE = re.compile(r"(\s*)(?:([-*+])|(\d+)[.)])\s")
+# the human's exception, 2026-11-03 13:05 PT: sleep scripts (AT or SC, in script-library/) may be pointed
+# to by their Reader link (`http://127.0.0.1:8787/#scripts/...`) or a script-library/ path instead
+# of being pasted. Such a link or path is removed from a sentence before the pointer test.
+_WE_SLEEP_SCRIPT_RE = re.compile(
+    r"https?://[^\s)\]]*#scripts/[^\s)\]]*|(?:[\w./\\-]*)script-library[/\\][^\s)\]`]*", re.I)
+_WE_QUOTE_RE = re.compile(r'"([^"\n]+)"|“([^”\n]+)”')
+
+
+def _we_units(body):
+    """Cut a body into list items (with continuation lines) and paragraphs."""
+    units, cur = [], []
+    for ln in body.split("\n"):
+        if not ln.strip():
+            if cur:
+                units.append(cur)
+            cur = []
+        elif _WE_ITEM_RE.match(ln) and cur:
+            units.append(cur)
+            cur = [ln]
+        else:
+            cur.append(ln)
+    if cur:
+        units.append(cur)
+    return ["\n".join(u) for u in units]
+
+
+def _we_shown(text):
+    """True when `text` holds a blockquote or a fenced block."""
+    return bool(re.search(r"^\s*(?:>|```|~~~)", text, re.M))
+
+
+def _we_long_quotes(text):
+    return sum(1 for m in _WE_QUOTE_RE.finditer(text)
+               if len((m.group(1) or m.group(2) or "").split()) >= 4)
+
+
+def _we_numbered_after(units, i):
+    """How many NUMBERED items follow unit i as its own list: nested deeper than its list item,
+    or straight after its paragraph. Stops at the first unit that is not such an item."""
+    m = _WE_ITEM_RE.match(units[i])
+    depth = len(m.group(1).expandtabs(4)) if m else -1
+    n = 0
+    for u in units[i + 1:]:
+        mm = _WE_ITEM_RE.match(u)
+        if not mm or not mm.group(3) or len(mm.group(1).expandtabs(4)) <= depth:
+            break
+        n += 1
+    return n
+
+
+def _we_sends(sent, unit):
+    """True when one sentence sends the human to a PR, branch or file for words."""
+    bare = _WE_SLEEP_SCRIPT_RE.sub("", sent)
+    if not _WE_POINTER_RE.search(bare):
+        return False
+    if _WE_LOCATE_RE.search(bare):
+        return True
+    return bool(_WE_READ_AT_RE.search(bare)) and bool(
+        _WE_WORD_RE.search(_WE_SLEEP_SCRIPT_RE.sub("", unit)))
+
+
+def words_sent_elsewhere(body):
+    """Sentences that send the human to a PR, branch or file to read words not quoted in the entry."""
+    out = []
+    units = _we_units(body)
+    for i, u in enumerate(units):
+        nxt = units[i + 1] if i + 1 < len(units) else ""
+        hit = None
+        # A table cell is its own sentence: a wording word in one cell and a path in another
+        # are two facts about a row, not a pointer for words.
+        for sent in re.split(r"(?<=[.!?])\s+|\s*\|\s*", u):
+            if _we_sends(sent, u):
+                hit = sent.strip()
+                break
+        if not hit or _we_shown(u) or _we_shown(nxt):
+            continue
+        if _we_long_quotes(u) + _we_long_quotes(nxt) >= 2:
+            continue
+        if _we_numbered_after(units, i) >= 2:
+            continue
+        out.append(hit)
+    return out
+
+
+def _words_elsewhere_applies(e):
+    """Open, the human-owned, and opened on or after WORDS_ELSEWHERE_FROM."""
+    if e.get("archived") or status_of(e["body"]) in TERMINAL_STATUS:
+        return False
+    if not owner_is_human(e["body"]):
+        return False
+    m = re.search(r"\*\*Opened:?\*\*[^\n]*?(\d{4}-\d{2}-\d{2})", e["body"])
+    return bool(m) and m.group(1) >= WORDS_ELSEWHERE_FROM
+
+
+def _selftest_words_elsewhere():
+    """Fixture for the selftest: the Q40 shape fires; the same words quoted do not."""
+    bad = ("The draft words are in `client/src/stanzaCopy.ts` on the PR. They are yours to edit; "
+           "read them in the PR before release.")
+    good = bad + '\n\n> 1. "Record the silence again please" (stanza screen)\n'
+    return bool(words_sent_elsewhere(bad)) and not words_sent_elsewhere(good)
+
+
 def check_doc(path):
     """Run every invariant against one doc. Returns a list of Finding."""
     try:
@@ -7873,11 +8036,11 @@ def check_doc(path):
     #
     # ⭐ So the entry DECLARES its own completion signal, and this evaluates it. Some items
     # genuinely have none - a taste call closes on the owner's word and nothing will ever detect
-    # it - and a `Done-when:` naming the owner (OWNER_TOKEN) says so out loud, which is
+    # it - and a `Done-when:` naming the owner (the human's name) says so out loud, which is
     # information rather than a gap.
     #
     # ⛔ FIRES ONLY ON DEMONSTRABLE SATISFACTION. Unknown forms, unevaluatable conditions and
-    # OWNER_TOKEN are all silent. o11: a guard that refuses correct work several times a day
+    # the human's name are all silent. o11: a guard that refuses correct work several times a day
     # trains bypass, and a bypassed guard is worth less than none.
     for e in (entries if _wants("E-DONEBUTOPEN") else ()):
         if e.get("archived") or status_of(e["body"]) not in ("OPEN", "BLOCKED"):
@@ -9458,7 +9621,7 @@ def check_doc(path):
         try:
             _live = without_attestations(e["body"])
             _pages = [] if pictures_blocks(_live) else picture_pages(_live)
-            _bare = pictures_not_shown(_live) if owner_is_drew(e["body"]) else []
+            _bare = pictures_not_shown(_live) if owner_is_human(e["body"]) else []
             _named = _pic_reported.get(e["line"], set())
             _bare = [(w, p) for w, p in _bare if os.path.normcase(str(p)) not in _named]
         except Exception as _e:
@@ -9478,6 +9641,26 @@ def check_doc(path):
                 % (e["id"], len(_bare), "" if len(_bare) == 1 else "s",
                    "it" if len(_bare) == 1 else "them", _bare[0][0]),
                 "show it: ![what it shows](path), or several in a **Pictures:** block"))
+
+    # --- E-WORDSELSEWHERE (o9 W274): an open entry the human owns sends him to a PR, branch or file to
+    # read words, instead of quoting them. Fails open like the checks around it.
+    for e in (entries if _wants("E-WORDSELSEWHERE") else ()):
+        try:
+            if not _words_elsewhere_applies(e):
+                continue
+            _hits = words_sent_elsewhere(without_attestations(e["body"]))
+        except Exception as _e:
+            sys.stderr.write("[orchdoc] E-WORDSELSEWHERE could not run on %s %s: %s\n"
+                             % (path.name, e["id"], str(_e)[:160]))
+            continue
+        if _hits:
+            findings.append(Finding(
+                "E-WORDSELSEWHERE", e["line"],
+                "%s sends the human to a PR, branch or file to read words instead of quoting them: %s"
+                % (e["id"], _hits[0][:200]),
+                "quote the words in the entry, numbered, each labelled with where it shows; "
+                "the PR or file may follow as the source. Sleep scripts are the exception: "
+                "link the script's Reader entry instead"))
 
     # --- W-PICUNTRACKED (o9 W133, ruled 2026-10-21 02:28 PT): an embed of a picture that git
     # neither tracks nor ignores. The Reader shows it from disk, but a commit of the doc does
@@ -10269,6 +10452,8 @@ def cmd_selftest(args):
         ("E-PRELABEL", None),
         # A question for the human as an unchecked sub-item of a work entry (o9:W219); text fixture.
         ("E-BURIEDASK", None),
+        # Words the human must read sit in a PR or file, not in the entry (o9:W274); text fixture.
+        ("E-WORDSELSEWHERE", None),
         # o5: a bare date is only unanswerable when the contending work is same-day.
         ("E-AMBIGUOUSDATE",
          "## DECISIONS\n\n### D1 - verdict\n"
@@ -10392,6 +10577,13 @@ def cmd_selftest(args):
             ok &= good
             print("  [%s] %-12s -> an added unchecked sub-item asking the human fires; a pointer to a "
                   "Q entry, a checked box and an old sub-item do not" % ("OK" if good else "FAIL", want))
+            continue
+
+        if body is None and want == "E-WORDSELSEWHERE":
+            good = _selftest_words_elsewhere()
+            ok &= good
+            print("  [%s] %-12s -> a pointer to a PR or file for words fires; the words quoted "
+                  "in the entry do not" % ("OK" if good else "FAIL", want))
             continue
 
         if body is None and want == "E-WAKESOTHERS":
@@ -10544,7 +10736,7 @@ def cmd_selftest(args):
         # W-PICTURENOTSHOWN fires on a path in the human's own note, which E-IMAGEBYPATH does not
         # read; on a path E-IMAGEBYPATH reports it is silent: one finding per picture (o9,
         # 2026-10-02).
-        _drew_note = render_note("D7.n1", "the human", "2026-10-02 03:00", "the card is %s" % _png)
+        _human_note = render_note("D7.n1", "the human", "2026-10-02 03:00", "the card is %s" % _png)
         for _code, _label, _body, _st, _own, _want in [
                 ("E-PICTUREPAGE", "refuses a page", "See all of them: `%s`." % _page,
                  "OPEN", "the human", True),
@@ -10557,12 +10749,12 @@ def cmd_selftest(args):
                 ("E-PICTUREPAGE", "joined block",
                  "See all of them: `%s`.\nprose above\n%s" % (_page, _block), "OPEN", "the human",
                  True),
-                ("W-PICTURENOTSHOWN", "path in the human's note", "The card.\n\n%s" % _drew_note,
+                ("W-PICTURENOTSHOWN", "path in the human's note", "The card.\n\n%s" % _human_note,
                  "OPEN", "the human", True),
                 ("W-PICTURENOTSHOWN", "shown clears it",
-                 "The card.\n\n%s\n\n![the card](%s)" % (_drew_note, _png), "OPEN", "the human",
+                 "The card.\n\n%s\n\n![the card](%s)" % (_human_note, _png), "OPEN", "the human",
                  False),
-                ("W-PICTURENOTSHOWN", "not his: silent", "The card.\n\n%s" % _drew_note,
+                ("W-PICTURENOTSHOWN", "not his: silent", "The card.\n\n%s" % _human_note,
                  "OPEN", "o99", False),
                 ("W-PICTURENOTSHOWN", "E-IMAGEBYPATH names it: silent",
                  "The card: `%s`." % _png, "OPEN", "the human", False)]:
@@ -11526,7 +11718,7 @@ def cmd_registry(args):
     \u26d4 THE REGISTRY IS READ BY ALMOST NOTHING. Before this, `orchdoc.py` touched it in one
     place - `registry_status()`, for an active/retired word. Its SCOPE column, which decides who
     owns what, was validated by no hook, gate or task. o1 measured that as their F24 after a
-    day in which a the human ruling sat in two OrchDocs while both registry rows still described the
+    day in which a human ruling sat in two OrchDocs while both registry rows still described the
     old world.
 
     \u2b50 WHAT IS CHECKABLE IS NOT WHAT HURT. o1's headline case was two rows whose prose
@@ -16021,7 +16213,7 @@ def _finish_delivery_detached(script, base):
         return False
 
 
-def _checkout_drew_reads():
+def _checkout_human_reads():
     """The main worktree of the repo PROJECTS is in - the checkout every session reads."""
     rc, out, _ = git(["worktree", "list", "--porcelain"], cwd=PROJECTS)
     if rc == 0:
@@ -16055,7 +16247,7 @@ def _deliver_landed_files():
       - any exception here is caught and reported as a skip
     """
     try:
-        base = _checkout_drew_reads()
+        base = _checkout_human_reads()
         script = Path(DELIVER_SCRIPT) if DELIVER_SCRIPT else _real_deliver_path()
         if script is None or not script.exists():
             print("  deliver: skipped - no current deliver.py beside orchdoc.py or in %s"
@@ -21280,7 +21472,7 @@ def cmd_priority(args):
 
 def cmd_plate(args):
     """
-    REGENERATE the the human-facing index from the entries.
+    REGENERATE the human-facing index from the entries.
 
     This is the command that kills the largest failure class. Status lived in three to
     five hand-maintained places per doc (o8's DA3 status appeared in FIVE), and nothing

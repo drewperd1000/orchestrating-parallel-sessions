@@ -91,17 +91,31 @@ DOC_SLUG_RE = re.compile(r"^ORCHESTRATOR-DECISIONS-(o\d+)\.md$")
 #   * `needs?` - "the two older ones need the human to open the app" asks the same thing.
 #   * "his taste" alone matched description ("the corpus already carries his taste"); it now
 #     needs a verb that makes it an ask ("needs his taste", "up to his taste").
-# ⛔ THE NAME IS KEPT OUT OF THE PATTERN TEXT. The public publisher rewrites the name to
-# "the human", and its sentence-start rule put a literal `\1` into this raw regex - the
-# sanitised module then failed to compile, and every script that imports orchdoc with it
-# (publish dry run, 2026-10-01). As a plain string the rewrite is harmless.
-_ASK_NAME = re.escape("the human")
-HUMAN_ASK_RE = re.compile(
-    (r"\bneeds? %(n)s\b|\bhis call\b|\bwaiting on your\b|\b%(n)s's judge?ment\b"
-     r"|\bonly he can\b"
-     r"|\b(?:needs?|awaits?|waits? on|waiting on|a matter of|up to)\s+his taste\b"
-     r"|\bfor %(n)s to\b|\b%(n)s to approve\b|\b%(n)s must\b") % {"n": _ASK_NAME},
-    re.I)
+# The human's name is read from orchdoc.human_name() when a check runs (see `_name`), never written
+# here, so a copy of this tool used by anyone else asks about its own reader.
+_ASK_CACHE = {}
+
+
+def _name(od=None):
+    """The human's name for the patterns below: `od.human_name()`, else a neutral word."""
+    try:
+        return od.human_name()
+    except Exception:
+        return "THE HUMAN"
+
+
+def human_ask_re(od=None):
+    """The P2 pattern for language that asks something of the human, cached per name."""
+    name = _name(od)
+    rx = _ASK_CACHE.get(("ask", name))
+    if rx is None:
+        rx = _ASK_CACHE[("ask", name)] = re.compile(
+            (r"\bneeds? %(n)s\b|\bhis call\b|\bwaiting on your\b|\b%(n)s's judge?ment\b"
+             r"|\bonly he can\b"
+             r"|\b(?:needs?|awaits?|waits? on|waiting on|a matter of|up to)\s+his taste\b"
+             r"|\bfor %(n)s to\b|\b%(n)s to approve\b|\b%(n)s must\b") % {"n": re.escape(name)},
+            re.I)
+    return rx
 
 # A negation earlier in the same clause turns the phrase into its opposite: "nothing here
 # needs the human", "it does not need the human". Measured 2026-09-24: 4 of the first 17 hits.
@@ -112,15 +126,21 @@ NEGATED_RE = re.compile(
 PREP_BEFORE_RE = re.compile(r"(?i)\b(?:from|by|of|to|for|with)\s+$")
 
 # A statement that RECORDS a ruling rather than asking for one. When the same statement (one
-# list item, one prose paragraph, one table row) carries one of these, the the human-language in it
+# list item, one prose paragraph, one table row) carries one of these, the human-language in it
 # is the record of what he decided, not a question still open.
 #
 # ⛔ "ruling" on its own is NOT here: "this needs the human's ruling" is the exact line P2 exists to
 # find. Only past-tense and closed-state markers count, plus a dated attribution to the human
 # ("the human, 2026-09-15"), which is how these docs quote something he already said.
-RULING_MARK_RE = re.compile(
-    r"(?i:\bruled\b)|\bRESOLVED\b|\bANSWERED\b|\bRETRACTED\b|\bSUPERSEDED\b|\*\*Resolved"
-    r"|(?i:\bverbatim\b)|\bDrew,?\s+(?:on\s+)?\d{4}-\d{2}-\d{2}")
+def ruling_mark_re(od=None):
+    """The pattern for a statement that records a ruling, for the human's name; cached per name."""
+    name = _name(od)
+    rx = _ASK_CACHE.get(("ruling", name))
+    if rx is None:
+        rx = _ASK_CACHE[("ruling", name)] = re.compile(
+            r"(?i:\bruled\b)|\bRESOLVED\b|\bANSWERED\b|\bRETRACTED\b|\bSUPERSEDED\b|\*\*Resolved"
+            r"|(?i:\bverbatim\b)|\b%s,?\s+(?:on\s+)?\d{4}-\d{2}-\d{2}" % re.escape(name.title()))
+    return rx
 
 # An entry id written in prose. A statement naming a live §2 entry is a POINTER to where the
 # the human part is already filed ("changing either needs the human's yes, which is D45").
@@ -138,8 +158,8 @@ UNCHECKED_RE = re.compile(r"^\s*[-*+]\s*\[\s\]")
 REWRITE_RE = re.compile(r"rewrite", re.I)
 VERSION_RE = re.compile(r"[-_ ]v(\d+)[a-z]?$", re.I)
 # What to strip off a cited name to find the family it belongs to.
-FAMILY_TAIL_RE = re.compile(r"(?:\s+-\s+%s rewrite.*|[-_ ]v\d+[a-z]?|[-_ ]?rewrite.*)$"
-                            % _ASK_NAME, re.I)
+# "<title> - the human rewrite" is a FILE-NAME suffix fixed by the script library, not the reader's name.
+FAMILY_TAIL_RE = re.compile(r"(?:\s+-\s+the human rewrite.*|[-_ ]v\d+[a-z]?|[-_ ]?rewrite.*)$", re.I)
 MIN_FAMILY_CHARS = 6   # a family name shorter than this matches unrelated files
 
 # ---- P7: what counts as naming a file in a resolution --------------------------------------
@@ -309,9 +329,9 @@ def check_plate_owner(d):
         if top not in ("2", "3"):
             continue
         owner = od.owner_text(e["body"])
-        humans = od.owner_is_drew(e["body"])
+        is_human = od.owner_is_human(e["body"])
         st = od.status_of(e["body"])
-        if top == "2" and not humans:
+        if top == "2" and not is_human:
             # An open entry with NO Owner field is E-NOOWNER's finding already.
             if not owner and st in od.PLATE_STATUS:
                 continue
@@ -323,7 +343,7 @@ def check_plate_owner(d):
                                                      else "missing"),
                 "if it needs the human, write **Owner:** the human; if it is the orchestrator's own work, "
                 "move it to §3 as a W entry"))
-        elif top == "3" and humans:
+        elif top == "3" and is_human:
             out.append(od.Finding(
                 "W-PLATEOWNER", e["line"],
                 "%s sits in §3, the orchestrator's work, but its Owner '%s' names the human%s"
@@ -370,32 +390,33 @@ def _units(d, lo, hi):
     return units
 
 
-def _drew_ask(line):
+def _human_ask(line, od=None):
     """The first phrase in `line` that asks something of the human, or None.
 
     Struck text, code spans and HTML comments are removed first - they do not assert anything.
     A phrase negated earlier in its clause, or a "the human must" whose the human follows a preposition,
     is not an ask."""
     ln = INLINE_CODE_RE.sub(" ", STRUCK_SPAN_RE.sub(" ", HTML_COMMENT_RE.sub(" ", line)))
-    for m in HUMAN_ASK_RE.finditer(ln):
+    rx = human_ask_re(od)
+    for m in rx.finditer(ln):
         before = ln[:m.start()]
         if NEGATED_RE.search(before[-60:]):
             continue
-        if re.match(_ASK_NAME + r" must", m.group(0), re.I) and PREP_BEFORE_RE.search(before):
+        if re.match(re.escape(_name(od)) + r" must", m.group(0), re.I) and PREP_BEFORE_RE.search(before):
             continue
         return m
     return None
 
 
-def check_drew_line(d):
+def check_human_line(d):
     od, out, seen = d.od, [], set()
-    # Live entries in §2: the places a the human ask is supposed to be filed.
+    # Live entries in §2: the places a human ask is supposed to be filed.
     plate_ids = {e["id"] for e in d.entries
                  if _is_live(e, od) and d.top(e["line"]) == "2"}
     for e in d.entries:
         if not _is_live(e, od) or d.top(e["line"]) != "3":
             continue
-        if od.owner_is_drew(e["body"]):
+        if od.owner_is_human(e["body"]):
             continue
         lo = e["line"] + 1
         hi = e["line"] + len(e["body"].splitlines()) - 1
@@ -414,13 +435,13 @@ def check_drew_line(d):
             live = HTML_COMMENT_RE.sub(" ", unit)
             live = STRUCK_SPAN_RE.sub(" ", live)
             live = INLINE_CODE_RE.sub(" ", live)
-            if RULING_MARK_RE.search(live):
+            if ruling_mark_re(od).search(live):
                 continue
             # Already filed: the statement points at a live §2 entry of this doc.
             if plate_ids & set(PROSE_ID_RE.findall(live)):
                 continue
             for i in range(a, b + 1):
-                m = _drew_ask(d.lines[i - 1])
+                m = _human_ask(d.lines[i - 1], od)
                 if m:
                     seen.add(a)
                     out.append(od.Finding(
@@ -999,7 +1020,7 @@ def check_sweep_open(d):
 
 CHECKS = (
     ("P1", check_plate_owner),
-    ("P2", check_drew_line),
+    ("P2", check_human_line),
     ("P3", check_newer_sibling),
     ("P7", check_ruled_not_landed),
     ("P8", check_one_way_cite),

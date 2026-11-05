@@ -256,7 +256,7 @@ def kind_of(eid):
     return m.group(1)[0] if m else "?"
 
 
-def on_drews_plate(entry):
+def on_humans_plate(entry):
     """The plate predicate, EXACTLY as `build_plate_block` applies it.
 
     ⛔ Three conditions, and all three are orchdoc's own functions. Dropping any one of them
@@ -268,7 +268,7 @@ def on_drews_plate(entry):
     """
     return (not entry.get("archived")
             and orchdoc.status_of(entry["body"]) in orchdoc.PLATE_STATUS
-            and orchdoc.owner_is_drew(entry["body"])
+            and orchdoc.owner_is_human(entry["body"])
             and orchdoc.today_on_plate(entry))
 
 
@@ -444,7 +444,7 @@ def build_doc_model(slug, path):
             "status": status,
             "sclass": status_class(status),
             "owner": orchdoc.owner_text(e["body"]) or "",
-            "plate": on_drews_plate(e),
+            "plate": on_humans_plate(e),
             "archived": bool(e.get("archived")),
             "section": e.get("section") or "(no section)",
             "kind": kind_of(eid),
@@ -2693,6 +2693,20 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
   color:var(--ink);resize:vertical}
 .note-edit textarea:focus{outline:2px solid var(--gold);outline-offset:1px}
 .note-hint{color:var(--faint);font-size:.75rem;margin:.4em 0 0}
+/* o9L1005 (the human, 2026-11-03): an open instruction or note box STAYS in view while any part of
+   its entry is on screen, so he can keep typing as he reads down the item. The live .notes
+   section is display:contents, so the box's sticky parent is the entry and it is released
+   when the entry ends. top is the doc-level bar's height (--docins-h, 0 with no bar). Height
+   is capped (the textarea scrolls inside) and the long hint is hidden so it never covers
+   much of the screen; the background is solid so the text under it does not show through. */
+.notes.live>.note-edit{position:sticky;top:calc(var(--docins-h,0rem) - var(--pane-pt,0rem));z-index:8;background:var(--bg);
+  max-height:min(13rem,36vh);overflow-y:auto;padding-top:.35rem;
+  box-shadow:0 4px 10px rgba(0,0,0,.12)}
+.notes.live>.note-edit.instruct{background:var(--openbg)}
+.notes.live>.note-edit textarea{min-height:3.2em;max-height:7rem}
+/* Only the editor's own hint (a direct child). The receipt after a send reuses this class and
+   its "It is on main" / "being saved to GitHub" lines are .note-hint too; those must show. */
+.notes.live>.note-edit>.note-hint{display:none}
 /* ⛔ A FAILED SAVE MUST BE LOUD AND MUST NOT EAT HIS WORDS. The textarea stays exactly as he
    typed it and this sits under it, so the worst case is copy-and-paste rather than loss. */
 .note-err{margin:.5em 0 0;padding:.55em .75em;border:1px solid var(--open);
@@ -3197,6 +3211,7 @@ body.wide .rail{display:none}
      here, and the note row pins under .mob alone */
   .docins,.se-bar{position:static}
   .notes.live>[data-note-tools]{top:var(--mob-h,3.2rem)}
+  .notes.live>.note-edit{top:var(--mob-h,3.2rem)}
   .entry{scroll-margin-top:calc(var(--mob-h,3.2rem) + var(--docins-h,0rem) + 1rem)}
   .top{top:0}
   /* ⛔ THE HEADER IS THE THING BIGGER TYPE COSTS ON A PHONE. It already stacked here; at
@@ -5596,6 +5611,11 @@ function docInsWire(){
     '<div class="docins-say" aria-live="polite"></div>';
   pane.insertBefore(w,pane.firstChild);
   pane.style.setProperty("--docins-h",w.offsetHeight+"px");
+  /* o9L1005: the bar grows when it opens and was measured once, so a stale 0px left the pinned
+     entry box under it. Keep the published height true. */
+  if(window.ResizeObserver){ try{ new ResizeObserver(function(){
+    if(w.isConnected&&w.offsetHeight){ pane.style.setProperty("--docins-h",w.offsetHeight+"px"); }
+  }).observe(w); }catch(e){} }
   var ta=w.querySelector("textarea"), btn=w.querySelector("button"),
       say=w.querySelector(".docins-say");
   try{ ta.value=window.localStorage.getItem(DIK+d)||""; }catch(e){}
@@ -8658,7 +8678,7 @@ class Reader:
         sessions write these documents concurrently. A second writer here is exactly the
         collision that rule exists to prevent, and it would be the one writer with no gates.
 
-        ⚠️ The one markdown this server DOES write is a the human rewrite in the script corpus, and
+        ⚠️ The one markdown this server DOES write is a human rewrite in the script corpus, and
         that goes through `reader_scripts.Corpus.save` - never an agent draft, never an OrchDoc,
         and never without a snapshot of what it replaces.
 

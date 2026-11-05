@@ -245,7 +245,7 @@ def hide_library_header(text):
     (`## Version-Of:`, `## Version:`, `## Author:`, `## Origin:`, `## Source-File:`, `## App:`
     and any other), not words of the script, and the rendered page showed them as headings.
     Each hidden line becomes an empty line, so every line keeps its number for the render's
-    `data-src-line`. Nothing below the END line is touched, and a text with no END line (a the human
+    `data-src-line`. Nothing below the END line is touched, and a text with no END line (a human
     rewrite saved before o9L1236) is returned unchanged. Only the reading pane uses this: the editor, the diff and
     every save still work on the file's whole text."""
     text = text or ""
@@ -353,7 +353,7 @@ def text_facts(text):
 
     The header is every `## Key: value` line above `<!-- END SCRIPT HEADER -->`. `text_key` is a
     hash of the body as the human reads it: the lines below the END line (or, in a file with no END
-    line - a the human rewrite, whose field lines `strip_library_header` took off - the lines after
+    line - a human rewrite, whose field lines `strip_library_header` took off - the lines after
     its `# title`, provenance line and any field lines), without the `<!-- slug: ... -->` line,
     without a leading rendered chunk heading (`## Script 1 [SC-DAY]: <title>`) and without
     leading or trailing `---`, blank lines and trailing spaces. Two files with the same key show
@@ -386,7 +386,7 @@ def text_facts(text):
         body.pop()
     key = hashlib.sha256("\n".join(body).encode("utf-8")).hexdigest() if body else None
     if end_i is None:
-        # o9:W199: a text with no END line (a the human rewrite) can still be marked an older draft;
+        # o9:W199: a text with no END line (a human rewrite) can still be marked an older draft;
         # read the mark through the one parser so the Reader sees it
         od = training_header.older_draft(text or "")
         if od:
@@ -399,9 +399,9 @@ def live_refusal(target):
 
     Two refusals, in EVERY stage folder (not only 3-final):
     - the `(in app)` file: its text is the rendered chunk the app imports;
-    - a record file of an `App: live` script: any text that is not a the human rewrite, in a folder
+    - a record file of an `App: live` script: any text that is not a human rewrite, in a folder
       (or the folder above a `versions/` folder) where a record file carries `## App: live`.
-    A the human rewrite (`<NAME> v<N> THE HUMAN.md`, old `-owner-rewrite.md`) of a live script is how the human
+    A human rewrite (`<NAME> v<N> THE HUMAN.md`, old `-owner-rewrite.md`) of a live script is how the human
     edits it, so it stays writable."""
     tp = Path(str(target))
     if not tp.name:
@@ -429,7 +429,7 @@ def live_refusal(target):
             if training_header.parse_script_name(c.name).in_app \
                     or (classify(c.name) != "rewrite" and header_says_live(c)):
                 return ("%s belongs to a script marked `App: live` (%s); the Reader writes "
-                        "only a the human rewrite of it" % (tp.name, c.name))
+                        "only a human rewrite of it" % (tp.name, c.name))
     return None
 
 
@@ -437,10 +437,10 @@ def _parse(name):
     return training_header.parse_script_name(name)
 
 
-def _drew_version_name(name_key, n, source_name):
+def _human_version_name(name_key, n, source_name):
     """`<NAME>[ <Title-Words>] v<n> THE HUMAN.md`. o9L1248 (o10:W242, review o10L433 F3): once
     training_header names files with their title (`script_file_name(..., title=)` and
-    `script_title`), a the human rewrite carries the title of the file it rewrites, so the title is
+    `script_title`), a human rewrite carries the title of the file it rewrites, so the title is
     not dropped from the folder. Before W242 lands, training_header has neither, and the name
     is the untitled `<NAME> v<n> THE HUMAN.md` it always was."""
     make = getattr(training_header, "script_file_name", None)
@@ -460,7 +460,7 @@ def next_version_name(name_key, taken_versions, existing_names=(), source_name="
     n = max([v for v in taken_versions if v is not None] or [0]) + 1
     have = {x.casefold() for x in existing_names}
     while True:
-        name = _drew_version_name(name_key, n, source_name)
+        name = _human_version_name(name_key, n, source_name)
         if name.casefold() not in have:
             return name
         n += 1
@@ -483,7 +483,7 @@ def read_rewrite_of(path):
 def pair_by_name(files):
     """Pair a script's new-shape files by NAME KEY and number (o10:W235 point 6).
 
-    `files` are the file dicts of one script (its folder plus its flat `versions/`). A THE HUMAN
+    `files` are the file dicts of one script (its folder plus its flat `versions/`). A HUMAN
     file pairs with the version its `## Rewrite-Of: v<K>` line names, else with the highest
     non-THE HUMAN version below its own. Sets `pair` on both sides, and on a draft `exact` (the
     rewrites that claim it) and `pair` (when exactly one does). A `(in app)` THE HUMAN file is the
@@ -527,7 +527,7 @@ def competing_rewrite(anchor_name, target_name, names):
     """The name in `names` (a remote folder listing) that is already a rewrite of the draft
     `anchor_name`, spelled differently from `target_name`; else None (o10:W235 point 8).
 
-    New shape: a THE HUMAN file of the same name key whose pairing draft (the highest non-THE HUMAN
+    New shape: a HUMAN file of the same name key whose pairing draft (the highest non-THE HUMAN
     version below it) is the anchor. Old shape: the stem-and-suffix test."""
     a = _parse(anchor_name)
     tn = target_name.casefold()
@@ -940,7 +940,7 @@ def _natural(s):
 #   1. the FM4 provenance line, `> Authored: YYYY-MM-DD HH:MM | Model: <id> | By: <lane>`, the
 #      first line under the `# title` (SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md, o8, a99b33de). ⛔
 #      PARSED BY training_header.parse_provenance, the one definition of the format - never
-#      here. A the human rewrite that still carries the AGENT's line (copied over with the draft's
+#      here. A human rewrite that still carries the AGENT's line (copied over with the draft's
 #      text) is not dated by it: only `Rewrite By: the human` (or the older `Model: none | By: the human`)
 #      is his.
 #   2. the date git first saw the file - its EARLIEST add, following renames (the corpus was
@@ -952,7 +952,7 @@ def _natural(s):
 #   4. otherwise "unknown" - shown as unknown, never as a blank.
 # MODEL: the header line's Model field; else the prose the corpus already writes ("Authored on
 # **Opus 5**"), shown as written; else "unknown".
-# ⭐ A THE HUMAN REWRITE SHOWS THE ORIGINAL'S MODEL (the human, 2026-10-01 14:24: "Even in the scripts
+# ⭐ A HUMAN REWRITE SHOWS THE ORIGINAL'S MODEL (the human, 2026-10-01 14:24: "Even in the scripts
 # rewrites, the original model should still be indicated"), never "the human" and never "none". The
 # first of these that answers: (1) the model its own `Rewrite By: the human` line carries, which the
 # Reader's save copied in from the original; (2) the original draft it pairs with, by its header
@@ -985,7 +985,7 @@ def header_fields(text):
     `time` is there only when the line records one (Pacific; lines written before 2026-10-01
     record a date alone). `rewrite` is there when the line says `Rewrite By:`.
     `Model: unknown` (FM4's backfill value) is no value, so the prose fallback still gets its
-    turn. `Model: none` is KEPT - it is how a the human rewrite said so before 2026-10-01."""
+    turn. `Model: none` is KEPT - it is how a human rewrite said so before 2026-10-01."""
     p = training_header.parse_provenance(text) or {}
     out = {}
     got = training_header.provenance_stamp(p.get("authored"))
@@ -1011,7 +1011,7 @@ def prose_model(text):
 def carried_model(text):
     """The model the FM4 line of `text` names as the ORIGINAL script's, or None.
 
-    Not `unknown`, not `none`, and not the Model slot of a the human line written before 2026-10-01
+    Not `unknown`, not `none`, and not the Model slot of a human line written before 2026-10-01
     (`Model: none | By: the human`, or a hand-written `none (text), ... | By: the human (text), ...`):
     those say nothing about the original. A placeholder in angle brackets is not a model."""
     p = training_header.parse_provenance(text) or {}
@@ -1746,7 +1746,7 @@ class Provenance:
         is_rewrite = f["kind"] == "rewrite"
         # A line is THE HUMAN'S when it says so: `Rewrite By: the human`, or the form used before
         # 2026-10-01, `Model: none | By: the human`.
-        humans = bool(header.get("rewrite")
+        is_human = bool(header.get("rewrite")
                      or header.get("model", "").lower() == training_header.PROV_REWRITE_MODEL
                      or header.get("by", "").lower() == training_header.PROV_REWRITE_BY.lower())
         inherited = False
@@ -1755,12 +1755,12 @@ class Provenance:
         # own, the agent's line would date the human's rewrite to the day the agent wrote the draft.
         # Only a line that says it is the human's is his. The agent's MODEL is still kept, as a last
         # resort for the rewrite's model: it is the original's, copied over.
-        if is_rewrite and header and not humans:
+        if is_rewrite and header and not is_human:
             agent_model = header.get("model")
             if (agent_model or "").lower().startswith(training_header.PROV_REWRITE_MODEL):
                 agent_model = None              # `none (text), ...` is a hand-written line
             header, inherited = {}, True
-        if not is_rewrite and humans:
+        if not is_rewrite and is_human:
             header.pop("model", None)           # `none` on an agent's file names no model
         refname = ("origin/main" if where and where[0] == "origin"
                    else "this checkout's HEAD (the file is not at this path on origin/main)")
@@ -2197,7 +2197,7 @@ class Corpus:
             except OSError:
                 st, size, mtime = None, 0, 0
             # o9:W174 step 8: a library text's number and author come from its step-6 header
-            # lines (`## Version:`, `## Author:`), the name when it has none (a the human rewrite
+            # lines (`## Version:`, `## Author:`), the name when it has none (a human rewrite
             # saved before o9L1236, when its header was taken off on save); `text_key` finds the same text saved
             # twice (fold_same_text).
             hdr, text_key = ({}, None)
@@ -2332,7 +2332,7 @@ class Corpus:
         """Where a save of the file `f` goes, decided HERE and never by the page.
 
         {"editable", "why", "mode", "target_path", "target_name"}
-          mode "update-self"     f is a the human rewrite: it is updated, after a snapshot
+          mode "update-self"     f is a human rewrite: it is updated, after a snapshot
           mode "update-rewrite"  f is a draft with one rewrite: THAT is updated, after a snapshot
           mode "create-rewrite"  f is a draft with none: `<stem>-owner-rewrite.md` is created
         """
@@ -2920,13 +2920,13 @@ class Corpus:
             # (or from the opened record when the rewrite is new).
             pn_t = training_header.parse_script_name(target.name)
             if pn_t.version is not None and classify(target.name) == "rewrite":
-                # o9L1238: a THE HUMAN file saved between o9L1177 and o9L1236 has no header on
+                # o9L1238: a HUMAN file saved between o9L1177 and o9L1236 has no header on
                 # disk. When the opened file is its source record, the header comes from that
                 # record, as on create, so the next save makes the file a script again.
                 if cur is not None and _split_header(norm_text(cur)) is not None:
                     text = restore_header(text, norm_text(cur))
                 elif opened == target:
-                    # o9L1241: update-self of such a file (the human opened the THE HUMAN file itself).
+                    # o9L1241: update-self of such a file (the human opened the HUMAN file itself).
                     # Neither the file on disk nor, often, the text sent has a header, so the
                     # header comes from the script's record file, as on create. No record
                     # found: saved as before, without a header.
@@ -2939,12 +2939,12 @@ class Corpus:
                 else:
                     text = restore_header(text, norm_text(opened_before))
                     text = set_header_fields(text, Version=str(pn_t.version), Author="THE HUMAN")
-                # A the human rewrite is a script but never a record file (o9L1177 rule kept):
+                # A human rewrite is a script but never a record file (o9L1177 rule kept):
                 # file_script's record test looks for these three lines.
                 text = drop_header_fields(text, *RECORD_ONLY_FIELDS)
             model = self.carry(f, listing, text, cur)
             stamped = training_header.set_provenance_line(
-                text, training_header.owner_provenance_line(model=model))
+                text, training_header.human_provenance_line(model=model))
             new = encode_like(stamped, cur if cur is not None else opened_before)
             base = {"ok": True, "mode": plan["mode"], "opened_name": f["name"],
                     "target_name": plan["target_name"],
@@ -3019,7 +3019,7 @@ class Corpus:
                 message="Saved.")
 
     def _record_text_for(self, target, f, listing):
-        """The text of the record file a the human rewrite at `target` belongs to, or None (o9L1241).
+        """The text of the record file a human rewrite at `target` belongs to, or None (o9L1241).
 
         First the folder's record file by the library's own rule (file_script.record_file).
         Else the draft the Reader pairs the rewrite with (`pair`: its `## Rewrite-Of: v<K>`

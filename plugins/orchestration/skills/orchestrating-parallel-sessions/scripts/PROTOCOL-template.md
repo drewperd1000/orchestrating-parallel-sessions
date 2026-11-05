@@ -8,13 +8,13 @@ blocks. The human bootstraps each session once (MANUAL mode) — or the orchestr
 **Ids match the session titles** (see the skill's *Naming sessions + mailboxes*): the
 orchestrator is `o<N>`, lane m is `o<N>L<m>` - and a session's mailbox file
 (`mailboxes/o<N>L<m>.md`), its watcher `--role`, and its `FROM` field all use that same
-id. This lets two orchestrator groups (`o1*`, `o2*`) share one `mailboxes/` dir without
+id. This lets two orchestrator groups (`oA*`, `oB*`) share one `mailboxes/` dir without
 collision. With a single group and no peers, bare `laneN` is fine.
 
 ## Message format (append-only)
 
 ```
-## MSG <n> FROM <o1|o1L1|o1L2|...> @ <YYYY-MM-DD HH:MM>
+## MSG <n> FROM <o<N>|o<N>L<m>> @ <YYYY-MM-DD HH:MM>
 STATUS: <new-orders|pr-open|blocked|question|merged|rebase-requested|released|ack>
 <body: PR link, gate results, a question, or the next orders>
 ```
