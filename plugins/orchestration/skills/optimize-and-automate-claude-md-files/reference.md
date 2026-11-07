@@ -16,7 +16,7 @@ Use any folder. The examples use `claude-md-trim/` at the repository root.
 | Every removed sentence and where it went | `claude-md-trim/LEDGER.md` (generated) |
 | A batch's records | `claude-md-trim/snapshots/<batch>/` (snapshot, `meta.json`), `claude-md-trim/batches/<batch>.json` (ledger rows), `claude-md-trim/batches/<batch>/after.md` (the whole file after the batch) |
 | Moved text waiting to land in a note | `claude-md-trim/note-additions/<note>.md` (the checks count it as existing) |
-| Where moved detail of the global file lives | a note you name in the ledger, for example `memory/claude-md-rule-detail.md` |
+| Where moved detail of the global file lives | a note you name in the ledger, for example `notes/claude-md-rule-detail.md` |
 
 ## Batch steps
 
@@ -48,7 +48,7 @@ A trim is a large hand edit of the files every session loads, and it can fail in
 ```json
 {"file": "<absolute path of the live file>", "batch": "global-2b",
  "removed": "<the text, copied exactly from the snapshot>",
- "action": "MOVED", "destination": "memory/claude-md-rule-detail.md#anchor",
+ "action": "MOVED", "destination": "notes/claude-md-rule-detail.md#anchor",
  "reason": "question 3: applies only when ...",
  "replacement": "<the new text; REWORDED rows only>"}
 ```
@@ -84,8 +84,8 @@ One way is a reminder hook: a PreToolUse hook that reads a rules file and prints
 {"id": "verify-before-delete-worktree",
  "when": {"tool": "^Bash$", "command": "git worktree remove|git branch -D"},
  "ask": "<the rule text the model receives>",
- "because": "notes/verify-before-delete.md, steps 1 and 4 (moved out of ~/.claude/CLAUDE.md by trim batch global-2a, 2026-01-15)",
- "added": "2026-01-15",
+ "because": "notes/verify-before-delete.md, steps 1 and 4 (moved out of ~/.claude/CLAUDE.md by trim batch global-2a)",
+ "added": "<date>",
  "why_not_a_check": "<why this reminds rather than blocks>"}
 ```
 

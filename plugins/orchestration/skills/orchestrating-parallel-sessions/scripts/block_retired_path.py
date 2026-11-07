@@ -5,25 +5,6 @@
 <!-- access: mcp -->
 <!-- route-tags: retired removed hook pretooluse intercept mcp stale footgun redirect remedy -->
 
-The workspace owner, 2026-08-13: *"is this a hook, or is this counting on prose?"*
-
-It was prose, and he was right to ask. The `<!-- retired: -->` facet makes a doc FINDABLE - real
-code, `facet_aliases()` in route.py. But the redirect itself was a banner an agent had to read
-and obey, and **the original failure was never a search.** Sessions called the removed
-`mcp__<platform>__*` tools DIRECTLY. A banner in a document nobody opened stops nothing.
-
-⛔ THE PATTERN THIS WORKSPACE KEEPS RELEARNING: a deploy platform's MCP integration was
-documented as removed in THREE places and sessions kept reaching for it for weeks. Three copies
-of "don't" lost to one habit, because reading is optional and reaching is reflex. What finally
-worked was DELETING the MCP so the wrong path stopped existing.
-
-⛔ NO VENDOR-SPECIFIC FACET LINE LIVES IN THIS HEADER, deliberately. `<!-- platform: ... -->`
-and `<!-- retired: ... -->` naming one workspace's removed integration would pin this ENGINE to
-that workspace's vocabulary - and the vocabulary is exactly what facets_vocabulary.json owns.
-The generic tags above still route a session here for "retired path", "hook", "removed"; the
-vendor terms route through the vocabulary, to the DOC that explains the removal, which is the
-right landing place for a search anyway. A hook is not documentation.
-
 This is that principle applied to the commands that would bring it back. A PreToolUse hook
 arrives INSTEAD of the tool result, which makes it the only mechanism in this harness with
 demonstrated compliance - the session cannot not-see it.
@@ -40,16 +21,6 @@ import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from mentions import executable_part  # noqa: E402
 
-# ⛔ ONE SOURCE, READ - NOT A SECOND COPY (the human, 2026-08-13: *"Can it programmatically check
-# for retired: [KW]?"*). The first version hardcoded its own retired list here, which is a
-# second copy of what `facets.py` already declares - and two copies of one vocabulary is the
-# contract defect this workspace keeps rediscovering. It would have drifted the first time
-# anyone retired a fourth path and armed only one of them.
-#
-# ⭐ Now adding an entry to `facets.RETIRED` does THREE things at once, with no second edit:
-# the doc becomes findable by the retired term (route.py expands the aliases), the audit knows
-# whether a landing doc exists, and THIS HOOK starts intercepting commands that reach for it.
-# Declare once, armed everywhere.
 def _retired():
     """[(pattern, why, what to use instead, allowed targets or None)] from facets.RETIRED."""
     try:
@@ -68,17 +39,6 @@ def _retired():
     return out
 
 
-# ⛔ THE REMEDY LIVES BESIDE THE `why`, IN facets_vocabulary.json - one entry, one edit.
-# It was a dict here, which made a retired path a TWO-PLACE declaration: the vocabulary knew
-# what was removed, this file knew what to do instead, and nothing made the second follow the
-# first. Adding an entry to one and forgetting the other produces a block that stops a session
-# with nowhere to go - and a session stopped with nowhere to go finds its own way, which is how
-# the retired path gets rebuilt. That is the exact defect the comment above already names, so
-# a second copy of half the vocabulary was the same mistake one level down.
-#
-# ⭐ The remedy is also workspace-specific in a way the MECHANISM is not: "use the release
-# skill", "read this memory note" only mean anything in the corpus that has them. Engine here,
-# vocabulary in the data file - the same split facets.py was forced into.
 def _vocabulary_retired():
     """The vocabulary's `retired` block. Absent or unreadable file -> {}."""
     try:
@@ -94,26 +54,6 @@ def _instead(entries):
     return {k: d["instead"] for k, d in entries.items() if d.get("instead")}
 
 
-# ⭐ AN ENTRY CAN NAME THE ONE TARGET IT DOES NOT COVER. A retired command FORM can be retired for
-# one target and documented for another: the same upload verb, pointed at a different service.
-# Refusing the form everywhere refuses the documented use, and a guard that refuses correct work
-# teaches people to route around it. The vocabulary entry says which flag names the target and
-# which values are allowed:
-#
-#     "allowed_targets": {"flags": ["-s", "--service"], "values": ["<the one allowed target>"]}
-#
-# ⛔ AN ALLOW-LIST, NEVER A BLOCK-LIST. A command segment passes only when it names a target and
-# EVERY target it names is allowed. No flag at all stays refused: the linked directory, not the
-# text, then picks the target. So does a target written as an id, or any name not on the list.
-# And the allowance covers only the plain form of the command - see _plain_allowed_use().
-#
-# ⭐ A DOCUMENTED RECIPE IS NOT A NESTED COMMAND (o9 W97 second review, 2026-09-28). The allowed
-# use is often run after reading a credential from a file, and the documented way to read it is
-# a `$(...)`. The plain form refuses every `$(...)`, so it refused the documented command. The
-# entry lists each such recipe as a pattern under "value_recipes", and each match is read as one
-# plain word before the form is judged: that recipe passes, and any other `$(...)` still fails.
-# The patterns live in the vocabulary, never here, because the recipe names a vendor. A pattern
-# that does not compile is skipped, so a bad pattern allows less, never more.
 def _allowed(entries):
     """{retired key: (flags, lowercased allowed values, compiled value recipes)} for entries
     that name allowed targets."""
@@ -169,18 +109,6 @@ def _targets_only_allowed(segment, allowed):
     return bool(vals) and all(v.lower() in values for v in vals)
 
 
-# ⛔ THE ALLOWANCE COVERS ONE PLAIN COMMAND FORM, AND NOTHING NESTED OR HIDDEN (o9 W97 review,
-# 2026-09-28). The first version judged the flags of each segment that held the term, and a
-# reviewer got a refused use through it three ways: nested in an allowed segment with $(...) or
-# backticks; run by `sh -c '...'` with the allowed flag after it; and chained after a '#' inside
-# quotes or a URL, where executable_part cuts the line and hides the rest of it.
-#
-# So the allowance reads the RAW command, with each documented value recipe read as one plain
-# word, and holds it to a plain form: no $(, backtick, <(, >(, heredoc or '#' anywhere; the term
-# in exactly ONE segment, and that segment the LAST one, so nothing is chained or piped after the
-# allowed use (commands before it, such as a cd or an export, are fine); that segment STARTS with
-# the term (after VAR=value prefixes) and holds it once; and every target it names is allowed.
-# Anything else is judged as if the entry had no allowance.
 _NOT_PLAIN = ("$(", "`", "<(", ">(", "<<", "#")
 _ENV_PREFIX = r"\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 
@@ -252,45 +180,11 @@ def main():
     if not cmd:
         return 0
 
-    # ⛔ MATCH COMMAND POSITION, NOT PROSE. The first version blocked its OWN commit message,
-    # because that message explains what was removed and why. Writing ABOUT a retired path is
-    # the most common legitimate use there is - docs, tombstones, commit messages, this very
-    # file - and a guard that punishes documenting the removal would be deleted within a day.
-    #
-    # So strip the places text LIVES before matching: heredoc bodies and -m/-F message
-    # arguments. What remains is what the shell would actually execute.
-    # ⭐ ONE DEFINITION, in mentions.py. This logic was written HERE first, then copied into
-    # block_shared_tree_ops, and meanwhile five other guards hit the same defect without it -
-    # the answer sitting four files away. Centralised 2026-08-17; see that module's docstring
-    # for all eight instances.
     raw = cmd
     cmd = executable_part(cmd)
-    # ⛔ executable_part also cuts each line at its first '#', including a '#' inside quotes or
-    # inside a word such as a URL fragment, where bash starts no comment - so a command chained
-    # after one is invisible in `cmd`. FULL keeps it. An entry with an allowance reads FULL: it
-    # looks for its term there as well, and its search exemption reads its chaining from it.
     full = executable_part(_mask_literal_hashes(raw))
 
-    # ⛔ A SEARCH IS THE OPPOSITE OF A USE. `grep "service account"` cannot reinstall anything -
-    # someone searching for a retired path is trying to LEARN what replaced it, which is the one
-    # thing this guard exists to teach. Refusing it blocks the correct response to its own
-    # message.
-    #
-    # ⭐ Reported twice by o11 on read-only route.py searches, and it blocked o9's own grep while
-    # investigating the very claim the guard was getting wrong. Third instance today of a guard
-    # refusing the correct action - and refusing correct work is what teaches people to reach
-    # for the escape, which disables the rule for the real case.
-    # ⛔ THE WHOLE COMMAND MUST BE THE SEARCH. A first version exempted anything STARTING with a
-    # search verb, and its own test caught the hole immediately: `grep foo x && <forbidden>`
-    # sailed through. A search does not launder what follows it, so any chaining operator
-    # disqualifies the exemption.
     search = bool(_SEARCH.match(cmd)) and not _CHAINED.search(cmd)
-    # ⛔ AN ENTRY WITH AN ALLOWANCE READS THE EXEMPTION MORE STRICTLY, AND ONLY IT (o9 W97 second
-    # review, 2026-09-28). It reads the chaining from FULL, and also counts a newline, a single
-    # '&' that is not part of a redirect, <( and >( as running another command: `grep x f`, a
-    # newline, then a refused use passed. Every other entry keeps the exemption exactly as it
-    # was, read from `cmd` - reading FULL for every entry newly refused 111 of 1,480 generated
-    # commands, searches such as `grep -n "<term>" "a#b"; echo x` among them.
     search_whole = bool(_SEARCH.match(full)) and not _RUNS_ANOTHER.search(
         _CONTINUATION.sub(" ", full).strip())
 

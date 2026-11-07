@@ -2,22 +2,6 @@ r"""Does the shell you are typing into mangle path arguments? Run it FROM that s
 
 <!-- subject: claude-tooling -->
 
-WHY THIS EXISTS. An orchestrator was warned that `git show <ref>:<path>` gets mangled here.
-They tested it, saw nothing, concluded the warning was wrong - and then spent real time chasing
-16 "missing" files that were all present. Their words: *"I dismissed it because I tested it with
-a path that had no slashes in it."*
-
-⛔ THEIR TEST OMITTED THE TRIGGER, so it came back clean and DISPROVED A TRUE WARNING. That is
-worse than no test: it does not merely fail to confirm, it licenses ignoring the thing.
-
-⭐ THE GENERAL RULE, worth more than this script: **WHEN YOU TEST A WARNING AND IT DOES NOT
-REPRODUCE, THE FIRST HYPOTHESIS IS THAT YOUR TEST LACKED THE TRIGGER - NOT THAT THE WARNING IS
-FALSE.** A warning names a condition. A test that omits the condition tests nothing, and returns
-the comfortable answer while doing it.
-
-⚠️ AND THIS FILE GOT IT WRONG FOUR TIMES BEFORE IT WORKED. That is the point of reading it -
-each version looked like a test, ran clean, and tested a different nothing:
-
   v1  handed the trigger to `printf`, a SHELL BUILTIN. Builtins never leave the MSYS world, so
       nothing converts. It carried the trigger CHARACTERS and not the trigger CONDITION.
   v2  handed it to `git` - correctly native - but through `bash -c` invoked from Python. The
@@ -31,39 +15,12 @@ each version looked like a test, ran clean, and tested a different nothing:
         origin/main:shared/x     ->  origin/main:shared/x      clean
         origin/main:.shared/x    ->  MANGLED
 
-⭐ **THE TRIGGER IS A LEADING DOT ON THE RIGHT OF THE COLON.** MSYS reads `x:.y` as a
-colon-separated PATH LIST containing a relative dot-entry, and rewrites the whole argument -
-forward slashes to backslashes, colon to semicolon. Slashes alone do not do it.
-Both-sides-look-like-paths does not do it.
-
-⚠️ WHICH MEANS THE ORIGINAL WARNING WAS TRUE AND MIS-STATED. It said "paths with slashes and/or
-colons"; someone tested exactly that, saw nothing, and reasonably concluded it was false. **A
-warning that names the wrong trigger gets disproved by an honest test - and then a real bug is
-correctly ignored by someone doing their job properly.** Both parties behaved well.
-
-⭐ PRACTICAL SCOPE, sharper than "be careful with paths": it hits `.shared/`, `.claude/`,
-`.github/` - **dotfile directories, which is where tooling and config live.** Ordinary source
-paths are untouched, which is why this appears when you inspect infrastructure and never when
-you inspect application code.
-
-EXTENDED 2026-08-08, after a fifth session was about to adopt an over-broad form of the rule
-("never use a slashed path in a rev string"). Full matrix, every path verified to exist on the
-ref first so a missing file could not be mistaken for a mangle:
-
     origin/main:.shared/scripts/x.py    leading dot, slashes     MANGLED
     origin/main:.gitignore              leading dot, NO slash    MANGLED   <- slashes irrelevant
     origin/main:/etc/passwd             leading SLASH            MANGLED   <- not just dots
     origin/main:x/y.md                  slashes, no leading dot  clean     <- the over-broad
                                                                               rule forbids this
     origin/main:./.shared/scripts/x.py  explicit ./ prefix       clean     <- a workaround
-
-⭐ **THE TRIGGER IS: THE RIGHT OF THE COLON BEGINS WITH `.` OR `/`** - i.e. it looks to MSYS
-like a POSIX path, so `a:b` is read as a PATH LIST. Nothing else matters.
-
-⛔ AND AN OVER-BROAD RULE IS NOT THE SAFE ERROR HERE. "Never use a slashed path" is disproved by
-one command (`origin/main:x/y.md` works), and the session that disproves it discards the whole
-warning - which is EXACTLY how this bug survived the first time. A rule that is too wide gets
-falsified and thrown away; only a rule that names the real condition survives being tested.
 
 THREE FIXES, all verified, in order of preference:
   1. keep the path OUT of the rev string:  `git ls-tree <ref> -- <path>`  (then cat-file the blob)
@@ -98,9 +55,6 @@ CONTROLS = [
     ("slashes, no dot after the colon", "HEAD:some/dir/file.md"),
     ("both sides paths, no dot", "a/b:c/d"),
     ("dot on the LEFT only", ".a/b:c/d"),
-    # Added 2026-08-08. This one is a control and not a trigger, which is the whole objection to
-    # the over-broad "no slashed paths" rule: forbidding it costs a working command, and one
-    # session testing it will disprove the rule and discard the real warning with it.
     ("slashes but no leading dot - WORKS", "origin/main:x/y.md"),
     ("explicit ./ prefix - the workaround", "origin/main:./.shared/scripts/x.py"),
 ]
@@ -116,12 +70,6 @@ TRIGGERS = [
 
 def looks_mangled(arg):
     """Detect the transformation by SHAPE, not by comparing to a fixed constant.
-
-    ⭐ An earlier version tested `got == CANARY`, which meant ANY other argument reported
-    MANGLED - including the deliberately-clean controls. That is a check that cannot pass,
-    which is as useless as one that cannot fail: it stops carrying information either way.
-    What identifies the conversion is backslashes appearing where forward slashes were sent,
-    or a semicolon replacing the colon.
     """
     return "\\" in arg or (";" in arg and ":" not in arg)
 

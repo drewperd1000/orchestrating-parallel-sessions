@@ -1,38 +1,11 @@
 #!/usr/bin/env python3
-"""o9:W195 - the live OrchDoc Reader restarts itself onto new code.
-
+"""
 <!-- subject: orchestration -->
-
-WHY. The Reader loads its code once. On 2026-10-11 it ran from 00:04 PT, the script-link code
-landed on main at 13:55 PT, and the human's script links failed ("not a script id this reader
-issues") until someone restarted it by hand at 15:52. The restarted process then loaded the old
-training_header.py, which o10:W242 changed a few minutes later.
-
-DESIGN (the simplest that is reliable). The Reader watches the files it runs and restarts itself
-when one changes. Not deliver.py: deliver is only one way main's files change (a hand `git pull`,
-a hook, a Drive sync and a cut-off deliver all change them too), and a watcher inside the Reader
-sees every one of those and needs nothing from the writer.
 
   THE SET IS COMPUTED, NEVER LISTED. `import_closure` reads render_orchdoc_reader.py with `ast`
   and follows every `import x` / `from x import y` (at any depth in the file, so the function-local
   imports count) that names a .py file in the same folder, then does the same for each of those.
   A module added to the Reader's imports tomorrow is watched tomorrow.
-
-  WHEN IT RESTARTS. Only when ALL hold: a file in the set differs from what the running process
-  started with (compared by content, so a touch or a checkout of identical bytes does nothing);
-  the files have stopped changing for SETTLE seconds (a delivery writes many files over many
-  seconds, and a Reader restarted half-way would load a mix); deliver.py's apply lock is not
-  held; every file in the set compiles; no request is in flight; no landing is running.
-  Then, in this order (`render_orchdoc_reader` supplies the steps):
-    1. refuse new writes with a 503 (a page retries; the save is not lost, it was never taken);
-    2. stop the landing worker (waits for a job it is running; waiting jobs stay in
-       LANDING.QUEUE_REL on disk and the new process lands them, so none is lost or doubled);
-    3. start the new process (no console window); it waits for the port to free;
-    4. close the listening socket; the new process binds it within about a second;
-    5. wait until the port answers again. If the new process died, the old one binds the port
-       again and goes on serving its old code, with a new landing worker, and does not retry
-       until a file changes again.
-  The old process never kills anything: it ends by itself. Each step is a line in reader.log.
 """
 import ast
 import hashlib
@@ -43,7 +16,7 @@ from pathlib import Path
 
 SETTLE_SECONDS = 20.0       # files must be unchanged this long before a restart
 POLL_SECONDS = 5.0
-LOCK_STALE_SECONDS = 600    # deliver.py's STALE_LOCK_SECONDS: an older lock is a dead one
+LOCK_STALE_SECONDS = 600
 
 
 def _imported_names(path):
@@ -115,7 +88,6 @@ def compile_problem(paths):
 
 
 def deliver_lock_held(workspace):
-    """True when deliver.py's apply lock in the main checkout is present and not stale."""
     lk = Path(workspace) / ".git" / "deliver.lock"
     try:
         return time.time() - lk.stat().st_mtime < LOCK_STALE_SECONDS

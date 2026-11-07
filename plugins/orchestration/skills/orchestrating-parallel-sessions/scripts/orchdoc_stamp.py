@@ -3,23 +3,8 @@
 
 <!-- subject: orchestration -->
 
-THE FOOTGUN (the human named it, 2026-08-06)
----------------------------------------
-o9 wrote 22 attestation timestamps as `2026-08-07T02:30:00-07:00`. Today was the 6th. The
-first diagnosis - "the times were invented" - was WRONG, and the correction matters because
-it changes the fix:
-
-    written : 2026-08-07T02:30:00-07:00      <- value from a UTC clock, LABELLED as PDT
+    written : 2026-08-07T02:30:00-07:00      <- value from a UTC clock, LABELLED as local
     actual  : 2026-08-06T19:30:00-07:00      <- the same instant, correctly labelled
-
-Converted as UTC, every one of those stamps lands inside the real session window. The
-VALUES were right. The OFFSET LABEL was wrong, and because UTC is 7 hours ahead of PDT,
-anything after 17:00 local crosses midnight UTC and flips the DATE too. At 22:34 PDT on
-2026-08-06 it is already 05:34 on 2026-08-07 in UTC.
-
-⭐ That is why the error was invisible: the timestamps were well-formed, precise, internally
-consistent, and monotonically increasing. They satisfied E-AMBIGUOUSDATE, which asks for
-exactly that precision. Nothing about a UTC instant wearing a PDT label looks wrong.
 
 THE FIX IS NOT CARE. IT IS NOT TYPING THEM.
 -------------------------------------------
@@ -27,11 +12,6 @@ A rule saying "check your timezone" is the class of fix this whole workstream re
 mechanism is that the timestamp comes from the system clock, with the offset the system
 reports, through one function - so the value and its label can never disagree, because
 nothing ever chooses them separately.
-
-    python orchdoc_stamp.py            -> 2026-08-06T22:41:03-07:00
-    python orchdoc_stamp.py --human    -> 06-Aug-2026 22:41 PDT
-    python orchdoc_stamp.py --utc      -> 2026-08-06T22:41:03-07:00 (2026-08-07T05:41:03Z)
-    python orchdoc_stamp.py --check "2026-08-07T02:30:00-07:00"
 
 `--check` is the diagnostic: it reports whether an offset label is possible for that date
 in this zone, and whether the instant is in the future. Both are mechanical questions that
@@ -73,7 +53,7 @@ def check(text):
     """Is this stamp self-consistent, and has it happened?
 
     Returns (ok, [problems]). Both questions are mechanical, and neither is answerable by
-    reading the string - which is precisely why 22 bad ones survived review.
+    reading the string.
     """
     problems = []
     try:
@@ -128,23 +108,11 @@ def main():
         # the strikethrough is that the words survive being marked done, so the generator
         # makes keeping them the path of least effort.
         now = dt.datetime.now().astimezone()
-        # A NUMERIC offset, not %Z. Windows expands %Z to "Pacific Daylight Time", which is
+        # A NUMERIC offset, not %Z. Windows expands %Z to a long zone name, which is
         # long, locale-dependent and ambiguous across machines; "UTC-7" is none of those and
         # is what makes the stamp checkable against a commit's own time later.
         off = now.utcoffset()
         hrs = int(off.total_seconds() // 3600) if off else 0
-        # ⛔ A CHECKED CHECKBOX, NOT TILDES. This used to emit `- ~~text~~`, and it is the
-        # worst possible place for the wrong form to live: the generator whose entire job is to
-        # make compliance the path of least effort was producing non-compliant output.
-        #
-        # the human's rule is three marks - green checkbox, struck through, GREYED OUT. Tildes give
-        # exactly one of them. `- [x]` renders all three natively, which is why he said it is
-        # "most easily accomplished with checkbox markdown format".
-        #
-        # ⭐ AND THE GENERATOR WAS FIGHTING THE FIXER. `orchdoc.py strike` STRIPS redundant
-        # tildes when it normalises a line, so this command wrote something the other command
-        # immediately undid. Two tools in one workspace disagreeing about the canonical form is
-        # how a form rule stops being one.
         print("- [x] %s - DONE %s @ %s (UTC%+d)"
               % (a.done.strip(), now.strftime("%d-%b-%Y"), now.strftime("%H:%M"), hrs))
         return 0

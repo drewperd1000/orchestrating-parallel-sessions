@@ -4,19 +4,10 @@
 
 <!-- route-tags: knowledge system decision tree route find process sop where lookup discover -->
 
-WHY THIS EXISTS (the human, 2026-08-11): *"They shouldn't be grepping for answers and latching on to
-whatever they find. They need an orderly path to get there. Start at step one, go from there."*
-
-THE FOUNDING CASE this must always solve: a session needed a payment vendor's access process,
-searched where a competent orchestrator would look, found nothing, and hand-wrote guidance into
-four lane seeds. The answer existed - more complete than what they wrote - in a memory note
-**filed under a name that says REFUND**, not under the vendor. Searching the vendor's own name
-must land on that note in one command, forever; it is regression fixture #1.
-
-THE CONTRACT - four outcomes now, not three. A 40-agent adversarial workflow confirmed 33 breaks
-against the first version, and the deepest one was this tool repeating the exact defect it was
-built to kill: **a sub-threshold match had no name**, so "matched but weakly" printed as
-VERIFIED MISS - the same missing-third-state that made o10 create duplicate seeds.
+THE CASE this must always solve: a session needed a vendor's access process, searched where a
+competent orchestrator would look, found nothing, and wrote guidance of its own. The answer
+existed, and was more complete, in a note filed under a different word. Searching the vendor's
+own name must land on that note in one command.
 
   HIT            confident match - read the artifact
   WEAK           matched, below the confidence floor - NAMED and listed, never silent,
@@ -26,69 +17,13 @@ VERIFIED MISS - the same missing-third-state that made o10 create duplicate seed
   VERIFIED MISS  zero matched tokens across the enumerated corpus -> the CREATE path,
                  carrying this receipt
 
-⭐ SCORING LESSONS BOUGHT BY THE ADVERSARIAL PASS, encoded rather than remembered:
-  - WORDS, NOT SUBSTRINGS. 'app' matched inside 'APProval' at full weight and flooded the
-    top-8 above the real answer. Tokens now match whole words (with light stemming, so
-    'tokens'/'deploying' find 'token'/'deploy' - the plural asymmetry was returning VERIFIED
-    MISS for covered subjects).
-  - RARITY BEATS WEIGHT. 'iphone support' ranked two notes that never mention iPhone above
-    the one artifact in 396 that did - because a generic token scored the same as a
-    distinguishing one, and the PARTIAL advice then told the session to enrich the WRONG
-    note: the tool's own mechanism manufacturing mis-filed knowledge. A token matching few
-    artifacts now outweighs one matching many.
-  - DROPPED TOKENS ARE DISCLOSED. 'em' (dash rules) and 'b2' (the bucket) were silently
-    discarded by a length filter; short tokens with digits are now kept, and every drop is
-    printed. An undisclosed drop makes the receipt a lie.
-RARITY SCORING DECAYS AS THE CORPUS GROWS AROUND A TERM - measured 2026-08-12.
-The "knowledge system" fixture went red without anyone touching the router. Three specs
-ABOUT knowledge were added on 08-11, pushing df("knowledge") past the 12-doc rarity cutoff
-to 17 and dropping it to the lowest weight. The canonical knowledge doc then scored below
-threshold on its own subject.
-
 So: THE MORE YOU WRITE ABOUT X, THE HARDER THE CANONICAL X DOC IS TO FIND. That is the
 opposite of the intuition, and it means a green fixture is a statement about TODAY'S CORPUS,
 not a property of the router - fixtures here decay on their own and must be re-run, not
 trusted. Fix a decayed one by ENRICHING the artifact (route.py enrich) so it carries rarer
 terms. Never by lowering the threshold, which floods every query at once.
 
-⛔ A VERIFIED MISS IS A CLAIM, AND IT WAS THE ONE CLAIM HERE NOBODY EVER RE-TESTED.
-Two guards already re-check the CREATE decision at write time: `knowledge_gate.py` refuses a
-new doc sharing 3+ tags with an existing one, and refuses one nobody can route to. Both fire
-BEFORE the commit and never again. So a doc created on a FALSE miss - the searcher used
-vocabulary the existing doc did not carry, and the tag overlap came in under three - stands
-forever, and the two copies drift apart with nothing watching.
-
-⭐ So a miss is now a STORED RECEIPT, not a moment (`route.py receipts`):
-
     <!-- miss-receipt: terms="..." date=YYYY-MM-DD corpus=N -->
-
-The whole test is an AGE COMPARISON. Re-run the receipt's terms against today's corpus: an
-artifact that appears and is NEWER than the receipt is normal growth and means nothing. An
-artifact that appears and is OLDER than the receipt was already sitting there when the miss
-was declared - so the miss was wrong when it was made, and the doc it authorised is a
-duplicate. That is the only condition this fails on.
-
-⛔ AND A VERIFIED MISS CAN BE MANUFACTURED BY THIS FILE'S OWN INDEXING - fixed 2026-09-03.
-A doc's `<!-- route-tags: ... -->` line used to be read out of the same truncated string used
-for prose ranking. So when a doc's frontmatter grew past its store's cap, the tag line fell
-outside the read and EVERY tag on that document stopped matching - silently, with no error,
-the doc simply becoming unroutable. Queries then returned VERIFIED MISS, the strongest
-negative this tool has, produced by an indexing artifact rather than by absence.
-
-Measured on `fine-tunable-models-research-2026-08-12.md`: adding a section moved its tag line
-from char 3,861 to char 7,206, and `kimi`, `alibaba`, `qwen`, `moonshot`, `SG7` and
-`corpus-in-context` all went dead in one commit.
-
-⭐ THE CAP NOW BOUNDS PROSE ONLY (`PROSE_CAP`). A declaration is a fixed regex hunt, not a
-ranking cost - reading all 503 artifacts whole is 0.16 s - so `declared_tags` reads the tag
-line over the WHOLE file and no amount of growth can hide it again.
-
-    route.py <terms>      ask
-    route.py enrich       add terms to an artifact, placing the line in its frontmatter
-    route.py fixtures     replay every recorded query->artifact promise
-    route.py receipts     re-test every stored VERIFIED MISS against today's corpus
-    route.py markers      are the markers that STILL have a window inside it?
-    route.py stores       what is covered, and what is deliberately not
 """
 import argparse
 import ast
@@ -111,20 +46,10 @@ try:
 except Exception:
     pass
 
-# Paths are RESOLVED, not hardcoded - see workspace_paths.py. A script carrying one
-# machine's absolute path cannot run in a skill, a fresh clone, a worktree or the cloud,
-# which is why none of this shipped anywhere until 2026-08-13.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
-# ⛔ THE STORES LIVE IN corpus.py NOW - a second copy of the skill roots here is a second answer
-# to "what is the corpus", which is the exact defect that let this router index 1,326 artifacts
-# while the knowledge map indexed 198 and neither could see the other's blind spot.
 FIXTURES = pathlib.Path(__file__).resolve().parent / "route_fixtures.json"
 
-# Stores that EXIST and are deliberately not indexed. Named in every receipt - an undeclared
-# store is the o10 failure reborn, and the census lens found FIVE of them undeclared in v1
-# (memory/automation/**, .shared/docs, script subdirs, third-party skills, *.txt). What is
-# covered now covers those; what is not is on this list.
 def _nested_repos():
     """" (a, b, c)" naming this workspace's product repos - "" if none are declared."""
     try:
@@ -136,57 +61,43 @@ def _nested_repos():
     return (" (%s)" % ", ".join(names)) if names else ""
 
 
+CLAUDE_MD_SYNCED = ("<private-repo>", "CLAUDE.md")
+CLAUDE_MD_ROW = ("CLAUDE.md, the two push-channel copies",
+                 "global + workspace - already in every session's context before it asks. A "
+                 "NESTED REPO's CLAUDE.md IS indexed; it is that repo's front door")
+CLAUDE_MD_ROW_SYNCED = ("the workspace CLAUDE.md (~/.claude/CLAUDE.md IS covered, in part: the name, "
+                        "markers and first 3,000 characters of its synced copy in the workspace)",
+                        "the workspace copy is already in every session's context before it "
+                        "asks. The global copy is synced by a job of your own and ranked like any repo doc, so a word further down "
+                        "the file does not find it. A NESTED REPO's CLAUDE.md IS indexed; it is "
+                        "that repo's front door")
 NOT_COVERED = [
-    ("CLAUDE.md, the two push-channel copies", "global + workspace - already in every session's "
-                                               "context before it asks. A NESTED REPO's CLAUDE.md "
-                                               "IS indexed; it is that repo's front door"),
+    CLAUDE_MD_ROW,
     ("third-party marketplace skills", "claude-plugins-official / humanizer / mattpocock etc. - "
                                        "not this workspace's knowledge; first-party skills ARE indexed"),
     ("OrchDocs (ORCHESTRATOR-DECISIONS-*)", "per-orchestrator state; ask the owning orchestrator"),
     ("*.txt files", "none hold routable knowledge today; declared so their absence is visible"),
     ("chat history / session transcripts", "not durable; if it matters it belongs in a note"),
     ("Google Docs / Sheets", "external; pointers to them live in notes that ARE indexed"),
-    # ⛔ THE SIXTH UNDECLARED STORE, found 2026-08-17 while giving a product repo its own
-    # cornerstone. The nested product repos were neither harvested nor declared, so a receipt
-    # read "1307 artifacts examined" while never opening the repo holding the answer. That is
-    # the o10 failure exactly: an absence claim whose corpus quietly excluded the subject.
-    #
-    # ⭐ DECLARING IT WAS NOT ENOUGH, AND THAT IS THE LESSON. The declaration was honest and the
-    # repos stayed invisible - the `repo_1` cornerstone rendered zero candidates while the
-    # whole product repo sat on disk, and `repo_1/CLAUDE.md`, titled "CLAUDE.md -
-    # repo_1", was excluded by a rule written for the two push-channel copies. They are now
-    # ENUMERATED (corpus.py S5), bounded to root `*.md` + `docs/**`; what remains uncovered is
-    # only the generated graph below.
-    ("nested repos' .codesight graphs%s" % _nested_repos(),
+    ("nested repos' .code-graph graphs%s" % _nested_repos(),
      "machine-generated code maps - read them directly per CLAUDE.md; the repos' own docs/ and "
      "root markdown ARE indexed"),
 
-    # ⛔ THE SEVENTH, AND IT WAS THE LARGEST AND THE ONLY SILENT ONE. Found by o1, 2026-09-08.
-    # The doc store is `WS.glob("*.md")` - NON-RECURSIVE - plus docs/ and .shared/docs/, so
-    # markdown in any OTHER workspace subdirectory was never walked. Measured over tracked
-    # files: 136 .md at the root against 484 in subdirectories.
-    #
-    # ⭐ O1'S CASE IS THE ARGUMENT FOR PRINTING IT HERE rather than only in corpus.py. They ran
-    # `route.py enrich` on a file, its tags were written, and the router still would not return
-    # it on its most distinctive term - because the file had never been in the corpus. Tags
-    # written, behaviour unchanged, and nothing on the receipt could explain why.
-    #
-    # ⚠️ The scope may be right; the silence was not. working_corpus_o5 alone is 173 files of a
-    # retired orchestrator's notes and would flood every query. But two of these directories
-    # hold material the human intends to train on, and o1 missed the AVATAR-LANG primary corpus while
-    # writing a lane seed - found only by checking someone else's incorrect warning. Whether to
-    # index them is on the human's plate; being honest about it is not a decision.
-    # ⭐ NARROWED BY THE HUMAN'S D17 RULING, 2026-09-08: "index the two research corpora, leave o5's
-    # scratch out." So this row is now smaller than it was yesterday, and it has to SAY so - a
-    # declaration that overstates what is excluded is the same defect as one that understates
-    # it, which is what this row was created to fix.
     ("workspace subdirectories other than docs/ and the two named research corpora",
-     "the doc store is WS/*.md NON-RECURSIVE plus docs/, and - since D17 - "
-     "research_corpus_1 and working_corpus_o8. Still NOT walked: "
-     "working_corpus_o5 (173 files of a retired orchestrator's notes, which would flood every "
-     "query) and the other working and deliverable directories. A VERIFIED MISS is verified "
-     "for the stores named above and nothing else"),
+     "the doc store is the workspace's top-level *.md files plus docs/, non-recursive. Other "
+     "working and deliverable directories are not walked. A VERIFIED MISS is verified for "
+     "the stores named above and nothing else"),
 ]
+
+def _not_covered(arts):
+    """NOT_COVERED as this run should print it: the CLAUDE.md row says the global copy is covered
+    ONLY when its synced copy is among the artifacts actually harvested - a receipt states what
+    was examined, never what usually is."""
+    synced = str(WS.joinpath(*CLAUDE_MD_SYNCED)).lower()
+    have = any(str(a["path"]).lower() == synced for a in arts)
+    return [CLAUDE_MD_ROW_SYNCED if (row is CLAUDE_MD_ROW and have) else row
+            for row in NOT_COVERED]
+
 
 STOP = {"the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "how", "do", "i",
         "is", "it", "my", "we", "what", "where", "with", "use", "using", "does", "can"}
@@ -194,45 +105,18 @@ STOP = {"the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "how", "do
 from mentions import ROUTE_TAGS as TAG_RE  # noqa: E402 - ONE definition
 from mentions import declaration_region as mentions_declaration_region  # noqa: E402
 from mentions import outside_fences as mentions_outside_fences  # noqa: E402
-# ⛔ IMPORTED, NOT RETYPED. A marker format is a contract between every tool that reads it, and
-# this file, knowledge_gate.py and knowledge_pages.py all read the same one. Three copies of the
-# pattern is three chances to drift - and the drift would be silent, because a doc whose
-# declaration one reader accepts and another ignores still LOOKS declared. The fallback below is
-# the pre-hierarchy spelling, so a partial checkout still routes rather than crashing.
+from mentions import copy_markers  # noqa: E402 - copy-in / enforced-by, one definition
 try:
     from knowledge_pages import MARKER_RE as SUBJECT_RE
 except Exception:
     SUBJECT_RE = re.compile(r"<!--\s*(?:cornerstone|subject):\s*([a-z0-9-]+)\s*-->")
-# ⛔ THE ANSWER, NOT A MENTION. Declared by the author, obeyed by the ranker.
-#
-# The founding-case note fell from #1 to #5 for its own subject - not because anything
-# broke, but because the facet rollout WORKED and dozens of docs honestly gained that
-# platform. Counting mentions cannot separate "this IS the answer" from "this mentions
-# the answer", and no weight tuning will, because both matches are real.
-#
-# ⭐ So it is DECLARED, not inferred - the one thing a count can never recover. A doc
-# marked canonical for a term outranks every doc that merely contains it.
-#
-#     <!-- canonical: acme, acme-api, refunds -->
-#
-# Use it sparingly. If three docs claim the same term, the marker has stopped meaning
-# anything and the audit says so.
+try:
+    from knowledge_pages import sot_of as _sot_of  # ONE definition of the sot marker
+except Exception:  # a partial delivery must not take the router down; rows just lose the label
+    _sot_of = None
 CANONICAL_RE = re.compile(r"<!--\s*canonical:\s*([a-z0-9 ,._-]+?)\s*-->")
 
 
-# ⛔ ONE WRITER, ONE READER, MATCHED BY SHAPE - the marker-format-is-a-contract rule
-# (`memory/marker_format_is_a_contract.md`). `miss_receipt()` below is the only thing that
-# emits this line and this regex is the only thing that reads it, so a near-miss shape cannot
-# be hand-rolled into existence by a session that half-remembered the format.
-#
-# Three fields, all required, all machine-filled:
-#   terms   the EXACT tokens the router searched with - not a paraphrase. Re-running them is
-#           the entire mechanism; a prettified version tests a query nobody ever made.
-#   date    when the miss was declared. The age comparison is against THIS.
-#   corpus  unique artifacts enumerated at the time, so growth since is visible rather than
-#           assumed.
-# Deliberately no `by=` field: the shape has to be trivially reproducible, and git already
-# knows who committed it.
 MISS_RECEIPT = re.compile(
     r"<!--\s*miss-receipt:\s*terms=\"(?P<terms>[^\"]+)\"\s+date=(?P<date>\d{4}-\d{2}-\d{2})"
     r"\s+corpus=(?P<corpus>\d+)\s*-->")
@@ -255,28 +139,9 @@ def _canon(text):
 def _subject_aliases(text):
     """A doc that declares a SUBJECT inherits that subject's whole vocabulary, at query time.
 
-    ⛔ THE CAUSE OF EVERY FALSE MISS, ATTACKED AT THE ROOT (the human, 2026-08-13): *"Is there a way
-    to systematically choose names so that it makes it FAR harder to NOT get the keywords
-    correct?"*
-
-    Measured: a tagged doc carries ~10 words; the subject it belongs to knows up to 23. Two
-    small sets rarely intersect, and that gap IS the miss - the payment vendor's webhook version
-    was filed under a note named for REFUNDS, so a search for the vendor's own name returned
-    nothing. Neither party was careless. They simply sampled the same idea differently.
-
-    ⭐ EXPANSION HAPPENS HERE, NOT IN THE DOC. Copying a subject's aliases into every file would
-    freeze each doc at the vocabulary of the day it was written. Expanding at QUERY time means
-    widening a subject retroactively improves every doc already filed under it - the one place
-    where adding a word helps documents nobody will ever touch again.
-
     So the author writes one word they cannot get wrong (the subject), and the router matches on
     all of them.
     """
-    # A DECLARATION, NOT AN ILLUSTRATION - fenced markers stripped for the same reason
-    # `_receipt_docs` strips them (see `_outside_fences`). A lane seed teaching the three
-    # markers a new cornerstone must carry was inheriting that cornerstone's whole vocabulary,
-    # so an ephemeral launch input ranked as a subject artifact. Found 2026-08-17 by the
-    # commerce page listing that seed among the docs the node keeps current.
     m = SUBJECT_RE.search(_outside_fences(text or ""))
     if not m:
         return ""
@@ -293,19 +158,6 @@ def _facet_aliases(text):
     its canonical name and the router matches its domain and its short form too; declares that
     platform's RETIRED MCP integration, and a search for it lands here instead of returning a
     clean miss that reads as permission to rebuild it.
-
-    ⛔ THIS SIGNAL IS WEIGHT 2, NOT 3, AND THE DIFFERENCE IS LOAD-BEARING. A FACET SAYS THIS
-    DOC RELATES TO X; A FILENAME SAYS THIS DOC *IS* X. At equal weight the two are
-    indistinguishable, and the facet backfill then drowns every canonical reference in the
-    docs that merely mention its vendor.
-
-    ⭐ Found by the founding-case fixture going RED mid-backfill, twice. The payment vendor's
-    name returned 28 hits, of which eight scored identically - a filename match and a bare
-    `<!-- platform: <vendor> -->` both produced a weight of 3 - so the tie broke alphabetically
-    and that vendor's refund-API gotchas note, the one document the whole system exists to
-    surface, fell below the display cut. Nothing was mis-tagged; the docs that outranked it
-    are all correctly tagged. That is what makes it worth stating: the defect was not a wrong
-    facet anywhere, it was CORRECT facets at a weight that let quantity beat aboutness.
 
     Lowering it to 2 puts all ten fixtures green, including the two that were already passing
     by luck of the alphabet.
@@ -328,11 +180,29 @@ TERM_OK = re.compile(r"^[a-z0-9][a-z0-9_.+-]{0,23}$")
 def stem(w):
     """Light stemming, both sides of the match. 'tokens' must find 'token' and 'deploying'
     must find 'deploy' - the inflection asymmetry produced VERIFIED MISS receipts for covered
-    subjects, which routes a session to CREATE and births the duplicate doc."""
-    for suf in ("ing", "ed", "es", "s"):
+    subjects, which routes a session to CREATE and births the duplicate doc.
+    """
+    for suf in ("ing", "ed"):
         if w.endswith(suf) and len(w) - len(suf) >= 3:
-            return w[: len(w) - len(suf)]
+            w = w[: len(w) - len(suf)]
+            break
+    else:
+        if (w.endswith("es") and len(w) - 2 >= 3
+                and w[:-2].endswith(("ss", "us", "ch", "sh", "x"))):
+            w = w[:-2]
+        elif (w.endswith("s") and len(w) - 1 >= 3
+                and not w.endswith(("ss", "us", "is", "ias"))):
+            w = w[:-1]
+    if not _ALPHA_WORD.match(w):
+        return w                       # route.py, v2, s3: a name, not an inflected word
+    if w.endswith("e") and len(w) >= 5:
+        w = w[:-1]
+    if w.endswith("y") and len(w) >= 4:
+        w = w[:-1] + "i"
     return w
+
+
+_ALPHA_WORD = re.compile(r"^[a-z][a-z-]*$")
 
 
 def tokenize(terms):
@@ -346,22 +216,9 @@ def tokenize(terms):
             elif len(t) < 2:
                 dropped.append("%s (too short)" % t)
             elif len(t) == 2 and not any(c.isdigit() for c in t):
-                # 'b2', 's3', 'v2' are real subjects; bare two-letter words are noise
                 dropped.append("%s (too short)" % t)
             else:
                 toks.append(t)
-        # ⛔ A DROPPED SHORT WORD CAN BE HALF OF A REAL COMPOUND. `route.py "em dash"` found
-        # nothing while `route.py "em-dash"` found the rule that answers it - the corpus stores
-        # the compound hyphenated (`route-tags: dash em-dash hyphen style`), so the spelling a
-        # person actually types was the one spelling that missed.
-        #
-        # ⭐ o7 reported that rule as "buried" tonight. It was not buried; it was findable by a
-        # spelling nobody uses. And the miss looked honest - "DROPPED (not searched): em (too
-        # short)" reads as housekeeping, not as "the word carrying your meaning is gone".
-        #
-        # The drop stays: a two-letter word alone is still noise. Adjacent pairs are joined and
-        # searched as one COMPOUND, so a short word only ever rejoins the query attached to its
-        # neighbour, where the corpus may genuinely hold it.
         for a, b in zip(words, words[1:]):
             if a in STOP or b in STOP:
                 continue
@@ -371,27 +228,6 @@ def tokenize(terms):
     return toks, dropped
 
 
-# ⛔ A CAP ON THE PROSE, NEVER ON THE DECLARATION - and for a year it was both, silently.
-#
-# `harvest()` used to pull a file's route-tags line out of the SAME truncated string it used for
-# prose ranking. So a doc whose frontmatter grew past its store's cap stopped matching on every
-# tag it carried, with no error and no warning - it simply became unroutable, and the router
-# then answered questions about it with VERIFIED MISS: its strongest possible negative, the one
-# the workspace treats as a licence to create a new doc.
-#
-# ⭐ MEASURED 2026-09-03 on `fine-tunable-models-research-2026-08-12.md`. Adding a section moved
-# its tag line from char 3,861 to char 7,206. Queries for `kimi`, `alibaba`, `qwen`, `moonshot`
-# went to VERIFIED MISS - and so did `SG7` and `corpus-in-context`, tags that had been working
-# for three weeks. Nothing about those subjects had changed. The doc had simply grown.
-#
-# ⭐ THE TWO JOBS HAVE DIFFERENT COSTS, WHICH IS WHY ONE CAP COULD NEVER SERVE BOTH:
-#   - RANKING prose is proportional to the text scanned, and aboutness lives at the top, so a
-#     cap is right and this dict is it.
-#   - FINDING a declaration is a fixed regex hunt. Measured: reading all 503 artifacts whole is
-#     7.7 MB and 0.16 s. There was never anything to save by capping it.
-#
-# So the cap stays for prose and is GONE for the tag line. Raising a number here cannot bring
-# the defect back, and lowering one cannot hide a tag.
 PROSE_CAP = {"memory": 6000, "script": 3000, "doc": 3000, "repo": 3000, "skill": 2500}
 # What an unknown store gets. Named so the drift check and `_read` cannot disagree about it.
 DEFAULT_CAP = 6000
@@ -400,7 +236,7 @@ DEFAULT_CAP = 6000
 def _read(p, n=None):
     """The artifact's text. `n` caps it FOR PROSE RANKING; None returns the whole file.
 
-    ⛔ Never pass a cap when what you are about to look for is a declaration. See PROSE_CAP.
+    See PROSE_CAP.
     """
     try:
         t = p.read_text(encoding="utf-8", errors="replace")
@@ -412,50 +248,37 @@ def _read(p, n=None):
 def _declaration_region(text, path=None):
     """The part of an artifact where a marker counts as ITS OWN declaration.
 
-    ⛔ WIDENING THE SCAN WIDENS WHAT IT PICKS UP - the `mentions.py` failure class, eight
-    instances in one day. A file that TEACHES a marker contains that marker, so reading the
-    whole file naively hands a teaching doc the vocabulary of its own examples.
-
-    Two rules, each measured against this corpus rather than guessed:
-
-      MARKDOWN - the whole file, fenced blocks removed. A fence means "here is what one looks
-      like"; a bare line means "here is mine" - the distinction `_outside_fences` already draws
-      for the subject marker. Measured: zero artifacts lose a tag to fence-stripping.
-
-      PYTHON - the module docstring only, however long. This is not a new rule: `cmd_enrich`'s
-      own refusal message has always told authors to put the line "inside its top docstring".
-      Measured: 25 scripts keep their tag, 1 loses it - `test_marker_diagnosis.py`, whose tag is
-      a TEST FIXTURE (`alpha beta gamma delta`) that was never a declaration. A test must
-      contain the strings it exercises; reading them as claims is the same defect again.
-
     An unparseable .py falls back to the old prose window - the conservative direction, since
     that is exactly what it got before this function existed.
     """
-    # ⛔ ONE IMPLEMENTATION, IN THE SHARED MODULE. This rule now has four readers - route,
-    # knowledge_gate, knowledge_pages and dev_docs_index - and the whole reason they disagreed
-    # about a doc's markers was that each carried its own answer to this question. Keeping a
-    # second copy here, however correct today, is how they diverge again.
-    # `mentions.py` already owns `ROUTE_TAGS` for exactly this reason.
     return mentions_declaration_region(text, path)
 
 
 def declared_tags(text, path=None):
     """This artifact's OWN route-tags line, found over the WHOLE file. "" when it has none.
-
-    ⭐ FIRST MATCH, not every match - the semantics `cmd_enrich` and `knowledge_gate` already
-    use. A file has one declaration; `enrich` merges terms into a single line rather than
-    adding a second. The old `findall` over a window was the only reader that disagreed, and
-    over a whole file it would collect every example in the 11 artifacts that teach or test
-    this marker.
     """
-    # ⛔ CHEAP REJECT FIRST. Of 700 artifacts only 83 carry this marker, and without this line
-    # the other 617 each paid for an `ast.parse` and a whole-file fence regex to be told so -
-    # measured at +55% on every query, which is the kind of cost that gets a correct fix
-    # reverted. A plain substring test settles it for the overwhelming majority.
     if "route-tags" not in text:
         return ""
     m = TAG_RE.search(_outside_fences(_declaration_region(text, path)))
     return m.group(1) if m else ""
+
+
+def _declared_extras(whole, path):
+    """What an artifact declares ABOUT ITSELF beyond its tags: its copies and its enforcers.
+    """
+    m = copy_markers(whole, path)
+    return {"copy_in": m["copy-in"], "enforced_by": m["enforced-by"], "sot": _sot(whole, path)}
+
+
+def _sot(whole, path):
+    """The domain this artifact declares itself the source of truth for, or None.
+    """
+    if "sot:" not in (whole or "") or _sot_of is None:
+        return None
+    try:
+        return _sot_of(whole, path)
+    except Exception:
+        return None
 
 
 def _fm_field(text, name):
@@ -466,28 +289,27 @@ def _fm_field(text, name):
 def harvest():
     """Every artifact across every covered store, as {path -> artifact}.
 
-    Keyed by resolved path so one file is ONE artifact: v1 listed Memory2-indexed notes twice,
-    which both inflated the receipt's count (396 enumerated, 376 real) and burned top-8 display
-    slots on duplicates. A receipt that overcounts is the same defect as one that undercounts.
+    Keyed by resolved path so one file is ONE artifact: a note listed twice inflates the
+    receipt's count and burns display slots on duplicates. A receipt that overcounts is the same defect as one that undercounts.
     """
     arts = {}
 
-    def add(kind, path, pairs, canonical=()):
+    def add(kind, path, pairs, canonical=(), extra=None):
         key = str(path.resolve()).lower() if path.exists() else str(path).lower()
         if key in arts:
             arts[key]["signals"].extend(pairs)
-            arts[key]["canonical"] |= set(canonical)
+            arts[key]["canonical"] |= {stem(c) for c in canonical}
         else:
             arts[key] = {"kind": kind, "path": path, "signals": list(pairs),
                          # STEMMED, because rank() matches on stems - storing raw terms here
                          # made the tier silently never fire, which is a guard that looks
                          # installed and does nothing.
-                         "canonical": {stem(c) for c in canonical}}
+                         "canonical": {stem(c) for c in canonical},
+                         "copy_in": [], "enforced_by": [], "sot": None}
+        for k, v in (extra or {}).items():
+            if v:
+                arts[key][k] = v
 
-    # POINTER STUBS (o1:W27): MEMORY.md links `m/<n>.md`, a GENERATED stub whose only content is
-    # "The note is [`x.md`](../x.md)". Resolve each stub to its note so (a) the MEMORY.md hook
-    # line credits the NOTE (keyed on the stub name it credited nothing, which is why two
-    # fixtures failed) and (b) the stub is not a hit of its own beside the note it points to.
     from memory_index import stub_target as _stub_target
     stub_target = {}
     stub_dir = MEM / "m"
@@ -505,23 +327,14 @@ def harvest():
                 name = stub_target[(stub_dir / name).resolve()]
             hooks.setdefault(name, []).append(line)
 
-    # ⛔ THE STORES COME FROM corpus.py, NOT FROM HERE. Two independent enumerations is how
-    # this router reached 1,326 artifacts while the knowledge map reached 198 and neither could
-    # see the other's blind spot. What stays here is the SIGNAL EXTRACTION - which parts of a
-    # file carry weight - because that genuinely differs per store. Membership does not.
     from corpus import files as _corpus_files
     by_kind = {}
     for kind, p in _corpus_files():
         by_kind.setdefault(kind, []).append(p)
 
-    # S1 - memory notes, RECURSIVE. memory/automation/** holds the sweep + briefing runbooks
-    # and was silently unharvested in v1 while the receipt claimed the memory store was covered.
     for p in by_kind.get("memory", []):
         if p.resolve() in stub_target:
             continue  # folded into its note (see POINTER STUBS above)
-        # ⛔ TWO NAMES, TWO JOBS. `whole` is for DECLARATIONS, `t` is the capped prose. Reading
-        # the tag line out of `t` is the defect PROSE_CAP documents; it looked identical to
-        # working code for as long as no file outgrew its cap.
         whole = _read(p)
         t = whole[:PROSE_CAP["memory"]]
         add("memory", p, [
@@ -534,9 +347,8 @@ def harvest():
             (2, _facet_aliases(t)),
             (1, " ".join(re.findall(r"^#{1,3}\s+(.+)$", t, re.M)[:6])),
             (2, " ".join(hooks.get(p.name, []))),
-        ], canonical=_canon(t))
+        ], canonical=_canon(t), extra=_declared_extras(whole, p))
 
-    # S2 - Memory2 cold index: signals MERGE into the existing artifact when the target exists
     m2 = MEM / "Memory2.md"
     if m2.exists():
         for line in _read(m2, 300000).split("\n"):
@@ -544,7 +356,6 @@ def harvest():
             if lm:
                 add("memory", MEM / lm.group(2), [(3, lm.group(1)), (2, lm.group(3))])
 
-    # S3 - shared scripts, recursive, pycache excluded
     for p in by_kind.get("script", []):
         whole = _read(p)
         t = whole[:PROSE_CAP["script"]]
@@ -554,11 +365,8 @@ def harvest():
             (3, declared_tags(whole, p)),
             (3, _subject_aliases(t)),
             (2, _facet_aliases(t)),
-        ], canonical=_canon(t))
+        ], canonical=_canon(t), extra=_declared_extras(whole, p))
 
-    # S4 - docs: workspace root, docs/**, .shared/docs/**, and (S5) the nested product repos'
-    # own root markdown + docs/**. A repo doc gets doc-shaped signals because that is what it
-    # is; the STORE it came from is kept as its kind so a reader can see where an answer lives.
     for kind in ("doc", "repo"):
         for p in by_kind.get(kind, []):
             whole = _read(p)
@@ -570,9 +378,8 @@ def harvest():
                 (3, _subject_aliases(t)),
                 (2, _facet_aliases(t)),
                 (1, t.split("\n\n")[1][:200] if "\n\n" in t else ""),
-            ], canonical=_canon(t))
+            ], canonical=_canon(t), extra=_declared_extras(whole, p))
 
-    # S6 - first-party skills
     seen = set()
     for p in by_kind.get("skill", []):
         if p.parent.name in seen:
@@ -586,7 +393,7 @@ def harvest():
             (3, declared_tags(whole, p)),
             (3, _subject_aliases(t)),
             (2, _facet_aliases(t)),
-        ], canonical=_canon(t))
+        ], canonical=_canon(t), extra=_declared_extras(whole, p))
 
     # word index per artifact: {stemmed word -> max signal weight}
     for a in arts.values():
@@ -600,25 +407,39 @@ def harvest():
     return list(arts.values())
 
 
+def sot_in_query(domain, qset, score=None, best=0):
+    """True when EVERY word of a declared SOT domain is among the query's stems.
+    """
+    if not domain:
+        return False
+    words = {stem(w) for w in re.split(r"[-_ ]+", domain) if w}
+    if not (bool(words) and words <= qset):
+        return False
+    if len(words) == 1 and score is not None and best:
+        return score * 2 >= best
+    return True
+
+
 def rank(arts, toks):
     """(hits, weak) under the rarity-weighted word-match scoring."""
     stems = [stem(t) for t in toks]
+    qset = set(stems)
     df = {s: sum(1 for a in arts if s in a["words"]) for s in stems}
 
     def rarity(s):
         return 3 if df[s] <= 3 else (2 if df[s] <= 12 else 1)
 
-    scored = []
+    raw = []
     for a in arts:
         matched = [s for s in set(stems) if s in a["words"]]
         if not matched:
             continue
-        sc = sum(a["words"][s] * rarity(s) for s in matched) + 4 * len(matched)
-        # ⭐ A CANONICAL CLAIM IS A SEPARATE AXIS, not a bigger number. Sorting canonical docs
-        # ahead of everything else - rather than adding to their score - means a doc that
-        # merely mentions the term can never out-accumulate the doc that IS the answer, however
-        # many times it says the word. Scores still order WITHIN each tier.
-        canon = 1 if any(s in a.get("canonical", set()) for s in matched) else 0
+        raw.append((sum(a["words"][s] * rarity(s) for s in matched) + 4 * len(matched), matched, a))
+    best = max((r[0] for r in raw), default=0)
+    scored = []
+    for sc, matched, a in raw:
+        canon = 1 if (any(s in a.get("canonical", set()) for s in matched)
+                      or sot_in_query(a.get("sot"), qset, sc, best)) else 0
         scored.append((canon, sc, len(matched), a))
     scored.sort(key=lambda x: (-x[0], -x[1], -x[2]))
     hits = [(s, a) for _c, s, _m, a in scored if s >= 7]
@@ -628,17 +449,6 @@ def rank(arts, toks):
 
 def _drifted_skills():
     """Names whose canonical copy != the copy a session actually LOADS.
-
-    ⛔ WHY THE ROUTER MUST KNOW THIS. o1's finding: the failure is rarely "which artifact?" -
-    it is "which COPY, and is the one I am reading the one that runs?" This router indexes the
-    MARKETPLACE copy of a plugin skill and zero cache copies, but a session invoking that skill
-    loads the CACHE. Measured 2026-08-12: two of four had drifted, one by 117 lines, still
-    teaching a strike format that had been rejected twice.
-
-    ⭐ So a routing answer that names a drifted artifact is WORSE than no answer. It sends the
-    session to read a file that is not the one governing its behaviour, with full confidence.
-    A single source of truth that points at the wrong copy is not a source of truth; it is one
-    more opinion, wearing the authority of the map.
     """
     try:
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -664,7 +474,28 @@ def _row(sc, a):
     warn = ""
     if a["kind"] == "skill" and a["path"].parent.name in _DRIFT:
         warn = "  ⛔ DRIFTED - the CACHE copy is what loads, and it differs. Fix: tool_drift.py --sync"
-    return "    %-7s %-62s %s%s" % (a["kind"], short[:62], age, warn)
+    sot = "  SOT: %s" % a["sot"] if a.get("sot") else ""
+    return "    %-7s %-62s %s%s%s" % (a["kind"], short[:62], age, sot, warn)
+
+
+def _row_extras(a):
+    """The lines printed UNDER a row: the copies and enforcers its artifact declares. [] if none.
+
+    Enforcers are grouped by file, so twelve rules in one gate read as one line naming the gate
+    and its rule ids rather than twelve lines repeating the path.
+    """
+    out = []
+    if a.get("copy_in"):
+        out.append("            copies (copy-in): %s" % "; ".join(a["copy_in"]))
+    if a.get("enforced_by"):
+        by_file = {}
+        for v in a["enforced_by"]:
+            f, _sep, rule = v.partition("#")
+            by_file.setdefault(f, []).append(rule)
+        out.append("            enforced by:      %s" % "; ".join(
+            "%s#%s" % (f, ",".join(r for r in rules if r)) if any(rules) else f
+            for f, rules in by_file.items()))
+    return out
 
 
 _SUBJ_CACHE = {}
@@ -714,16 +545,6 @@ _OWN_WORDS = {}
 
 def _own_words(path):
     """The stems a file itself CONTAINS - not what its subject lends it. Cached.
-
-    \u26d4 `a["words"]` CANNOT ANSWER THIS. It is built from signals, and one signal is
-    `_subject_aliases`, which hands every member of a cornerstone that cornerstone's whole
-    vocabulary. That expansion is the router's best feature - it is what stops false misses -
-    and it makes every member look as though it holds every subject word. A split test run
-    against it can never see a gap, which is why `partial_split` measured 0 of 7 on queries
-    built from the subjects' own aliases before this existed.
-
-    \u2b50 TWO MECHANISMS IN DIRECT TENSION, AND BOTH ARE RIGHT. Expansion must widen matching;
-    the split test must narrow it. They can only coexist by reading different sources.
     """
     key = str(path)
     if key in _OWN_WORDS:
@@ -738,55 +559,24 @@ def _own_words(path):
 def partial_split(hits, toks, df, topn=8, band=None, artifact_count=None):
     """(subject, {term: [artifact]}, members) when one SUBJECT holds the answer in pieces.
 
-    \u26d4 NOT A SCORE BAND, AND NOT A GUESS ABOUT MEANING. Every threshold on the score is a
-    proxy for "does this document answer you", which scoring cannot observe - that was the
-    argument against building PARTIAL at all (o9:D36). The human's question is what made it
-    buildable: *"What about integrating it with the use of the knowledge tree to help decide if
-    a specific subject is already covered?"* A cornerstone with members is a fact about the
-    tree, not an inference about prose.
-
         PARTIAL = two or more of the top hits declare the SAME cornerstone, and NO single one
                   of them holds all the distinguishing terms they hold between them.
 
     Which is the sprawl signal itself: the subject has a home, and the answer is spread across
     it. The receipt then names the subject to extend rather than only saying "do not create".
-
-    \u26d4 THE FIRST VERSION REQUIRED THE TOP HIT ITSELF TO BE MARKED, AND I MEASURED IT BEFORE
-    SHIPPING: 0 of 12 real queries. **91 of 1004 artifacts declare a subject at all - 9%** - so
-    keying on row 1 made the verdict unreachable, which is precisely the F215 defect rebuilt by
-    the person who recorded it. This version asks which SUBJECTS are represented among the hits
-    and never cares which row came first.
-
-    \u26a0\ufe0f MEASURED FIRE RATE, STATED SO NOBODY HAS TO RE-DERIVE IT: **1 of 16** real
-    queries at `band=12`, 0 of 16 at `band=3`. That is sparse, and the cause is not the rule -
-    it is that the tree is 9% populated. **It rises as ownership markers are added** (the
-    knowledge-tree review's Phase 2), and it cannot rise any other way. The human ruled build it
-    anyway: *"If the algorithm isn't perfect, it will still at least reduce the amount of sprawl
-    and keep things more honest."*
-
-    \u2b50 `band` IS THE TOP TWO RARITY TIERS `rank()` ALREADY USES (df <= 12), not the rarest
-    only. At df <= 3 nothing fired at all: in a corpus this size the terms that distinguish a
-    question are usually not the very rarest ones.
     """
     groups = {}
     for _s, a in hits[:topn]:
         subj = _declared_subject(a["path"])
         if subj:
             groups.setdefault(subj, []).append(a)
-    if band is None:  # W234: band scales with corpus; 1631 = the corpus size the fixed 12 was tuned on
+    if band is None:
         band = max(12, round(12 * (artifact_count or 0) / 1631))
     keys = {stem(x) for x in toks if df.get(stem(x), 99) <= band}
     qstems = {stem(x) for x in toks}
     for subj, members in groups.items():
         if len(members) < 2:
             continue
-        # THE SUBJECT MUST BE ON-TOPIC, NOT MERELY POPULATED. Driven and caught: "voice clone
-        # liveness whisper" reported PARTIAL on `orchestration`, matching `clone` in a git-clone
-        # doc and `liveness` in a hook-liveness script. `orchestration` is one of the largest
-        # cornerstones, so two of its members land in almost any top-8 - the detector was
-        # finding a BIG subject rather than a relevant one, and sending the session to extend
-        # the wrong document. A verdict that fires only on false positives is worse than one
-        # that never fires.
         if not (qstems & _subject_vocabulary(subj)):
             continue
         held = {}
@@ -797,8 +587,6 @@ def partial_split(hits, toks, df, topn=8, band=None, artifact_count=None):
                     held.setdefault(k, []).append(a)
         if not held:
             continue
-        # \u2b50 IF ONE MEMBER HOLDS EVERYTHING THE GROUP HOLDS, NOTHING IS SPLIT - that is a
-        # HIT with company, and calling it PARTIAL would be the cry-wolf direction.
         if any(all(k in _own_words(a["path"]) for k in held) for a in members):
             continue
         return subj, held, members
@@ -824,13 +612,15 @@ def cmd_ask(args):
           % (", ".join("%s x%d" % (k, v) for k, v in sorted(counts.items())),
              len(arts)))
     print("  NOT COVERED (exists, not indexed): %s"
-          % "; ".join(n for n, _w in NOT_COVERED))
+          % "; ".join(n for n, _w in _not_covered(arts)))
     print()
 
     if hits:
         print("  %d hit(s)%s:" % (len(hits), " (top 8 shown)" if len(hits) > 8 else ""))
         for s, a in hits[:8]:
             print(_row(s, a))
+            for line in _row_extras(a):
+                print(line)
         if len(hits) > 8:
             print("    ... and %d more below these" % (len(hits) - 8))
         print("    (dates are mtime - unreliable after a git clone/checkout; trust the")
@@ -839,10 +629,6 @@ def cmd_ask(args):
         split = partial_split(hits, toks, df, artifact_count=len(arts))
         if split:
             subj, holders, _members = split
-            # \u26d4 THE VERDICT THE DOCSTRING PROMISED FOR FIVE WEEKS AND THE CODE NEVER
-            # ASSIGNED. o9:F215 measured it: three assignment sites, four advertised outcomes,
-            # zero PARTIAL in 126 logged runs. The human ruled BUILD (D36), on the reasoning that an
-            # imperfect signal still reduces sprawl and keeps the contract honest.
             print("  \u26d4 PARTIAL - the subject `%s` already has a home, and your answer is"
                   % subj)
             print("     SPLIT across it. The top hit does not carry every rare term you asked")
@@ -865,12 +651,11 @@ def cmd_ask(args):
         return 0
 
     if weak:
-        # ⭐ THE STATE v1 COULD NOT NAME. These artifacts DID match - printing VERIFIED MISS
-        # here sent the session to CREATE past an existing home, which is the founding case's
-        # exact mechanism. Weak is not a verdict; it is a instruction to look at the list.
         print("  NO CONFIDENT HIT - but %d artifact(s) matched below the floor:" % len(weak))
         for s, a in weak[:6]:
             print(_row(s, a))
+            for line in _row_extras(a):
+                print(line)
         print()
         print("  This is NOT a verified miss. One of these is likely the home - open it; if")
         print("  it is the subject, enrich it with your terms so the next ask hits:")
@@ -887,7 +672,7 @@ def cmd_ask(args):
     print("    1. re-ask with different words - a vocabulary miss is not a knowledge miss")
     print("    2. check the NOT-COVERED stores named above for your subject")
     print()
-    print("  ⭐ THE RECEIPT - paste this line into the doc you create (CREATE.md step 1).")
+    print("  ⭐ THE RECEIPT - paste this line into the doc you create.")
     print("     It is what makes this claim re-testable. Without it, nothing ever re-checks")
     print("     whether the miss was true, and a doc born from a false miss stands forever:")
     print()
@@ -898,7 +683,7 @@ def cmd_ask(args):
     print("     i.e. one that was already there while you were declaring nothing was.")
     print()
     print("  Also carry a nearest-neighbor line ('closest existing artifact is X; could not")
-    print("  be extended because Y'). CREATE path: docs/knowledge/CREATE.md. Then:")
+    print("  be extended because Y'). Then:")
     print("    route.py fixtures --add \"%s\" --must-hit <new-file-name>" % " ".join(toks))
     print("  so the next session finds it by the query that just failed.")
     _VERDICT["last"] = "VERIFIED MISS"
@@ -959,11 +744,6 @@ def _tag_anchor(text):
 
 def cmd_enrich(args):
     """Append searched-with terms to the artifact so the next session's query hits.
-
-    The adversarial pass broke v1 eight ways here - backslash terms crashed or silently
-    corrupted, '-->' truncated the comment and the NEXT enrich destroyed earlier terms, LF
-    files were rewritten wholesale to CRLF, and success was reported for terms the ask path
-    can never match. Every one of those is now either sanitized away or refused loudly.
     """
     p = pathlib.Path(args.file)
     if not p.exists():
@@ -1006,18 +786,6 @@ def cmd_enrich(args):
         print("  REFUSED - the tag line would exceed 800 chars. A tag that long has stopped")
         print("  being vocabulary; split the artifact or prune the terms.")
         return 2
-    # ⛔ PLACE IT AT THE TOP, don't rewrite it where it sits. v1 spliced the new line into the
-    # old line's span, so a tag that had drifted down the file stayed exactly where it was -
-    # and `enrich` reported success for terms nothing could reach. That is a repair tool
-    # confirming a fix it did not make.
-    #
-    # ⭐ The tag no longer needs to be near the top to be INDEXED (see PROSE_CAP), so this is
-    # not the fix for that defect - it is hygiene that keeps the declaration where a reader
-    # looks for it, next to the file's other frontmatter, instead of buried mid-document.
-    #
-    # Remove-then-insert rather than move-in-place: computing the anchor on the text with the
-    # old line already gone means no offset can shift under it. When the line is already at the
-    # anchor the result is byte-identical to a splice, so the no-op case writes no diff.
     moved = False
     if m:
         text, removed_at = _cut_tag_line(text, m)
@@ -1079,11 +847,6 @@ def cmd_fixtures(args):
         hits, weak, _df = rank(arts, toks)
         top = [str(a["path"]).lower() for _s, a in (hits + weak)[:8]]
         missing = [w for w in f["must_hit"] if not any(w.lower() in t for t in top)]
-        # \u2b50 A FIXTURE CAN NOW PIN A VERDICT, WHICH o9:F215 SAID NONE COULD: *"no fixture
-        # field names an expected verdict, and none could - there is nothing to assert against,
-        # since PARTIAL is never assigned."* That was true of the schema AND a consequence of
-        # the code. PARTIAL is assignable now (D36), so the untestable half of the four-outcome
-        # contract becomes testable, and the "10/10 fixtures" claim stops covering for it.
         want_v = f.get("must_verdict")
         if want_v and not missing:
             got_v = ("PARTIAL" if partial_split(hits, toks, _df, artifact_count=len(arts))
@@ -1093,10 +856,6 @@ def cmd_fixtures(args):
                 print("  [FAIL] %-38s -> verdict %s, wanted %s"
                       % (f["query"], got_v, want_v))
                 continue
-        # ⛔ RANK, NOT MERE PRESENCE. The founding-case note fell from #1 to #5 and every
-        # fixture stayed green, because they only asserted the artifact was IN the results.
-        # A fixture that cannot tell first from fifth will not fire until the answer falls
-        # off the list entirely - by which time the router has been quietly wrong for weeks.
         first = f.get("must_rank_first")
         if first and not missing:
             if not top or first.lower() not in top[0]:
@@ -1122,11 +881,6 @@ RECEIPT_REFUSE = 9
 
 def _receipt_files():
     """Every file a receipt could live in - THE SAME STORES harvest() indexes, from corpus.py.
-
-    ⛔ It used to be a second hand-written enumeration of the same stores, one function below the
-    first. A receipt living in a file this list forgot is a falsified miss nobody re-checks, and
-    the two lists could drift without any test seeing it - which is the exact class of defect
-    corpus.py exists to make impossible.
     """
     from corpus import files as _corpus_files
     return [p for _k, p in _corpus_files()]
@@ -1137,18 +891,6 @@ FENCE_RE = re.compile(r"^(```|~~~).*?^\1", re.S | re.M)
 
 def _outside_fences(text):
     """Text with fenced code blocks removed - a marker inside a fence is an EXAMPLE.
-
-    ⛔ FOUND BY THIS CHECKER FAILING ON ITS OWN DOCUMENTATION, first run. `CREATE.md` step 1
-    shows the receipt shape in a fenced block, exactly as it must, and the scanner read that
-    illustration as a live claim - then correctly reported it falsified, since the sample terms
-    reach sixteen artifacts predating it. The doc was right, the receipt was right, and the
-    reading was wrong.
-
-    ⭐ Not a special case for one file: ANY doc that teaches a marker contains that marker, so
-    the distinction has to be structural. A fence means "here is what one looks like"; a bare
-    line means "here is mine". Cost is that a receipt someone fences by accident goes uncounted
-    - a false negative, the survivable direction, and CREATE.md says paste the line, not fence
-    it.
     """
     # One implementation, in the shared module - see `_declaration_region`.
     return mentions_outside_fences(text)
@@ -1176,12 +918,6 @@ def _receipt_docs():
 
 def _created(path):
     """(iso-date, source) - when this artifact FIRST existed. git first, mtime as fallback.
-
-    ⛔ mtime is NOT trustworthy here, and this file's own hit rows already say so: a clone or a
-    checkout stamps every file with the time of the clone. Under that stamp every artifact looks
-    NEWER than every receipt and the check passes on everything - a false NEGATIVE, which is the
-    survivable direction, and the source is printed beside every date so a reader can see which
-    kind of answer they are looking at rather than having to assume.
 
     `--follow` is deliberately omitted: it needs exactly one pathspec and misreports across some
     rename shapes. Cost is that a renamed artifact reports its rename date, i.e. looks younger.
@@ -1225,13 +961,6 @@ def _recheck(rec, arts):
 
 def _older_lines(older):
     """One printed line per older artifact a falsified receipt reaches - EVERY one of them.
-
-    ⛔ This used to print `older[:5]` under a header that gave the full count, so a receipt
-    reaching 13 artifacts showed 5 and the reader could not see the other 8 (o1, 2026-10-20,
-    on cloud-environment-setup.md). Closing a falsified miss means reading each older artifact
-    and declaring it, so a name the output hides is a name nobody can close. The full path is
-    printed, never cut to a column width: a truncated path cannot be pasted into a
-    distinct-from line.
     """
     out = []
     for _sc, a, created, src, tier in older:
@@ -1242,15 +971,6 @@ def _older_lines(older):
 
 def cmd_receipts(_args):
     """Re-run every stored miss against TODAY's corpus.
-
-    ⛔ FAILS OPEN, ON PURPOSE AND STRUCTURALLY. Only RECEIPT_REFUSE means "a miss was falsified".
-    A crash, an unreadable file, a git that is not there - all warn and return 0. On 2026-08-12 a
-    syntax error in a guard took down every commit in this workspace because its hook used
-    `|| exit 1`, which blocks on any non-zero exit including the guard failing to parse.
-
-    ⭐ AND IT REPORTS WHAT IT EXAMINED, NOT ONLY WHAT IT FOUND. "0 receipts checked" and "14
-    checked, all still valid" must never print the same line: the first is an empty set and the
-    second is evidence, and a reader who cannot tell them apart will read silence as safety.
     """
     try:
         holders = _receipt_docs()
@@ -1313,7 +1033,7 @@ def cmd_receipts(_args):
     print()
     print("  Read the older artifact, then close it one of three ways:")
     print("    - it IS the same subject   -> merge into it and tombstone the newer doc")
-    print("      (knowledge_gate.py owns the tombstone shape; CREATE.md section 5)")
+    print("      (knowledge_gate.py owns the tombstone shape)")
     print("    - they genuinely differ    -> one line in the newer doc, and this stops firing:")
     print("        <!-- distinct-from: <that path>: <how they differ> -->")
     print("    - the older doc was enriched with these terms AFTER the receipt date, so it")
@@ -1324,16 +1044,6 @@ def cmd_receipts(_args):
 
 def cmd_markers(_args):
     """Is every declaration this router reads actually inside the part of the file it reads?
-
-    ⛔ THE DEFECT THIS WATCHES FOR IS SILENT BY CONSTRUCTION. A marker outside the scanned
-    region does not error - the artifact simply stops carrying that signal, and the router then
-    answers questions about it with VERIFIED MISS. Nothing in the output of a query says "this
-    doc had tags I could not see", so the only way to know is to go and measure.
-
-    ⭐ THRESHOLDS COME FROM PROSE_CAP, never from a number retyped here. A check with its own
-    copy of the limit is a check that passes while the thing it guards has moved - the
-    marker-format-is-a-contract rule (`memory/marker_format_is_a_contract.md`) applied to a
-    threshold instead of a regex.
 
     route-tags is NOT in this table, and its absence is the point: `declared_tags` reads it over
     the whole file, so it has no window left to fall out of. What remains here is every marker
@@ -1356,21 +1066,11 @@ def cmd_markers(_args):
             continue
         checked += 1
         cap = PROSE_CAP.get(kind, DEFAULT_CAP)
-        # ⛔ ASK "IS THIS A DECLARATION?" BEFORE ASKING "IS IT IN RANGE?" - the same
-        # `_declaration_region` rule the tag scan uses, and the check needs it for the same
-        # reason. First run reported route.py itself as FAIL, for the `<!-- canonical: acme,
-        # acme-api, refunds -->` line in the comment block that DOCUMENTS the marker. The
-        # advice attached to that failure was to move it toward the top - which would have
-        # handed this router the canonical claim on somebody else's vendor.
-        #
-        # ⭐ A CHECK CAN COMMIT THE DEFECT IT WATCHES FOR. This one was one run from doing it.
         region = _outside_fences(_declaration_region(text, p))
         for label, rx, why in windowed:
             mm = rx.search(region)
             if not mm:
                 continue
-            # The offset that matters is where the marker sits in the REAL file, since that is
-            # what `_read`'s cap is measured against - not its offset inside the region.
             at = text.find(mm.group(0))
             if at >= cap:
                 problems.append((label, kind, p, at, cap, why))
@@ -1424,7 +1124,7 @@ def cmd_stores(_args):
     print("route - coverage")
     for k, v in sorted(counts.items()):
         print("  COVERED      %-12s %d unique artifacts" % (k, v))
-    for name, why in NOT_COVERED:
+    for name, why in _not_covered(arts):
         print("  NOT COVERED  %-40s %s" % (name, why))
     return 0
 
@@ -1455,8 +1155,6 @@ def main():
     return rc
 
 
-# ~/.claude/state/route-usage.jsonl. `$CLAUDE_HOME_STATE_DIR` moves it, and every test that
-# drives the ask path sets it: a timing run appended rows to the real log on 2026-09-25.
 try:
     from shared_state import home_state_dir as _home_state_dir
 except ImportError:  # a published copy without shared_state.py keeps the historical path
@@ -1468,16 +1166,6 @@ _VERDICT = {"last": None}
 
 def _log_ask(terms, rc):
     """One line per real question asked. The router could not answer anything about itself.
-
-    ⛔ the human, 2026-09-04: *"Has it been in use? Any way to measure effectiveness concretely?"* -
-    and answering it took reading 392 session transcripts, because this file recorded nothing.
-    Worse, the obvious reading was wrong: 259 transcripts "mention route.py", but route.py is
-    named in CLAUDE.md, which is injected into every session, so that number measures the
-    injection. Counting actual invocations gave a very different shape - roughly 324 in the nine
-    days it was being BUILT, and 4 in the two weeks since.
-
-    ⭐ A tool that cannot say whether it is used cannot be judged, only guessed at. One appended
-    line makes the next answer free: what was asked, what came back, when, and by whom.
 
     Only the ASK path is logged. `fixtures` and `enrich` are the router exercising or feeding
     itself, and counting those as use is what inflated the first measurement.

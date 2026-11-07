@@ -5,49 +5,7 @@
 <!-- route-tags: cloud layout .shared/cloud MANIFEST.json hooks.json hook-status.json format
      validate read cloud session published rules memory copy freshness stale -->
 
-`cloud_publish.py` writes this folder; `cloud_start.py` reads it. Both import the paths, the
-readers and the validators from here, so a format is defined once and a file that does not
-match it is refused the same way on both sides (o9 W140, cloud Phase 2, plan section 5).
-
 THE LAYOUT, relative to the repo root:
-
-    .shared/cloud/global-rules.md    the laptop's global CLAUDE.md, byte for byte (named so that
-                                     Claude Code never loads it as a folder's CLAUDE.md; see
-                                     CLAUDE_MD below)
-    .shared/cloud/memory/MEMORY.md   the memory index, then the `m/N.md` pointers it links to and
-    .shared/cloud/memory/...         the note behind each pointer, laid out as in the memory folder
-    .shared/cloud/hooks.json         the hooks a cloud session registers (format below)
-    .shared/cloud/MANIFEST.json      what was published, from what, and when (format below)
-    .shared/cloud/hook-status.json   one decision per laptop hook; kept by hand, never written by
-                                     the publisher (format below)
-    .shared/cloud/BUILD-RULES.md     the cloud addendum; kept by hand, never written by the
-                                     publisher
-
-MANIFEST.json, written last by cloud_publish.py:
-
-    {
-      "format": 1,
-      "stamp": "2026-10-02T22:10:00-07:00",          local time with its offset
-      "publisher": ".shared/scripts/cloud_publish.py",
-      "sources": {                                    what the copy was made from
-        "CLAUDE.md":            {"sha256": "<64 hex>", "bytes": 8912},
-        "memory/MEMORY.md":     {"sha256": "...", "bytes": ...},
-        "settings.json hooks":  {"sha256": "...", "bytes": ...},   canonical JSON of the
-                                                                    registered hook commands
-        "hook-status.json":     {"sha256": "...", "bytes": ...}
-      },
-      "outputs": {"global-rules.md": "<64 hex>", "memory/MEMORY.md": "...", "hooks.json": "...",
-                  ...},
-                                                      every file written, relative to
-                                                      .shared/cloud/, MANIFEST.json itself excepted
-      "counts": {"memory_files": 362, "links_resolved": 360, "hooks_published": 29, ...}
-    }
-
-    A source name is a logical name, never a laptop path. Two manifests describe the same
-    publication when their `outputs` maps are equal (same_publication); the stamp and the
-    sources do not count, so a run that would write the same bytes commits nothing.
-    stale_sources() compares `sources` with the laptop's files, for cloud_start.py's freshness
-    check.
 
 hooks.json, the PUBLISHED hooks only, in settings.json order:
 
@@ -64,14 +22,6 @@ hooks.json, the PUBLISHED hooks only, in settings.json order:
         }
       ]
     }
-
-    One registration per settings.json entry that runs the hook. `matcher` is "" for an
-    entry with none. `args` is what the laptop passes after the script ("hook", "--quiet").
-    `tail` is the laptop command's shell tail after the arguments: "" for a guard, whose
-    exit 2 must still block, or a redirect and `|| true` for a hook the laptop never lets
-    block ("2>&1 || true"). Both go into a shell command, so validate_hooks() accepts only
-    the plain shapes in ARGS_RE and TAIL_RE, and a hook whose laptop command has any other
-    tail cannot be published until its decision changes.
 
 hook-status.json, one decision per hook that settings.json runs:
 
@@ -92,14 +42,6 @@ hook-status.json, one decision per hook that settings.json runs:
     decision for a name that is not registered, so the list cannot drift from settings.json
     in either direction without the publisher and its test failing.
 
-    `acknowledgments` is optional. Each one clears ONE finding of cloud_start's Linux checker
-    on ONE line of a hook: `code` is the finding's code (one of ACK_CODES) and `line_sha256`
-    is line_sha256() of that line, so editing the line - even to a call that really breaks -
-    ends the acknowledgment and the finding counts again. cloud_start reports an
-    acknowledgment that matches no current line as lapsed. The validation refuses an
-    acknowledgment with a missing or unknown key, a hook with no decision, an unknown code,
-    a hash that is not 64 lowercase hex, no reason, or the same (hook, code, hash) twice.
-
 Every reader raises LayoutError, a ValueError, with every problem found, one per line.
 """
 import hashlib
@@ -111,15 +53,7 @@ import re
 FORMAT = 1
 
 CLOUD_DIR = ".shared/cloud"
-#: The published copy of the laptop's global CLAUDE.md. ⛔ NOT NAMED CLAUDE.md (o9L1015,
-#: 2026-10-03). Claude Code loads a CLAUDE.md in any folder whose files a session reads, so a
-#: cloud session that touched `.shared/cloud/` got the global rules in its context twice (seen in
-#: the second cloud check), and a laptop session reading a file there would load this copy,
-#: which can be older than the real rules. The folder holds no other file of a name Claude Code
-#: loads as instructions.
 CLAUDE_MD = CLOUD_DIR + "/global-rules.md"
-#: Where earlier publishers wrote that copy. cloud_publish.py removes it from origin when it is
-#: still there, and the walkers skip it like a generated copy.
 RETIRED_COPIES = (CLOUD_DIR + "/CLAUDE.md",)
 MEMORY_DIR = CLOUD_DIR + "/memory"
 MEMORY_INDEX = MEMORY_DIR + "/MEMORY.md"
@@ -128,12 +62,6 @@ MANIFEST_JSON = CLOUD_DIR + "/MANIFEST.json"
 HOOK_STATUS_JSON = CLOUD_DIR + "/hook-status.json"
 BUILD_RULES = CLOUD_DIR + "/BUILD-RULES.md"
 
-#: The generated copies under CLOUD_DIR: cloud_publish.py writes them from the laptop's global
-#: CLAUDE.md and memory folder; RETIRED_COPIES names where an earlier publisher wrote one. A
-#: walker of the workspace skips them (it reads the same files where they are written) and keeps
-#: the hand-kept files beside them, BUILD-RULES.md and hook-status.json. is_generated_copy() is the one test; the three walkers call it
-#: (dev_docs_index.py, check_unfiled_decisions.py, correction.py). gbrain_catalog_build.py called it
-#: until its union step was removed (o9 W160, lane o9L1130).
 GENERATED_COPIES = (CLAUDE_MD, MEMORY_DIR) + RETIRED_COPIES
 
 
@@ -143,7 +71,7 @@ def is_generated_copy(path):
 
     `path` may be absolute or relative, a str or a Path, with either slash. The test is on a run
     of path parts, so it holds in any checkout, worktree or sandbox. `.shared/cloud` itself is
-    not a copy, so a walker still goes into it and finds BUILD-RULES.md."""
+    not a copy, so a walker still goes into it."""
     parts = [p for p in re.split(r"[\\/]+", str(path)) if p not in ("", ".")]
     for gen in GENERATED_COPIES:
         g = gen.split("/")
@@ -158,8 +86,6 @@ OUT_MEMORY_DIR = "memory"
 OUT_MEMORY_INDEX = "memory/MEMORY.md"
 OUT_HOOKS_JSON = "hooks.json"
 
-#: MANIFEST.json's source names. "CLAUDE.md" names the laptop's source file, which keeps its
-#: name; only the published copy was renamed (OUT_CLAUDE_MD).
 SOURCE_CLAUDE_MD = "CLAUDE.md"
 SOURCE_MEMORY_INDEX = "memory/MEMORY.md"
 SOURCE_HOOKS = "settings.json hooks"
@@ -167,7 +93,8 @@ SOURCE_HOOK_STATUS = "hook-status.json"
 
 DECISIONS = ("published", "laptop-only", "needs-port")
 EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionStart", "SessionEnd",
-          "Stop", "SubagentStop", "UserPromptSubmit", "Notification", "PreCompact")
+          "Stop", "SubagentStart", "SubagentStop", "UserPromptSubmit", "Notification",
+          "PreCompact")
 
 #: A hook's arguments: plain words, flags and `key=value`, single spaces between them.
 ARGS_RE = re.compile(r"^(?:[A-Za-z0-9_.:=/-]+(?: [A-Za-z0-9_.:=/-]+)*)?$")
@@ -175,8 +102,6 @@ ARGS_RE = re.compile(r"^(?:[A-Za-z0-9_.:=/-]+(?: [A-Za-z0-9_.:=/-]+)*)?$")
 TAIL_RE = re.compile(r"^(?:(?:2>&1|2>/dev/null|>/dev/null|>/dev/null 2>&1)"
                      r"(?: \|\| true)?|\|\| true)?$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-#: The finding codes of cloud_start.HOOK_PROBLEMS, which an acknowledgment may name.
-#: test_cloud_start checks that the two lists match.
 ACK_CODES = ("WINPATH", "POWERSHELL", "WINDLL", "WINREG", "STARTFILE")
 #: The keys of one acknowledgment in hook-status.json, all required, no others.
 ACK_KEYS = ("hook", "code", "line_sha256", "reason")
@@ -239,10 +164,6 @@ def _need_format(data, what):
 
 def validate_hook_status(data, registered=None):
     """Problems with a hook-status.json object, as a list of lines; [] when it is good.
-
-    `registered`, when given, is the list of hook names settings.json runs
-    (install_hooks.hook_names()); every one must have a decision and every decision must name
-    one of them.
     """
     problems = _need_format(data, "hook-status.json")
     if problems:
@@ -409,10 +330,6 @@ def same_publication(old, new):
 
 def stale_sources(manifest, claude_md_path, memory_index_path):
     """The source names whose laptop file no longer matches the manifest: [] when fresh.
-
-    cloud_start.py's freshness check: the global CLAUDE.md and the memory index as they are
-    on the laptop now, against the hashes the last publish recorded. A file that cannot be
-    read counts as stale.
     """
     sources = (manifest or {}).get("sources") or {}
     out = []
@@ -449,9 +366,7 @@ def _checked(data, problems):
 def read_published_bytes(repo_root, rel):
     """The bytes of a published file under `repo_root`, named by one of the path constants
     above (CLAUDE_MD, MEMORY_INDEX, BUILD_RULES); LayoutError when it is not there.
-
-    cloud_start.py copies the markdown files from here into a start branch, so a missing one
-    is refused the same way as a missing JSON file."""
+    """
     if not (isinstance(rel, str) and rel.startswith(CLOUD_DIR + "/") and safe_rel(rel)):
         raise LayoutError("%r is not a path inside %s" % (rel, CLOUD_DIR))
     p = pathlib.Path(repo_root) / rel

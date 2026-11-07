@@ -83,8 +83,8 @@ def _pattern(env, default):
 # then protects nothing at all.
 MODE = (os.environ.get("INGRESS_TAINT_MODE") or "scripted").strip().lower()
 
-# LANES ONLY BY DEFAULT, BECAUSE AN ORCHESTRATOR'S JOB IS ALL BASH. Simulated over an orchestrator's
-# day, a taint early on left its check, launch, landing and pull-request steps all refused. The
+# LANES ONLY BY DEFAULT, BECAUSE AN ORCHESTRATOR'S JOB IS ALL BASH. A taint early in an orchestrator's
+# day would refuse its check, launch, landing and pull-request steps. The
 # cause is structural: the privileged session was also the session reading the untrusted text. The
 # real fix is to stop the privileged session reading it at all, and to show that text to the human
 # somewhere outside any session.

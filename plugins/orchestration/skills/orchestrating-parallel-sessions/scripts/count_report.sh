@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Print a verdict DERIVED from the result, never a label typed next to it.
 #
-# THE DEFECT THIS REMOVES, which bit three times in one session in o9's own shell output:
-#
 #     grep -n "pattern" file | head
 #     echo "  (no output above = none left)"      <- prints whether or not the grep ran
 #
@@ -10,9 +8,7 @@
 # search errored (`grep: Invalid back reference`), and when the file did not exist. So the
 # comfortable answer is printed for all three states, and only one of them is good news.
 #
-# ⭐ This is the single most repeated failure in this workstream - six occurrences across the
-# corpus, in checks written by four different sessions - and every fix so far has been "make the
-# check report what it EXAMINED." That works, but only if the author remembers. This makes the
+# Making a check report what it EXAMINED works only if the author remembers. This makes the
 # correct form the SHORTER one to type, which is the only version of "remember to" that holds.
 #
 # USAGE
@@ -35,11 +31,7 @@
 # reports a PRESENT file as missing, confidently, with an error that reads like a fact about
 # your repository. Piped into `grep -c` it returns a clean, wrong `0`.
 #
-# ⭐ THIS EXISTS BECAUSE KNOWING THE RULE IS NOT ENOUGH. Within an hour of documenting the bug,
-# building a probe for it and sending the corrected condition to another orchestrator, I typed
-# the broken form in my next verification and believed the answer - it said a pushed change was
-# absent from origin, which would have meant redoing finished work. The broken form is simply
-# the one that comes to hand.
+# ⭐ THIS EXISTS BECAUSE KNOWING THE RULE IS NOT ENOUGH. The broken form is the one that comes to hand.
 #
 #     gshow origin/main .shared/scripts/safe_push.py | grep -c "something"
 gshow() {

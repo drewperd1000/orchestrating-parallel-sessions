@@ -4,30 +4,7 @@
 
 WHY THIS EXISTS. A plan written for a first-time user ended with:
 
-    ⚠️ If at 30 days you have three impressive prototypes and no working system, stop and go
-    back. That is the specific way this goes wrong for capable people, and it is recoverable -
-    but only if you notice.
-
-⛔ "BUT ONLY IF YOU NOTICE" IS A PARAGRAPH ASKING SOMEONE TO BE CAREFUL, WHICH IS NOT A FIX.
-The person most likely to be three prototypes deep is the person having the most fun, and
-nobody in that state stops to audit themselves. **The orchestrator is awake and can count.**
-
 WHAT IT DOES, and the split matters:
-
-  RATIFY  - the human states what 30, 60 and 90 days look like, once, and it is dated. Not
-            aspirations: **outcomes another person could verify.** A horizon nobody could
-            falsify cannot be missed, so it cannot be learned from.
-  WATCH   - `checkin` runs cheaply and prints NOTHING almost every time. It speaks when a
-            horizon has come due, or when the drift signal trips.
-  DRIFT   - the specific pattern above, counted rather than felt: several things started,
-            none finished, past the first horizon.
-
-⭐ SILENCE IS THE DEFAULT AND IT IS LOAD-BEARING. A check-in tool that greets you daily gets
-muted in a week, and a muted tool protects nothing. This one is quiet until it has something
-that has actually earned an interruption.
-
-⭐ AND IT IS OPT-IN BY CONSTRUCTION, not by a flag: with no horizons ratified, every command is
-a no-op. Nobody who has not asked for this will ever hear from it.
 
   horizon set 30 "<what done looks like>"     draft a horizon
   horizon ratify                              lock the set, start the clock
@@ -114,11 +91,6 @@ def _work_counts():
 
 def drift(d):
     """The 'three prototypes, no working system' signal. Returns a message, or None.
-
-    ⭐ Deliberately narrow. It fires only when BOTH halves are true - several things in flight
-    AND nothing finished - and only after the first horizon has come due. Either half alone is
-    ordinary: work in progress is not drift, and a slow start is not drift. **The pattern is
-    the combination, sustained past the point where something should have landed.**
     """
     el = elapsed(d)
     if el is None or el < DAYS[0]:

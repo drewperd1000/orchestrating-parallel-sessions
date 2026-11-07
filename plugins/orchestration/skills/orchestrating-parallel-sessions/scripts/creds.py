@@ -4,51 +4,12 @@
 
 TWO RECURRING FAILURES, and they are opposite mistakes about the same fact.
 
-  1. "THE MCP IS DOWN, SO I HAVE NO ACCESS."
-     Often false, and the agent cannot tell without looking. A static token for the same
-     service may be sitting on disk - needing no interactive auth, and working in headless
-     runs, cron jobs and subagents where the MCP does not exist at all. `creds list` answers
-     it in one call instead of by recall.
-     ⚠️ It may also be TRUE. A machine that genuinely has nothing configured is a clean
-     slate, not a broken one, and `NOT-CONFIGURED` says so rather than implying failure.
-
-  2. "THE TOKEN IS DEAD."
-     Usually the PROBE was wrong, not the token. Three documented shapes on this machine:
-       - WRONG SCOPE: an account-scoped call rejects a workspace-scoped token BY DESIGN.
-         Measured: a vendor CLI's identity command returned unauthorized for a token that
-         passed a correctly-scoped API query seconds later, on the same machine.
-       - WRONG HTTP CLIENT: a Python HTTP client hit an edge fingerprint block - HTTP 403 -
-         on a token curl accepted for the identical request. The call never reached the
-         vendor, so that 403 said nothing whatsoever about the credential.
-       - WRONG VERB ENTIRELY: a health check that reports the transport, not the auth.
-         One MCP reported `Connected` while every call it made returned Unauthorized.
-
-⭐ THE COST IS NOT THE FAILED CALL - IT IS THE CONCLUSION DRAWN FROM IT. Both failures end
-with an agent telling the human to go re-authenticate something that was never broken. That has
-happened repeatedly, once sending the human to redo a login they had completed three days
-earlier. **An auth error is a CLAIM, not proof.** This tool exists so the claim gets tested
-before it gets reported.
-
-⭐ SO THE OUTPUT NEVER SAYS "DEAD" WITHOUT RULING OUT THE OTHER TWO. Every probe here encodes
-the KNOWN-CORRECT invocation for its service - right scope, right client, right endpoint - and
-a failure is reported as one of:
-
     WORKS            the credential is good, verified by a call that can distinguish
     LIKELY-BAD       the correct probe ran and the vendor rejected it
     WRONG-PROBE      this call is expected to fail on a GOOD credential; here is the one
                      that is not
     CANNOT-TELL      the probe could not run (offline, no curl, edge block). NOT evidence
     NOT-CONFIGURED   no credential here at all. A clean slate, not a failure.
-
-⭐ THE LAST THREE ARE THE POINT. Only LIKELY-BAD justifies asking the human for anything, and
-collapsing any of the others into it is what manufactures the false report. "I could not
-check", "you never set this up", and "it failed" are three different sentences, and a tool
-that renders them identically will get someone sent to fix something that was never broken.
-
-⚠️ THE PROBES BELOW ARE WORKED EXAMPLES, NOT A CLAIM ABOUT YOUR STACK. A different machine has
-different vendors, different scope rules, and possibly nothing yet. What travels is the
-CONTRACT - a probe must distinguish a rejected credential from a call that was never going to
-succeed. Add your own in `creds_local.py` beside this file, defining EXTRA_PROBES.
 
   creds list                inventory every credential on disk, grouped
   creds check <service>     probe ONE service with the known-correct call
@@ -75,7 +36,6 @@ except Exception:
     pass
 
 HERE = pathlib.Path(__file__).resolve().parent
-# The main checkout's secrets folder on any machine (o9 W139); a worktree has none of its own.
 try:
     from workspace_paths import SECRETS_DIR as SECRETS
 except Exception:  # a partial delivery: the folder beside this one, as before
@@ -122,10 +82,6 @@ def curl(args, timeout=25):
 
 def probe_claude_headless():
     """TWO credential paths, and EITHER can be the stale one. Test, never assume.
-
-    `claude -p` falls back to ~/.claude/.credentials.json when CLAUDE_CODE_OAUTH_TOKEN is
-    unset. Both have been the broken one on different dates - so a fixed instruction ("always
-    export the token" / "never export it") is wrong half the time by construction.
     """
     env = dict(os.environ)
     env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
@@ -163,12 +119,8 @@ PROBES = {
                         "probe first, then launch the way the probe answered."),
 }
 
-# A DIFFERENT USER HAS A DIFFERENT STACK, and possibly nothing yet. The probes above are
-# worked EXAMPLES of the contract, not a claim about what anyone has. Drop a `creds_local.py`
-# beside this file defining EXTRA_PROBES / EXTRA_GROUPS to make your own services first-class.
-# The value that travels is the four-outcome model; the vendor list is local by nature.
 try:
-    import creds_local as _local           # noqa: F401
+    import creds_local as _local
     PROBES.update(getattr(_local, "EXTRA_PROBES", {}))
 except Exception:
     _local = None
@@ -231,7 +183,7 @@ def cmd_how(args):
         print("Known: %s" % ", ".join(sorted(PROBES)))
         print()
         print("An absent entry means the correct call has not been WRITTEN DOWN, which is not")
-        print("the same as there being none. Check .shared/secrets/README.md and the memory")
+        print("the same as there being none. Check <your-secrets-folder>/README.md and the memory")
         print("notes before concluding a service is unreachable.")
         return 2
     _fn, fname, note = PROBES[key]

@@ -2,32 +2,12 @@
 
 <!-- subject: knowledge-routing -->
 
-The human, 2026-08-17: *"We need a hook attached to this that forces any agent attempting to write a
-new doc that concerns this info to either edit it in the cornerstone, or justify why they need a
-new doc, and if they create a new doc, to document the new doc in the cornerstone. It must be
-forced at every step."*
-
-⭐ THE DESIGN THAT MAKES IT SELF-CLOSING: the only escape is to REGISTER the new doc in the
-cornerstone. So a session that insists on a second doc must edit the cornerstone to get past this
-- which is exactly the outcome, reached by the shortest path available to them. There is no
-"acknowledge and proceed" door, because a door like that is the one every session takes.
-
-⛔ WHY A PROSE RULE WOULD NOT HAVE HELD. On 2026-08-17 four separate rules in this workspace were
-written down, had a correct check, and were broken anyway - by the session that wrote them, the
-same day. "Singular source of truth" is the same class of instruction and would fail the same
-way.
-
 HOW A FACT IS DECLARED - in a cornerstone's "Facts this doc owns" table:
-
-    <!-- owns: external-provider-api-key-path -->
-    | the vendor key path | `.shared/secrets/external-provider-api-key.txt` | 2026-08-17 |
 
 The VALUE is read from the backticked cell on the marker's line or the lines just after it. That
 value is then forbidden in every other doc.
 
 HOW A SECOND DOC IS REGISTERED - a row in the cornerstone naming its path:
-
-    | if you need the rotation procedure | `memory/vendor-key-rotation.md` |
 
 Any doc whose path the cornerstone names is allowed to restate the facts that cornerstone owns.
 
@@ -53,16 +33,11 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 REFUSE = 9
-# ⛔ A KEY MUST CONTAIN A LETTER OR DIGIT. `.` is in the class, so the placeholder
-# `<!-- owns: ... -->` parsed as the key "..." - and two docs quoting the syntax then
-# collided as "two owners of one fact". Measured by o1, 2026-08-19.
 OWNS_RE = re.compile(r"<!--\s*owns:\s*(?=[A-Za-z0-9._-]*[A-Za-z0-9])([A-Za-z0-9._-]+)\s*-->")
 CORNER_RE = re.compile(r"<!--\s*cornerstone:\s*([A-Za-z0-9._-]+)\s*-->")
 # A value worth protecting is a path or a token - never a bare English word, which would fire on
 # ordinary prose. Backticks are how the template writes them, so backticks are the contract.
 VALUE_RE = re.compile(r"`([^`\n]{6,120})`")
-# ⛔ A placeholder is not a fact. The template's own example rows must not become owned values,
-# or the template would forbid its own text everywhere.
 from mentions import PLACEHOLDER, is_derived  # noqa: E402  - ONE definition, see that module
 
 
@@ -88,9 +63,6 @@ def corpus_docs():
     `files()`. The AttributeError hit a bare `except` and fell back to `ROOT.rglob("*.md")`
     over the whole workspace, nested repos and node_modules included. It did not fail; it
     HUNG, which is harder to diagnose than a crash and looks like slowness rather than a bug.
-
-    ⭐ A fallback that quietly does something worse than the thing it replaced is not
-    resilience. If the corpus cannot be enumerated, say so and stop.
     """
     import corpus
     return [pathlib.Path(p) for _kind, p in corpus.files()]
@@ -98,14 +70,6 @@ def corpus_docs():
 
 def collisions(facts_multi):
     """Two ways a declaration set can be incoherent. Both REFUSE - neither is resolvable.
-
-    ⛔ the human, 2026-08-17: "what prevents 2 sessions from creating different names independently?"
-    The VALUE is what the guard matches, so divergent KEY names alone do not let a duplicate
-    through. But the first version did `facts.setdefault(value, ...)` - first read wins,
-    SILENTLY - so two cornerstones claiming one fact resolved by directory walk order. That is
-    the two-live-homes state this tool exists to prevent, inside the tool.
-
-    ⭐ A conflict a program resolves by ORDER is a conflict it is hiding.
     """
     out = []
     for value, owners in sorted(facts_multi.items()):
@@ -132,9 +96,6 @@ def owned_facts():
             continue
         if not CORNER_RE.search(t):
             continue
-        # ⛔ THE COLLECTING SIDE NEEDED THIS TOO. is_derived was wired into offenders() only, so
-        # a template, a bootstrap or a message that QUOTES the markers was harvested as a real
-        # cornerstone. Fixing one caller of a shared test is not fixing the file.
         if is_derived(t, p)[0]:
             continue
         corners.append(p)
@@ -148,9 +109,6 @@ def owned_facts():
                 for v in VALUE_RE.findall(cand):
                     if PLACEHOLDER.search(v):
                         continue
-                    # ⛔ EVERY owner recorded, not just the first. `setdefault` silently kept
-                    # whichever the directory walk reached first, so two cornerstones claiming
-                    # one fact looked like one cornerstone claiming it.
                     multi.setdefault(v.strip(), []).append((p, m.group(1)))
     for value, owners in multi.items():
         facts[value] = owners[0]
@@ -175,16 +133,6 @@ def offenders(paths):
             t = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        # ⛔ A GENERATED PAGE CANNOT DRIFT, so it cannot be a second source of truth. Its whole
-        # job is to list the artifacts it was computed from, which necessarily means naming
-        # their paths. Measured 2026-08-17: the guard refused the knowledge browse page for
-        # "restating" corpus.py, which that page exists to link to. If a generated view is ever
-        # wrong, the correction is to regenerate it - never to edit it - so there is nothing
-        # here for this guard to protect.
-        # ⭐ WIDENED from a GENERATED-only check to all four derived kinds. The private version
-        # exempted generated pages because one refused a browse page; templates, correspondence
-        # and tests hit the identical defect in three other guards on the same day. Reusing the
-        # shared test means the next kind added there is covered here without anyone noticing.
         derived, _why = is_derived(t, p)
         if derived:
             continue
@@ -214,14 +162,6 @@ def staged():
 
 def install():
     """Put the guard on pre-commit in every repo here, ABOVE any terminal `exit`.
-
-    ⛔ `.git/hooks/` is not tracked by git, so this must ship with the guard or a fresh clone
-    silently has no guard at all.
-
-    ⛔ INSERT, NEVER APPEND. Two hooks in this workspace already ended with `exit 0`. Appending
-    put the guard past it: present, greppable, and never executed - which is indistinguishable
-    from a guard that approved everything. The negative control landed a commit it had to refuse,
-    and that is the only reason it was caught.
     """
     script = str(pathlib.Path(__file__).resolve()).replace("\\", "/")
     block = ['python "%s" --check' % script, "[ $? -eq %d ] && exit 1" % REFUSE]
@@ -245,7 +185,6 @@ def install():
             fixed += 1
         pc.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8", newline="\n")
         n += 1
-        # ⭐ VERIFY REACHABILITY, not presence - grep finds dead code just as happily.
         body = pc.read_text(encoding="utf-8")
         live = body.split("\nexit ")[0] if "\nexit " in body else body
         if "owns_guard" not in live:
@@ -257,8 +196,6 @@ def install():
 
 
 def check():
-    # ⛔ CONFLICTS FIRST. A guard whose own declaration set is incoherent cannot say anything
-    # trustworthy about a staged doc - it would name whichever owner it happened to read first.
     _f, _c, multi = owned_facts()
     coll = collisions(multi)
     if coll:
@@ -336,10 +273,6 @@ def selftest():
     t("no key names two facts",
       not [c for c in collisions(multi) if c[0] == "KEY REUSED"])
     t("the corpus is reachable", len(corpus_docs()) > 50)
-    # ⛔ THE TEMPLATE MUST NOT OWN ITS OWN EXAMPLES. It writes `<vendor>-key.txt` as an
-    # illustration; if that became an owned fact the guard would forbid the template's own text
-    # in every doc. Same defect class as the facet detector reading a template as a doc about
-    # its examples, measured the same day.
     bad = [v for v in facts if PLACEHOLDER.search(v)]
     t("no placeholder became an owned fact (%d)" % len(bad), not bad)
     t("an owner may state its own fact", not offenders(list(corners)))
@@ -359,8 +292,5 @@ if __name__ == "__main__":
         sys.exit(selftest() if a.selftest else install() if a.install
                  else audit() if a.audit else check())
     except Exception as e:
-        # ⛔ NEVER take the workspace down. A crash here must not block every commit - that is
-        # the failure knowledge_gate.py shipped on 2026-08-13, where a syntax error refused
-        # every commit in the workspace until it was found.
         print("[owns] guard error (not blocking): %s" % e)
         sys.exit(0)

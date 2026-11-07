@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The ONLY shell command a fresh-eyes sweep lane may run (o9:W76). It reads; it cannot write.
+"""It reads; it cannot write.
 
 <!-- subject: orchestration -->
 
@@ -9,33 +9,6 @@
     python <workspace>/.shared/scripts/sweep_read.py git [-C <repo>] cat-file -p <object>
     python <workspace>/.shared/scripts/sweep_read.py gh pr view <n> --repo <your-github-user>/<repo> --json <fields>
     python <workspace>/.shared/scripts/sweep_read.py route <terms...>
-
-⛔ WHY A WRAPPER AND NOT PREFIX RULES. The second review of the sweep (0521fb89) showed that the
-prefix rules `Bash(git log:*)`, `Bash(git show:*)` and `Bash(python .shared/scripts/route.py:*)`
-let a lane write files and run code:
-  * `git log --output=<file>` and `git show --output=<file>` write any content anywhere - the
-    reviewer overwrote a .py file and ran it, and could have planted `.git/hooks/post-commit`,
-    which every worktree shares;
-  * `route.py enrich <md> --terms x` edits a doc, and `route.py fixtures --add` writes a file;
-  * a deny rule for `--output` was beaten by `--outp''ut=`, because the permission check reads
-    the command text while git reads the argument the shell produced.
-
-⭐ THIS SCRIPT SEES THE ARGUMENTS AFTER THE SHELL HAS JOINED THE QUOTES, so `--outp''ut` arrives
-here as `--output` and is refused. An argument that ABBREVIATES a refused option is refused too:
-`git log` rejects `--outp=` (measured 2026-09-25, rc 128), but git commands built on
-parse-options accept any unambiguous abbreviation, and this check should not depend on which
-parser a subcommand happens to use.
-
-What it allows, and nothing else:
-  * git: the subcommands show, log, ls-tree, merge-base, rev-parse, and `cat-file -p`, run with
-    `--no-pager`, in the workspace repo or in a repo `orchdoc.citable_repos()` finds (`-C`);
-  * gh: `pr view <n> --repo <your-github-user>/<a repo on this machine> --json <fields>`, never `--web`;
-  * route: route.py's ask path only (`cmd_ask`), never `enrich` or `fixtures`, with its usage log
-    pointed at a temp file.
-Every subprocess gets `creationflags=no_window.flags()` and a timeout.
-
-⚠️ It is the lane's only shell, so it is what makes the lane read-only in practice. It is not a
-sandbox: Read, Grep and Glob still read any file, which is the point of a review.
 """
 import json
 import os
@@ -121,10 +94,7 @@ def github_name(repo):
 def known_repos():
     """[(path, "<your-github-user>/<name>")] - every citable repo with a GitHub remote, worktrees left
     out. ONE list for the brief (which names them) and for `gh --repo` (which accepts them).
-
-    A worktree is recognised by its `.git` being a FILE, not by where it sits: measured
-    2026-09-25, `.wt-o10-cta-refund` beside the main checkout was listed as product-app
-    ahead of the real clone, and the brief sent lanes to a stray worktree."""
+    """
     if "known" not in _REPOS:
         out, seen = [], set()
         for r in citable_repos():
@@ -162,8 +132,6 @@ def check_git(args):
     sub, rest = args[0], args[1:]
     if sub not in GIT_SUBCOMMANDS:
         raise Refused("git %s is not allowed; only %s" % (sub, ", ".join(GIT_SUBCOMMANDS)))
-    # Exactly `-p <object>`: `-p --batch` and `-p --filters` are refused HERE, not left to git's
-    # own argument check, which a future git could loosen (third review of 36a82e7f).
     if sub == "cat-file" and (len(rest) != 2 or rest[0] != "-p" or rest[1].startswith("-")):
         raise Refused("only `git cat-file -p <object>` is allowed")
     for a in rest:

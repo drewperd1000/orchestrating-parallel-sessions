@@ -1,22 +1,11 @@
-"""the human's priority choice for one entry, written by the OrchDoc Reader's priority menu (o9:W147).
-
+"""
 <!-- subject: orchestration -->
-
-The six choices and their classes are in `priority.py` (NOW A, High B, Medium / Low / Hold for
-Review C, Don't do D). This module is the write half: `apply_priority` changes the lines of a
-document and is called by `orchdoc.apply_today` (act "priority"), so the Reader's change goes
-through the same queue, lock, landing and replay on main as a Do-today change.
-
-  * The choice is written as `**Priority:** <choice>` directly under the entry's Status line,
-    replacing any earlier Priority line (the human's choice replaces an orchestrator's proposal).
-  * Don't do also moves the entry to its own subsection of §99, named Don't do, so it never
-    runs. The item keeps its words and the `**Priority:** Don't do` line.
 """
 import re
 
 import orchdoc
 import priority
-from priority import CHOICES, CHOICE_CLASS, DONT_DO, choice_norm  # noqa: F401 - re-exported
+from priority import CHOICES, CHOICE_CLASS, DONT_DO, choice_norm
 
 DONTDO_NOTE = "_items the human marked Don't do - kept for the record, never run_"
 ARCHIVE_HEAD = "## §99 ARCHIVE"

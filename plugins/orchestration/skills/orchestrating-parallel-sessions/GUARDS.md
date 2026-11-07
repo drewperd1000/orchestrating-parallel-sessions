@@ -20,15 +20,14 @@ python stale_overwrite_guard.py "$TOP"    # exit 9 refuses
 ```
 
 ⛔ **Only exit code 9 blocks.** A crash, an import error or a git hiccup exits non-zero too, and
-those must NOT stop every commit in the workspace. A guard that blocks when it is broken took a
-whole workspace down for an afternoon; the convention exists because of that day.
+those must NOT stop every commit in the workspace. A guard that blocks when it is broken can stop a whole workspace.
 
 `orchdoc_precommit.py --check-hook --all` audits the chain **by counting invocations**, not by
 looking at it. That is not fussiness:
 
-⭐ **Seventeen repos once carried a hook with one `python` line and three `[ $? -eq 9 ] && exit 1`
-lines testing the exit status of nothing.** Each hook had a shebang, a python call and the right
-exit convention, so each looked correct in isolation. Two thirds of the chain had never run.
+⭐ **A hook can carry one `python` line and three `[ $? -eq 9 ] && exit 1` lines testing the exit
+status of nothing.** It has a shebang, a python call and the right exit convention, so it looks
+correct in isolation, and two thirds of the chain never run.
 **A guard that is installed and not running reads, from every direction, like a guard that is
 running** — so the audit counts what the shell will execute and compares it to the template.
 
@@ -52,17 +51,11 @@ reading the file content showed it gone.
 read `git status`. The loss lived in content.
 
 **Why this rule and not "refuse any deletion".** Deleting lines is most of what editing is, and a
-guard that fires on correct work gets switched off. One check in this system accumulated 173
-recorded overrides doing exactly that. So the guard fires on a *signature* instead: a stale
+guard that fires on correct work gets switched off. So the guard fires on a *signature* instead: a stale
 whole-file write deletes precisely the lines that arrived after the copy was taken, so the removed
 set contains one commit's additions almost entirely. A targeted edit does not.
 
-**Measured before shipping.** On the real incident the destroying commit scored **0.88** against
-the commit it erased; all 29 other commits touching that file scored **0.00**. Over 250 real
-commits, restricted to code, it refuses **one** — the real one.
-
-⚠️ **Scoped to code on purpose.** Across all file types it would have refused 12 of those 250, and
-**eleven were correct work**: a document entry rewritten in place removes its own previous text
+⚠️ **Scoped to code on purpose.** Across all file types it refuses correct work: a document entry rewritten in place removes its own previous text
 wholesale, which is the same shape. Prose is guarded by `orchdoc.py commit`'s gate 1 instead,
 which understands rewrites.
 
@@ -151,8 +144,8 @@ Supporting machinery, each carrying one lesson worth reading in the source:
   `SCOPE_BOUNDS` table declaring what it does not reach, because **a declared exclusion is a
   decision and an undeclared one is a gap wearing a decision's clothes.**
 - **`mentions.py`** — one implementation of *"is this text DOING the thing or DESCRIBING it?"*.
-  Eight guards in one day refused their own commit messages, test files and templates for
-  containing the string they forbid. **A guard matches text, and text that describes the
+  A guard can refuse its own commit message, test file or template for containing the string it
+  forbids. **A guard matches text, and text that describes the
   forbidden thing contains it.** The author cannot see it, because at authoring time the
   description is obviously not an instance.
 - **`dev_docs_index.py`** — a generated index. **If deleting the index file would lose
@@ -238,10 +231,37 @@ the text runs it. No flag reopens the shell, on purpose.
 
 ---
 
+## `git_guard.py` — keeps a test from writing your real repository's git config
+
+**What it refuses.** Once imported, it removes the variables that redirect git (`GIT_DIR`,
+`GIT_INDEX_FILE` and the like) and refuses a `git config` write, or a `git init`, that would reach
+your real repository's config or your global one. The refusal is raised before git starts.
+
+**The failure.** Git sets `GIT_DIR` for a hook, and a script a hook starts passes it on. A test
+that makes a temporary repository and sets a user name in it then writes that name into the real
+repository, because git ignores the folder it was started in when `GIT_DIR` is set.
+
+**When it fires:** make the temporary repository through `sandbox_env.py`, which imports this
+guard, and give each test its own folder.
+
+---
+
+## `block_whole_tree_grep.py` — holds a recursive search over the whole workspace once
+
+**What it refuses.** The first recursive `grep` or `rg` aimed at the workspace root or your home
+folder in a session. The message names the router command to run instead. Sending the same command
+again passes, so the rare search that really needs the whole tree is never stuck.
+
+**The failure.** A search across every worktree and dependency folder runs past the tool's time
+limit and prints nothing, while the router answers the same question in seconds.
+
+**When it fires:** run the router command the message shows, or narrow the search to one folder.
+
+---
+
 ## The pattern underneath all of them
 
-⭐ **An instrument answering about ITSELF, read as an answer about the world.** It appeared eight
-times in one week and every guard here is shaped to resist it:
+⭐ **An instrument answering about ITSELF, read as an answer about the world.** Every guard here is shaped to resist it:
 
 - a publisher checking its output against its own term list, where a term missing from both the
   list and the substitutions is invisible and the output reads clean

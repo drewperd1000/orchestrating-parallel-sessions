@@ -1,6 +1,6 @@
 # Import every published script. That is the whole check, and it is enough.
 #
-# WHY THIS EXISTS. On 2026-09-17 six of the scripts in this repository failed on import -
+# WHY THIS EXISTS. Six of the scripts in this repository failed on import -
 # route.py, corpus.py, knowledge_gate.py, knowledge_pages.py, dev_docs_index.py and
 # commitment_guard.py - because a module they all import at the top had never been published.
 # route.py is the first thing this repository's own documentation tells a reader to run, and it

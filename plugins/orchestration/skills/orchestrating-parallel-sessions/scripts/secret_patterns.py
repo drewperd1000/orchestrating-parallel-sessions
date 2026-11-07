@@ -6,11 +6,8 @@ show, copy or serve one.
 
 <!-- route-tags: secret credential token webhook password private key scan content leak -->
 
-ORIGIN, 2026-09-23 (security review of the OrchDoc Reader's file viewer). The viewer refused
-files by NAME and by FOLDER only, and three files with innocent names were served with live
-credentials in them: `.claude/settings.local.json` (Slack webhook URLs) and two seed scripts
-(a production database password inside a `scheme://user:password@host` URL). A name rule cannot
-see those, so the content has to be looked at.
+A viewer that refuses files by name and by folder can still serve credentials from a file
+with an innocent name. A name rule cannot see those, so the content has to be looked at.
 
 When this was written no other list of these shapes existed under `.shared/scripts/` - checked
 by grep before writing it. Add a shape HERE, not in a second list beside the tool that needs it.
@@ -18,14 +15,6 @@ by grep before writing it. Add a shape HERE, not in a second list beside the too
     import secret_patterns
     kind = secret_patterns.find_credential(text)   # None, or a plain label such as
                                                     # "a Slack webhook URL"
-
-⛔ THE RESULT NEVER CARRIES THE MATCHED TEXT. A caller that reports a refusal reports the
-KIND, so the refusal cannot become the leak it exists to prevent.
-
-⛔ IT FAILS TOWARD REFUSING. A shape that only looks like a credential is refused along with the
-real ones. The one exception is a URL whose password is plainly a placeholder - `<pw>`,
-`${DB_PASSWORD}`, `{password}`, `%s`, `****` - because the docs that explain how to connect are
-written that way and would otherwise all be unreadable.
 """
 import re
 
