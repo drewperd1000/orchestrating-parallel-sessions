@@ -35,12 +35,12 @@ A CLAUDE.md loads into every session. A line stays only if every task needs it, 
 Give the owner these five parts, in this order, and change nothing until the owner approves:
 
 1. **A table with one row per `##` section,** split into more rows where a section's sentences get different plans. Columns: section | bytes | needed in every task? | needed before the first tool call (a permission, an exception, when to ask, a reply format)? | when it applies, and which hook event sees that moment | what shows it at that moment (question 6), existing (E) or new (N) | plan: KEEP, REMOVE, MOVE, REPLACE or ENFORCED | bytes left. A yes in the "before the first tool call" column means KEEP. A "what shows it" cell that names only a note, a skill, a review, or the agent finding it fails question 6, and that row is KEEP.
-2. **Wrong facts found.** Check each fact a section states against the code or the live system as you read it. One earlier trim of three files found 17.
+2. **Wrong facts found.** Check each fact a section states against the code or the live system as you read it.
 3. **Probe questions, each with its expected answer:** one for every permission and exception in the sections being changed, and one or two per batch for what the changed lines decide: a command, a name, a condition.
 4. **The apply steps, numbered, from the batch loop below:** destinations first, snapshot, ledger, apply, checks, probes, and the revert of any batch whose check or probe fails.
 5. **What needs the owner's decision,** each with a recommendation. When the plan does not reach a size the owner asked for, give the size it reaches and the needed rules that the owner's number would cost.
 
-Before keeping an "every session" instruction, count in transcripts how often sessions follow it. In one workspace, a line telling every session to read a generated code summary before starting was followed in 11 of about 1,449 sessions, and it was removed.
+Before keeping an "every session" instruction, count in transcripts how often sessions follow it. A line that sessions rarely follow is doing nothing and can go.
 
 ## Apply in batches, with a way back
 
@@ -56,8 +56,8 @@ Before keeping an "every session" instruction, count in transcripts how often se
 ## Rewording: what went wrong before
 
 - **The owner's verbatim quotes stay word for word.** Cutting or rewording one is the owner's call. An origin story around a quote may move to a note.
-- **An exception or permission stays a whole sentence of its own.** Folded into a parenthetical on the rule it overrides, "delete without asking once the checks pass" made a fresh session answer "ask the owner first" (that batch was reverted).
-- **Rewrites that save bytes drop clauses and change names.** In tests, "then report" disappeared and the owner's name changed. List each clause of the old text and find it in the new text.
+- **An exception or permission stays a whole sentence of its own.** Folded into a parenthetical on the rule it overrides, "delete without asking once the checks pass" made a fresh session answer "ask the owner first".
+- **Rewrites that save bytes drop clauses and change names.** List each clause of the old text and find it in the new text.
 - **Sizes are reported, never targets.** Never cut a needed rule to reach a number.
 - **Moving a line between the global and the project file saves nothing** when both load in nearly every session.
 - **Two plans that each remove a line as a duplicate of the other file delete it from both.** Settle duplicates across files in one plan.

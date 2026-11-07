@@ -2,60 +2,27 @@ r"""MEMORY.md as a GENERATED VIEW - parse, prove, inject, build.
 
 <!-- subject: knowledge-routing -->
 
-    python .shared/scripts/memory_index.py roundtrip   # THE proof: parse -> render -> byte-diff
-    python .shared/scripts/memory_index.py survey      # what the notes carry today
-    python .shared/scripts/memory_index.py inject --limit 5      # dry-run by default
-    python .shared/scripts/memory_index.py inject --limit 5 --write
-    python .shared/scripts/memory_index.py build                 # regenerate from the notes
-    python .shared/scripts/memory_index.py build --codes         # variant B
-    python .shared/scripts/memory_index.py check                 # drift
-    python .shared/scripts/memory_index.py --selftest
-
-WHY THIS EXISTS. The human's rule: an index is a VIEW computed from the artifacts, never a file someone
-appends to. `MEMORY.md` is hand-kept, loads into every session, and is the one artifact whose whole
-value is being complete and current. He approved the mechanism on 2026-08-17 (`o9:D7`) - a numeric
-`memory_index` in frontmatter whose INTEGER part is the group and DECIMAL part the position inside
-it, so a plain sort reproduces order AND nesting. Measured 2026-09-18: 0 of 202 notes carried it.
-
 =============================================================================
 THE ORDER OF OPERATIONS, AND WHY IT IS THIS ORDER
 =============================================================================
 
-⛔ **NOTHING IS WRITTEN UNTIL `roundtrip` PASSES.** The parser has to reproduce the current file
-BYTE FOR BYTE from its own parse. Until it does, any injection would be encoding a model of the
-file that does not match the file - and the notes would then be the authority on a shape nobody
-verified.
+Nothing is written until `roundtrip` passes: the parser has to reproduce the current file byte
+for byte from its own parse. The row template makes that possible. A row is stored as prose with
+`{1}`, `{2}` slots:
 
-**The row template is what makes that possible.** A row is stored as prose with `{1}`, `{2}` slots:
-
-    - ⭐ [Service Access Guide](service_access_guide.md) - READ FIRST when blocked on creds.
-      template: "⭐ {1} - READ FIRST when blocked on creds."
-
-    - ⭐✍️ Copy craft: [Idea Vault](a.md) + [NLP](b.md)
-      template: "⭐✍️ Copy craft: {1} + {2}"
+    - [Guide](guide.md) - read this first.
+      template: "{1} - read this first."
 
 The template lives on the group's FIRST note; each note owns only its own title and target. So a
 row's prose has exactly one home, and rendering a code instead of a filename (variant B) is a
 change to one function.
 
-⛔ **A NOTE CAN APPEAR IN MORE THAN ONE ROW, WITH A DIFFERENT TITLE EACH TIME - found by running
-`survey` before writing anything, which is exactly why that step exists.**
-`pwa_migrations_manual_apply.md` is *"migrations"* in row 3 and *"§2"* in row 5;
-`backblaze_b2_cli.md` appears in row 3 and again in row 85. A scalar `memory_index` cannot express
-that, and a design assuming one-note-one-row would have silently dropped one of each pair. **So the
-field is a JSON LIST of occurrences** - `[{"at": "3.1", "title": "...", "row": "<template>"}]`,
-with `row` present only where that note holds position 1.
-
-=============================================================================
-⛔ WHAT THIS DOES NOT DO - stated because a silent limit is the defect
-=============================================================================
-
 1. **It does not judge.** Grouping, order, markers and hooks are authored. This moves where they
    LIVE; it does not invent them.
 2. **`inject` is per-note and reversible** - the memory dir is a git repo, every write is one
    commit, and `--write` is never the default.
-3. **A note not referenced by MEMORY.md gets no index fields.** 202 notes, 177 links: the
-   difference is real and is NOT a bug to fix here.
+3. **A note not referenced by MEMORY.md gets no index fields.** That difference is NOT a bug
+   to fix here.
 """
 import argparse
 import collections
@@ -90,81 +57,15 @@ MEMFILE = os.path.join(MEMDIR, "MEMORY.md")
 LINK = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
 ROW = re.compile(r"^-\s(.*)$")
 
-# ⭐ THE CONTROL FOR `verify-titles`, PINNED. `173c282` is the last commit that touched
-# MEMORY.md before this conversion began - the final hand-kept version. It lives in git where the
-# thing being checked cannot edit it. Move this forward deliberately, never to make a check pass.
-BASELINE_REF = "1d58289"
-# Moved 2026-09-18 from 173c282, deliberately and after looking: o9 added one row
-# ("HOOKS run the MAIN checkout, not your worktree"). `verify-titles` reported 1 ADDED, 0 CHANGED,
-# 0 REMOVED - a new note being indexed, not a word drifting.
-#
-# ⛔ THE OLD RULE HERE WAS BACKWARDS AND IT BLOCKED A CORRECT CHANGE. It read "move this
-# forward only after reading a CHANGED count of zero." A CHANGED row is the ONLY thing that ever
-# needs a human to look at it - so that rule permitted the move exactly when there was nothing to
-# approve, and forbade it exactly when someone had looked and approved. o4 hit it on 2026-09-19:
-# they corrected a row that was teaching a retracted number, read CHANGED 1, correctly refused to
-# move the pin on the rule as written, and had to put it on the human's plate as o9:D41 - a decision
-# about a constant in a script he will never open.
-#
-# ⭐ THE RULE, RESTATED: move this forward only after READING each CHANGED row and naming
-# here why it is correct. That is what every move above actually did; the old phrasing described
-# the easy case and accidentally outlawed the real one. "Never to make a check pass" still holds
-# and is the thing the naming enforces - a reason you cannot write is a move you should not make.
-#
-# Moved 2026-09-19 from 0a780c9 to c01c064. ONE changed row, read and named:
-# `pwa-promote-scripts-tests` went from "exactly 3 named tests expected" to "COUNT THE NAMES, do
-# not assume 3 (measured 2 on 2026-09-18)" - the index was teaching the exact count its own note
-# had retracted, after o10 repeated the wrong one into six lane seeds in a day. The row is right
-# and the baseline was wrong. `check --live` is green either side of the move.
-#
-# Moved 2026-10-30 from c01c064 to 00e133e (lane o1L301, o1:T24, the human: "Efficiency rules. Do it").
-# Against c01c064 the list was 24 ADDED, 1 REMOVED, 2 CHANGED, every row read:
-#   - 24 ADDED: new notes indexed between 2026-09-19 and 2026-10-13, each with its own note file.
-#   - REMOVED `todo_spatial_pan_tab.md`: de-indexed on purpose 2026-09-21 (o4) because the feature
-#     shipped; the row is in Memory2.md line 66 with that reason.
-#   - CHANGED `google_sheet_feature_tracker.md` "Google Sheet Feature Tracker" -> "Feature Tracker
-#     (generated)": matches the note's own name ("GENERATED from the code; the Google Sheet is the
-#     output"), changed in b02185c (o10:D70).
-#   - CHANGED `pwa_promote_scripts_tests_fail_in_worktrees.md` "...fail in worktrees by name" ->
-#     "...fail LOCALLY by name (worktree and main checkout)": matches the note's description,
-#     measured in the main checkout 2026-09-23 (c58d488).
-# 00e133e is the LAST commit whose MEMORY.md this command can match: from 4320fe9 (2026-10-14) on,
-# MEMORY.md holds hand rows CARRIED by `build` (`hand_rows`), and this command compares against
-# `collect_from_notes()` alone, so every later commit reports each carried row as REMOVED. One
-# CHANGED row stays and is intended: `feedback_key_rotation_one_command.md` "Key rotation = ONE
-# command for the human" -> "Key rotation = the SESSION does ALL of it", the human's ruling of 2026-10-22,
-# matching the note's description (c09d0da).
-#
-# Moved 2026-10-30 from 00e133e to 1d58289 (lane o1L304, o1:W42). The limit above is fixed:
-# `verify-titles` now merges the carried hand rows the same way `build` and `check --live` do.
-# Before the fix, against 1d58289: 0 ADDED, 17 REMOVED, 0 CHANGED, and all 17 REMOVED were hand
-# rows still present in that commit's MEMORY.md. After the fix: 218 links each side, 0 ADDED,
-# 0 REMOVED, 0 CHANGED. Nothing to name; the move only takes in rows added since 00e133e.
+BASELINE_REF = "HEAD"
 
-# ⛔ THE ONE THING WITH NO BASELINE ANYWHERE. Hooks are AUTHORED and appear nowhere in the
-# hand-kept MEMORY.md, so nothing can reconstruct one that goes missing - and the near-miss was
-# real: re-running `inject` rewrites the field wholesale and would have eaten all 44. Pinning the
-# count is the whole defence. Raise it deliberately when hooks are added; never lower it to make
-# a run pass.
-EXPECTED_HOOKS = 46
-# HISTORY OF THIS PIN, newest last. Every move names the exact hook and the reason.
-#   44 -> 43  2026-09-18, cold-store round. The guard fired; the missing hook was "11 Clarity
-#             features scored against our needs", on `clarity_feature_evaluation.md`, a note the human
-#             asked to cold-store. It left WITH its note - a removal, not a loss. ⛔ Verified from
-#             git BEFORE lowering, which is the only acceptable reason to lower it.
-#   43 -> 46  2026-09-18, the human's ruling on o9:D39(a). Three parked notes gained index rows -
-#             `todo_spatial_pan_tab`, `todo_variant_archive`, `post_launch_audio_value_adds` -
-#             each with its own hook. ⭐ The guard reported the RISE as a note rather than a
-#             failure, which is the right asymmetry: hooks appearing is normal, hooks vanishing
-#             is not.
+# Your own count of authored hooks. At 0 nothing is enforced; raise it once you have some.
+EXPECTED_HOOKS = 0
 
 
 # --------------------------------------------------------------------------- parse
 def parse_memory(text):
     """[{row, template, links:[{pos,title,target}]}] - one record per '- ' line, in file order.
-
-    ⛔ Rows are 1-based and gapless: the row number IS the group, so renumbering a row silently
-    re-points every note in it. Never re-derive these from a filtered list.
     """
     rows = []
     for n, raw in enumerate(text.split(NL), start=1):
@@ -195,21 +96,6 @@ CODE_DIR = "m"          # short on purpose: it is repeated once per link
 
 def render_link(title, target, code=None, hook=None, style="path"):
     """style only matters when `code` is set.
-
-    ⭐ "path" IS THE DEFAULT ON PURPOSE, AND IT IS 890 BYTES WORSE THAN "bare". Measured
-    2026-09-18 on the live 106 rows: bare `[Title][24]` is 15,655 bytes, `[Title](m/24.md)` is
-    16,545. The extra 890 buys away the entire resolution mechanism:
-
-      bare  - needs a CLAUDE.md line AND/OR a PreToolUse hook, both edits to the human's config, and
-              the sealed test measured 1 agent in 6 following a code unaided. D30's security
-              finding also says the instruction cannot live in MEMORY.md, because content telling
-              a session to go read another file and trust it is shaped like prompt injection -
-              one agent refused on exactly those grounds and was right to.
-      path  - `Read` resolves it natively. No instruction to distrust, no hook, no judgement,
-              nothing in anyone's config.
-
-    ⛔ 890 bytes is 0.9% of the hard limit. The mechanism it removes is the part that failed
-    5 times out of 6 when it was tested.
     """
     if code is None:
         base = "[%s](%s)" % (title, target)
@@ -245,10 +131,6 @@ def codes_path():
 
 def load_code_table(path=None):
     """{"assigned": {code: target}, "retired": {code: target}} - empty when the file is absent.
-
-    ⭐ AN ABSENT TABLE IS THE SEED. With nothing assigned, `assign_codes` numbers notes in
-    first-encounter order from 1 - exactly the positional rule this table replaced - so the first
-    build after the switch reproduces every live code and then writes them down.
     """
     path = path or codes_path()
     if not os.path.exists(path):
@@ -262,15 +144,7 @@ class CodeTableError(Exception):
 
 
 def validate_code_table(text, path="codes.json"):
-    """Parse and check a code table; raise CodeTableError on ANY defect.
-
-    ⛔ A BAD TABLE REFUSES THE BUILD, IT NEVER GETS REPAIRED. Read leniently, a duplicate JSON
-    key keeps only the last note on that code and the other note is handed a NEW number; a
-    target listed under two codes moves to the higher one. Both are a silent renumber, the one
-    thing this table exists to prevent. So a corrupt file, a duplicate key, a code that is not a
-    positive integer, a code both assigned and retired, or a note under two codes all stop here
-    with the reason, and a person fixes the file (its git history in the memory repo has every
-    good version)."""
+    """Parse and check a code table; raise CodeTableError on ANY defect."""
     def no_dup_keys(pairs):
         seen = collections.OrderedDict()
         for k, v in pairs:
@@ -310,13 +184,7 @@ def validate_code_table(text, path="codes.json"):
 
 
 class code_table_lock(object):
-    """Hold `<codes.json>.lock` for one build's load -> assign -> save -> write.
-
-    ⛔ TWO BUILDS AT ONCE WOULD BOTH READ THE SAME TABLE, both give the next free number to
-    their own new note, and the later save would drop the earlier note's number - after the
-    earlier build had already written a pointer for it. The lock makes the second build wait
-    and then read the first one's table. A lock left by a crashed build is not broken
-    automatically: after `wait` seconds the build refuses and names the file to delete."""
+    """Hold `<codes.json>.lock` for one build's load -> assign -> save -> write."""
 
     def __init__(self, path=None, wait=None):
         self.path = (path or codes_path()) + ".lock"
@@ -382,14 +250,6 @@ def save_code_table(table, path=None):
 
 def assign_codes(rows, table):
     """(codes {target: code}, new table). Pure - the caller decides whether to save.
-
-    ⛔ A CODE IS NEVER DERIVED FROM POSITION. It used to be `str(len(codes) + 1)` in
-    first-encounter order, so a note indexed ahead of others renumbered every code after it and
-    any text outside MEMORY.md citing `m/<n>.md` came to mean another note with nothing breaking
-    (see `citations`). Now a target keeps the number it was first given; a new target takes the
-    next number above every number ever used, retired ones included; a target that leaves the
-    index is RETIRED, and its number is reserved for it - if the same note comes back it gets
-    its old number again, and no other note ever gets it.
     """
     assigned = dict(table["assigned"])
     retired = dict(table["retired"])
@@ -435,13 +295,6 @@ def stub_target(text):
 
 def write_pointers(codes, outdir, retired=None):
     """One tiny file per code, so a code IS a path and `Read` needs no help.
-
-    ⛔ THESE ARE GENERATED AND CARRY NO AUTHORED WORDS. If a pointer and its note ever disagree,
-    the note wins and the pointer is stale output - which is why it says so in its own text and
-    why nothing but this function writes them.
-
-    ⭐ A RETIRED CODE KEEPS A FILE that says the note was removed, so an old citation of it
-    reads "retired" instead of a missing file or, worse, another note. `retired` is {code: target}.
     """
     if not os.path.isdir(outdir):
         os.makedirs(outdir)
@@ -470,7 +323,6 @@ def write_pointers(codes, outdir, retired=None):
             STUB_LINE_FMT % (target, target),
             "",
         ]) + NL)
-    # ⭐ remove codes that no longer exist, or the directory becomes its own stale index
     removed = 0
     for fn in os.listdir(outdir):
         if fn.endswith(".md") and fn not in keep:
@@ -515,28 +367,6 @@ def fm_set(fm, key, value):
     return fm.rstrip(NL) + NL + line
 
 
-# --------------------------------------------------------------------------- the index field
-# ⛔ A MARKER'S SHAPE IS A CONTRACT BETWEEN EVERY TOOL THAT READS IT (o9 W149 box 8, 2026-10-03).
-# When the Write tool saves a memory note it rewrites the frontmatter: keys it does not own move
-# under `metadata:`, and the one-line JSON value of `memory_index` becomes a YAML block list:
-#
-#     metadata:
-#       node_type: memory
-#       memory_index:
-#         - at: recovery-backup.1
-#           title: Restore after laptop death
-#           row: "⭐ Recovery/backup: {1} (CANONICAL 10-step) + {2}."
-#           order: 87
-#
-# The memory repo's history holds 7 notes saved that way, 2026-09-21 to 2026-09-28 (commit db7d3ac
-# is one). This file read only a top-level `memory_index:` line, so such a note got no MEMORY.md
-# row until someone moved the line back by hand, and the knowledge gate then refused it as a note
-# no index reaches.
-#
-# ⭐ ONE READER AND ONE WRITER, HERE. `read_index` reads either place; `fm_set_index` writes the
-# top-level line and removes a nested copy, so a note never carries two. Every command in this
-# file and memory_hooks_apply.py go through them, and hook_memory_index_drift.py runs
-# `check --live`, so it does too. Test: test_memory_index_nested.py.
 INDEX_KEY = "memory_index"
 
 
@@ -821,12 +651,6 @@ class _Yaml(object):
 
 _META_LINE = re.compile(r"^metadata:[ \t]*(#.*)?$")
 _INDEX_LINE = re.compile(r"^( *)" + INDEX_KEY + r"[ \t]*:")
-# The key anywhere else - deeper, quoted, or inside a flow mapping. Only used to report a shape
-# nobody reads, by `_index_elsewhere`.
-# ⛔ A KEY, NEVER A VALUE (o9L1023). This was one regex matching the words on any line, so a
-# description that mentions `memory_index:` was reported as the field in a shape nobody reads,
-# and so was an empty `memory_index:` line, which the readers before read_index skipped. Either
-# one printed a [warn] line and failed roundtrip's `not problems`.
 _INDEX_KEY_LINE = re.compile(r"^[ \t]*(?:-[ \t]+)?([\"']?)" + INDEX_KEY + r"\1[ \t]*:(.*)$")
 _INDEX_FLOW_KEY = re.compile(r"[{,][ \t]*([\"']?)" + INDEX_KEY + r"\1[ \t]*:")
 # A quoted value, where YAML opens one: at a line's start, after `- `, after `: `, or after
@@ -1085,15 +909,6 @@ SLUG_BAD = re.compile(r"[^a-z0-9]+")
 
 def row_key(r):
     """A stable name for a row, derived from its own prose.
-
-    ⛔ WHY NOT THE ROW NUMBER. The number is file ORDER. Inserting one row in the middle shifts
-    every later row, so every note after it carries a wrong `at` - about 170 notes rewritten to
-    add one line to the index. Nobody would do that, so the index would go back to being edited by
-    hand, which is the thing this replaces. o9 named it: *"position 1 is not the wrong member, it
-    is the wrong KIND of place."*
-
-    ⭐ So identity is a KEY and order is a separate integer. Renumbering moves `order` and never
-    touches identity.
     """
     prefix = re.split(r"\{1\}", r["template"])[0]
     words = SLUG_BAD.sub("-", prefix.lower()).strip("-")
@@ -1123,10 +938,6 @@ def assign_keys(rows):
 
 def is_note(target):
     """True only when the target is a .md file sitting IN the memory dir - the collector's scope.
-
-    ⛔ `os.path.exists(join(MEMDIR, "../../../../x.md"))` is TRUE and useless. `survey` reported
-    all 177 links resolving on exactly that test, and the one link pointing outside only surfaced
-    at 99% coverage, as a row that would not build. Existence is not membership.
     """
     p = os.path.normpath(os.path.join(MEMDIR, target))
     return (os.path.dirname(p).lower() == MEMDIR.lower()
@@ -1135,10 +946,6 @@ def is_note(target):
 
 def existing_hooks():
     """{(target, rowkey_or_num, slot): hook} already on the notes.
-
-    ⛔ `inject` REWRITES `memory_index` wholesale from MEMORY.md, so without this a re-run - which
-    is how the key migration happens - silently discards the 44 authored hooks. The hooks are the
-    only part of this system that is not derivable from the file.
     """
     out = {}
     for fn in sorted(os.listdir(MEMDIR)):
@@ -1163,8 +970,8 @@ def plan_injection(rows):
     """{target: [occurrence, ...]} in row order. One entry per LINK that lives in a note.
 
     The row TEMPLATE goes to the first link of the row whose target is a real note - not blindly
-    to position 1, because row 18's position 1 is the legal SoT in <your-workspace> and a file
-    outside the scanned directory can never carry the field where the generator would read it.
+    to position 1, because position 1 may link a file outside the scanned directory, and that file
+    can never carry the field where the generator would read it.
     Out-of-dir links ride on that host as `ext`.
     """
     plan = collections.OrderedDict()
@@ -1247,8 +1054,6 @@ def collect_from_notes():
         if occs is None:
             continue
         for o in occs:
-            # ⭐ `at` is "<rowkey>.<slot>". The key is IDENTITY and never changes; `order`, which
-            # rides on the template occurrence, is the only thing that says where the row sits.
             try:
                 rn, ps = str(o["at"]).rsplit(".", 1)
                 pn = int(ps)
@@ -1282,11 +1087,6 @@ def collect_from_notes():
         if rn not in tpl:
             problems.append("row %r has no template (it belongs on the row's first note)" % rn)
             continue
-        # ⛔ THE SLOT COUNT COMES FROM THE TEMPLATE, NEVER FROM THE POSITIONS FOUND.
-        # Measured 2026-09-18 on the first real batch: row 2 has six links, five notes had been
-        # injected, and deriving the expected count from max(found) produced a five-link row that
-        # rendered as a COMPLETE row with one link silently gone. A partial batch must look
-        # partial; it must never look finished and be short.
         slots = sorted(int(x) for x in set(re.findall(r"\{(\d+)\}", tpl[rn])))
         missing = [p for p in slots if p not in by_row[rn]]
         if missing:
@@ -1305,14 +1105,6 @@ def collect_from_notes():
 
 def hand_rows(rows, disk_text, table):
     """Rows on disk that no note's `memory_index` builds, whose linked note file exists.
-
-    ⛔ A BUILD MUST NEVER DROP A ROW WHOSE NOTE STILL EXISTS. Rows are built only from note
-    frontmatter, so a row someone added to MEMORY.md by hand (a link to a named note file, no
-    `memory_index` field on the note) was invisible to `build`: the rebuild overwrote the file
-    and the row was gone, and `check --live` then said OK because the file matched its own
-    output (o5, 2026-10-21, 8 rows lost). Such a row is CARRIED: it keeps its text, joins the
-    build, and is coded and styled like any other row. A new note gets the next code from
-    codes.json the same way, so a carried note is treated exactly as a newly indexed one.
 
     Returns [(row, anchor_target)]: row records shaped like collect_from_notes rows, with
     m/<n>.md links resolved back to filenames through the code table; anchor_target is a target
@@ -1353,14 +1145,6 @@ _NOT_NOTES = ("MEMORY.md", "MEMORY-CODES.md", COLD_FILE)
 def unlisted_notes(rows):
     """Note files that nothing lists: no built or carried row links them, and Memory2.md does not
     name them.
-
-    ⛔ WHY (o9L1516, 2026-10-30): `build` makes a row only from a note's `memory_index` field, or
-    carries a row somebody already typed into MEMORY.md. A new note with neither (the two notes
-    feedback_tested_copy_always_kept.md and feedback_claim_bank_boundary_is_not_a_ban.md) produced
-    NO row, NO warning and NO drift, so `check --live` said what it always said and the note was
-    never loaded. It must be listed, so a build and `check --live` name it. `rows` is the list a
-    build writes (carried hand rows already merged in). A note named in Memory2.md is parked on
-    purpose and is not reported.
     """
     linked = set(l["target"] for r in rows for l in r["links"])
     try:
@@ -1392,8 +1176,6 @@ def merge_hand_rows(rows, extras):
                 if any(l["target"] == anchor for l in g["links"]):
                     at = i + 1
                     break
-        # after the hand rows already placed at this spot, so two carried rows keep disk order
-        # (o9L1447: two rows at the top swapped on every build, and check --live never settled)
         while at < len(merged) and merged[at].get("row") == "hand":
             at += 1
         merged.insert(at, r)
@@ -1402,11 +1184,6 @@ def merge_hand_rows(rows, extras):
 
 def file_newline(path, default="\r\n"):
     """The line terminator the file already uses.
-
-    ⛔ MEMORY.md is CRLF. Generating it with LF produced a file whose CONTENT was identical and
-    whose every line showed as changed in git - 105 rows, 105 bytes, and a real edit would have
-    been invisible inside that. A generator that reformats what it regenerates is not a view of
-    the file; it is a second opinion about it.
     """
     try:
         with io.open(path, "rb") as f:
@@ -1417,7 +1194,6 @@ def file_newline(path, default="\r\n"):
 
 
 def cmd_build(a):
-    # ⛔ A build that writes with --codes runs under the code-table lock, start to finish
     if a.codes and (a.out or a.pointers or a.supplement):
         with code_table_lock():
             return _cmd_build(a)
@@ -1441,9 +1217,6 @@ def _cmd_build(a):
     codes = None
     table = None
     if a.codes:
-        # ⛔ ONE CODE PER UNIQUE TARGET, not per link, and FROM THE TABLE, not from position:
-        # see `assign_codes`. The table is saved only by a build that writes something, so a
-        # plain `build --codes` to stdout changes nothing on disk.
         codes, table = assign_codes(rows, load_code_table())
         if a.out or a.pointers or a.supplement:
             save_code_table(table)
@@ -1480,7 +1253,6 @@ def _cmd_build(a):
                     continue
                 seen.add(c)
                 body.append("| %s | `%s` |" % (c, l["target"]))
-        # ⭐ retired codes are listed too, so a gap in the numbering is explained, not a defect
         for c in sorted(table["retired"], key=int):
             body.append("| %s | retired, was `%s` |" % (c, table["retired"][c]))
         blob = (NL.join(body) + NL).replace(NL, eol2)
@@ -1502,11 +1274,6 @@ def _cmd_build(a):
 
 def cmd_check(a):
     """Does the generated view match the file on disk?
-
-    ⭐ PER ROW, NOT WHOLE-FILE - because the conversion runs in batches and a whole-file compare
-    reports DRIFT for every row not yet injected, which is indistinguishable from a row injected
-    WRONG. During a partial run the only meaningful question is: of the rows the notes can build,
-    does each one match its original byte for byte?
     """
     rows, problems = collect_from_notes()
     for p in problems:
@@ -1515,11 +1282,6 @@ def cmd_check(a):
         print("[skip] no note carries memory_index yet - nothing to check.")
         return 0
 
-    # ⭐ THE POST-SWITCH DRIFT QUESTION, and it is a different one. Before the switch: "do the
-    # notes reproduce the hand-kept file?" After it: "is the file on disk still what the notes
-    # generate, or has it gone stale / been hand-edited?" That is a byte comparison against a
-    # fresh build in the file's OWN style, and it is the only drift question left that matters
-    # day to day.
     if getattr(a, "live", False):
         disk = io.open(MEMFILE, "rb").read()
         styled = bool(re.search(r"\]\(" + re.escape(CODE_DIR) + r"/\d+\.md\)",
@@ -1550,14 +1312,6 @@ def cmd_check(a):
         print("          memory_index.py build --codes --style path --out <MEMORY.md> \\")
         print("              --supplement <MEMORY-CODES.md> --pointers <m/>")
         return 1
-    # ⛔ THE BASELINE HAS TO SURVIVE THE SWITCH. While MEMORY.md is hand-kept it IS the control.
-    # The moment the generated view replaces it, comparing against it becomes the generator
-    # checking its own output - it passes by construction and reports clean forever.
-    # `--against <ref>` moves the control into git, where the thing being checked cannot edit it.
-    # o9's framing: the switch is the moment every existing control stops applying at once.
-    #
-    # ⭐ ALIGN BY ORDER, NOT BY ID. A row's identity is a stable KEY and the file has no keys in
-    # it, so the only shared coordinate between the notes and the file is position.
     if getattr(a, "against", None):
         try:
             raw = subprocess.check_output(
@@ -1567,8 +1321,6 @@ def cmd_check(a):
             print("[FAIL] could not read MEMORY.md at %r: %s" % (a.against, e))
             return 1
         orig = parse_memory(raw.decode("utf-8", "replace").replace("\r\n", "\n").rstrip("\n"))
-        # ⭐ Same trap as verify-titles: a post-switch baseline carries code paths, and comparing
-        # them against a filename render makes every row read as changed.
         cache = {}
         for r in orig:
             for l in r["links"]:
@@ -1578,12 +1330,6 @@ def cmd_check(a):
         print("baseline: %s (git - survives the switch)" % a.against)
     else:
         disk = io.open(MEMFILE, encoding="utf-8", errors="replace").read()
-        # ⛔ AFTER THE SWITCH THIS COMPARISON IS MEANINGLESS AND MUST REFUSE.
-        # `cutover` predicted it would "pass forever" - wrong, and the correction matters.
-        # `check` renders real filenames while the switched file carries code paths, so it
-        # FAILS forever instead. Failing loudly is the safe direction, but a check that can
-        # only ever report drift is as useless as one that can only report clean, and a reader
-        # who sees it fail every day stops reading it. So it refuses and says what to pass.
         if re.search(r"\]\(" + re.escape(CODE_DIR) + r"/\d+\.md\)", disk):
             print("[REFUSE] MEMORY.md carries code paths, so comparing it against a render with")
             print("         real filenames can only ever report drift. The file is now the")
@@ -1645,10 +1391,6 @@ def hook_count():
 
 def cmd_cutover(a):
     """What loses its baseline the moment the generated view replaces MEMORY.md.
-
-    ⭐ o9's question, and it is the right one to ask BEFORE rather than after: the switch is the
-    moment every existing control stops applying at once. This enumerates them and says which
-    survive, so the list is a fact to check rather than a memory to trust.
     """
     rows, problems = collect_from_notes()
     n_hooks = hook_count()
@@ -1665,7 +1407,7 @@ def cmd_cutover(a):
          True, "never depended on MEMORY.md"),
         ("selftest", "parser, slots, keys, insert, duplicate titles", "fixtures",
          True, "self-contained"),
-        ("hook count", "the 44 authored hooks are not derivable from anything",
+        ("hook count", "authored hooks are not derivable from anything",
          "NOTHING - see below", False,
          "no baseline exists; a lost hook is silently gone"),
     ]
@@ -1707,14 +1449,6 @@ CODE_PATH_RE = re.compile(r"^" + re.escape(CODE_DIR) + r"/(\d+)\.md$")
 
 def resolve_at_ref(target, ref, cache):
     """A baseline target may be a CODE PATH. Resolve it back to the note it points at.
-
-    ⛔ THIS IS THE SWITCH BREAKING A CONTROL A SECOND TIME, and I missed it. While the baseline
-    was a pre-switch commit its targets were filenames and comparison worked. The moment the
-    baseline moved PAST the switch its targets became `m/NN.md`, so every link read as changed -
-    a check that can only report drift, which is the exact failure `cutover` was written about.
-
-    ⭐ The pointer files are versioned too, so the resolution is read from the SAME ref. A
-    baseline that resolves itself stays a baseline.
     """
     m = CODE_PATH_RE.match(target)
     if not m:
@@ -1736,18 +1470,6 @@ def resolve_at_ref(target, ref, cache):
 
 def cmd_verify_titles(a):
     """Compare the generated titles/targets against a known-good MEMORY.md from git history.
-
-    ⛔ THE GAP THIS CLOSES, AND IT ONLY OPENS AFTER THE SWITCH. Every other check here verifies a
-    COUNT - slots declared against slots filled - and a count cannot see a wrong word. If a note's
-    `title` is edited to something incorrect, the row still has the right number of links, the
-    round-trip still passes, and the index quietly says the wrong thing.
-
-    Today the original file is the control. **The moment the generated view REPLACES it, that
-    control is gone** - o9 named this as the limit I would otherwise have only written down:
-    *"after it there is no instrument that can find it."*
-
-    ⭐ So the control moves into git, where it cannot be edited by the thing it checks. The last
-    hand-kept `MEMORY.md` stays at a fixed commit forever, and this compares against that.
     """
     ref = a.against
     try:
@@ -1761,10 +1483,6 @@ def cmd_verify_titles(a):
     want = [(l["title"], resolve_at_ref(l["target"], ref, cache))
             for r in base for l in r["links"]]
     rows, problems = collect_from_notes()
-    # ⛔ COMPARE WHAT A BUILD WRITES, carried hand rows included (see `hand_rows`). Without this
-    # step every hand row in a post-4320fe9 baseline read as REMOVED although it was still in the
-    # file, so no baseline after 00e133e could pass (o1:W42). The carried rows come from the live
-    # MEMORY.md, as `build` and `check --live` take them.
     try:
         disk_text = io.open(MEMFILE, encoding="utf-8", errors="replace").read()
     except Exception:
@@ -1779,10 +1497,6 @@ def cmd_verify_titles(a):
         print()
         print("[OK] every title and target matches the baseline. No word has drifted.")
         return 0
-    # ⛔ REPORT INSERTIONS AS INSERTIONS. A positional compare turns one added row into "twelve
-    # rows changed", because everything after it shifts - which buries the single fact a human
-    # needs. o9's new row on 2026-09-18 produced exactly that. A sequence diff separates an
-    # ADDED link from a CHANGED one, and only the second is a reason to worry.
     import difflib
     sm = difflib.SequenceMatcher(a=want, b=got, autojunk=False)
     added, removed, changed = [], [], []
@@ -1819,18 +1533,11 @@ def cmd_verify_titles(a):
 
 def cmd_verify_codes(a):
     """Resolve every code in a variant-B render through its supplement and prove nothing moved.
-
-    ⛔ A size win that drops a link is not a win. The whole risk of variant B is that the address
-    moves somewhere nobody checks, so the check is that every reference still resolves, IN ORDER,
-    to the same (title, note) pair the current index carries.
     """
     sup = io.open(a.supplement, encoding="utf-8", errors="replace").read()
     table = dict(re.findall(r"^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|", sup, re.M))
     retired = dict(re.findall(r"^\|\s*(\d+)\s*\|\s*retired, was `([^`]+)`\s*\|", sup, re.M))
     b = io.open(a.index, encoding="utf-8", errors="replace").read()
-    # ⛔ BOTH STYLES. This read only the bare `[Title][24]` form, so on the live path-style
-    # file it found 0 references and FAILED every run since the switch - a check that can only
-    # fail is read by nobody.
     refs = re.findall(r"\[([^\]]*)\](?:\[(\d+)\]|\(" + re.escape(CODE_DIR) + r"/(\d+)\.md\))", b)
     refs = [(t, c1 or c2) for t, c1, c2 in refs]
     rows, problems = collect_from_notes()
@@ -1841,7 +1548,6 @@ def cmd_verify_codes(a):
     unresolved = [(t, c) for t, c in refs if c not in table]
     nums = sorted(int(c) for c in list(table) + list(retired))
     gaps = [n for n in range(1, (nums[-1] if nums else 0) + 1) if n not in set(nums)]
-    # ⭐ THE SAVED TABLE AND THE POINTER FILES MUST AGREE WITH THE SUPPLEMENT, code for code.
     saved = load_code_table()
     mismatch = []
     if saved["assigned"] != table:
@@ -1886,11 +1592,6 @@ def cmd_verify_codes(a):
 
 def first_clause(desc, budget):
     """A hook DRAFT from an existing description. Returns None when it cannot make a clean one.
-
-    ⛔ A `description:` is an ABSTRACT - what the note IS. A hook is a TRIGGER - when to open it.
-    They are different jobs, so this produces a DRAFT for a human to accept or replace, never a
-    finished hook. It refuses rather than mangling: a hook cut mid-clause is worse than no hook,
-    because it reads as authored.
     """
     if not desc:
         return None
@@ -1924,28 +1625,6 @@ def _row_filter(spec):
 
 def cmd_citations(a):
     """Find `m/NN.md` cited from OUTSIDE the generated index, and say what each points at NOW.
-
-    ⭐ FIXED 2026-10-08 (o1:W27): codes now come from `m/codes.json` and never move or get
-    reused (`assign_codes`), so a citation made after that date keeps its meaning; a removed
-    note's code reads RETIRED. The history below is why, and still explains citations made
-    BEFORE the switch, which may already point somewhere their author did not mean.
-
-    ⛔ THE CODES WERE POSITIONAL. `codes[target] = str(len(codes) + 1)` assigned them by
-    first-encounter order, so inserting a note anywhere but the end renumbers every code after
-    it. Inside MEMORY.md that costs nothing - the file is regenerated whole, every run. Outside
-    it, a citation is a NUMBER THAT QUIETLY COMES TO MEAN A DIFFERENT NOTE, and nothing breaks:
-    the link still resolves, to the wrong thing.
-
-    ⭐ IT HAD ALREADY FIRED WHEN THIS WAS WRITTEN. o1's OrchDoc recorded a sealed test as
-    following `m/138.md` -> `reoon_email_verifier.md` and `m/175.md` ->
-    `feedback_pushover_high_priority_only.md`. One note was later indexed ahead of them, and
-    those two are now 137 and 174. The entry reads as a plain record of what an agent did, and
-    a reader checking it lands on two unrelated notes and concludes the test was misreported.
-
-    ⚠️ AND THE OBVIOUS CHECK MISSES IT. Asking "do these codes still resolve?" answers
-    YES for every one of them, forever - that is what made it invisible. The question is whether
-    a code resolves to what the citing text SAYS it resolves to, which only the citing text can
-    answer. So this reports, and refuses to guess.
     """
     import glob as _glob
     roots = [os.path.join("C:\\", "Users", "<your-user>", "<your-workspace>")]
@@ -1980,7 +1659,7 @@ def cmd_citations(a):
             cache[code] = target
         print("  %-34s line %-6s m/%s.md -> %s" % (fname, line, code, cache[code]))
     print()
-    print("Codes are stable since 2026-10-08 (m/codes.json). A citation made before then may")
+    print("Codes are stable (m/codes.json). A citation made before they existed may")
     print("already point at another note than its author meant - check it against its text.")
     print("Cite the note FILENAME instead; only the index itself should use codes.")
     return 0
@@ -1998,10 +1677,6 @@ def cmd_hooks(a):
             continue
         if want and r["row"] not in want:
             continue
-        # ⛔ SKIP A SLOT THE TEMPLATE ALREADY ANNOTATES. The text BETWEEN slots is per-note
-        # signal - "(NEVER force-push)", "(SINGLE ledger)" - and 35 of the 100 multi-link
-        # links already carry one. A hook there duplicates it. Measured 2026-09-18 after a dry
-        # run rendered "never force-push (NEVER force-push)".
         parts = re.split(r"\{(\d+)\}", r["template"])
         annotated = set()
         for i in range(1, len(parts) - 1, 2):
@@ -2084,7 +1759,6 @@ def selftest():
     if "[One][1]" not in b or "(one.md)" in b:
         print("[FAIL] bare variant-B render: %s" % b.split(NL)[0])
         ok = False
-    # ⭐ THE DEFAULT IS THE PATH STYLE, because a code that IS a path needs no mechanism.
     p = render_rows(rows, CODES)
     if "(m/1.md)" not in p or "(one.md)" in p:
         print("[FAIL] path variant-B render: %s" % p.split(NL)[0])
@@ -2110,7 +1784,6 @@ def selftest():
     if fm_get(fm3, "memory_index") != "4.1" or fm3.count("memory_index") != 1:
         print("[FAIL] fm_set did not replace in place: %r" % fm3)
         ok = False
-    # W149 box 8: the field as the Write tool leaves it, nested under metadata as a YAML list.
     nested = NL.join(["metadata: ", "  node_type: memory", "  memory_index: ",
                       "    - at: k.1", "      title: A", '      row: "x: {1}"', "      order: 3",
                       "  modified: 2026-09-25T21:37:53.419Z"])
@@ -2124,8 +1797,6 @@ def selftest():
         print("[FAIL] fm_set_index did not move the field to the top level: %r" % moved)
         ok = False
 
-    # ⛔ THE CASE THAT BROKE THE FIRST DESIGN: one note in two rows, different title each time.
-    # A scalar field drops one of them silently, so the round-trip has to prove both survive.
     dup = NL.join([
         "- A [migrations](p.md) and [x](x.md)",
         "- B see [§2](p.md).",
@@ -2146,8 +1817,6 @@ def selftest():
         print("[FAIL] the two titles did not both survive: %r"
               % [o["title"] for o in plan["p.md"]])
         ok = False
-    # ⛔ A PARTIALLY-INJECTED ROW MUST NOT BUILD. Measured on the first real batch: five of row
-    # 2's six notes were written and the row rendered as a complete row with one link gone.
     import shutil
     import tempfile
     d = tempfile.mkdtemp()
@@ -2167,9 +1836,6 @@ def selftest():
     finally:
         globals()["MEMDIR"] = save_dir
 
-    # ⛔ THE TEMPLATE IS THE NEW SINGLE POINT OF TRUST, so a WRONG template must refuse in BOTH
-    # directions - o9's catch. Too few slots must not swallow a note; too many must not render
-    # short. The partial-batch run only ever proved the second.
     d2 = tempfile.mkdtemp()
     save2 = globals()["MEMDIR"]
     try:
@@ -2189,8 +1855,6 @@ def selftest():
         globals()["MEMDIR"] = save2
         shutil.rmtree(d2, ignore_errors=True)
 
-    # ⭐ IDENTITY SURVIVES A ROW INSERT. This is the whole reason `at` is keyed by NAME: under
-    # row NUMBERS, inserting one row rewrote every note after it, so nobody would ever do it.
     d3 = tempfile.mkdtemp()
     save3 = globals()["MEMDIR"]
     try:
@@ -2233,8 +1897,8 @@ def main():
     p.add_argument("--pointers", help="with --codes: write one pointer file per code here, so "
                                       "every code is a path Read resolves with no help")
     p.add_argument("--style", choices=("path", "bare"), default="path",
-                   help="path = [Title](m/24.md), needs nothing. bare = [Title][24], 890 bytes "
-                        "smaller and needs a resolution mechanism.")
+                   help="path = [Title](m/24.md), needs nothing. bare = [Title][24], smaller "
+                        "and needs a resolution mechanism.")
     p = sub.add_parser("check")
     p.add_argument("--no-hooks", action="store_true",
                    help="compare ignoring hooks. ONLY meaningful against a PRE-switch baseline - "
@@ -2249,7 +1913,7 @@ def main():
     p.add_argument("--rows", default="", help="comma list or range, e.g. 2 or 2,3 or 2-9")
     p.add_argument("--write", action="store_true")
     p.add_argument("--budget", type=int, default=84,
-                   help="max hook chars; the 3/4-parity figure from D30")
+                   help="max hook chars; the 3/4-parity figure")
     p = sub.add_parser("verify-codes")
     p.add_argument("--index", required=True, help="a variant-B render")
     p.add_argument("--supplement", required=True, help="its code table")

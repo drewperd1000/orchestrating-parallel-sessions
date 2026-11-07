@@ -2,88 +2,23 @@
 
 <!-- subject: orchestration -->
 
-THE OBSERVATION THIS IS BUILT ON (the human, 2026-08-07):
-
-    "The shorter and more concise the *exact* deliverable, the more complete the answer.
-     'Refresh the OrchDoc' is TOO large a task - the result is a very spotty update that is
-     never complete."
-
-That is the correct diagnosis and it is measurable. On 2026-08-07 the reference OrchDoc - built
-by the workstream whose entire product is OrchDoc discipline, checked by 27 blocking invariants
-- had an empty plate while four orchestrators were waiting on a decision it had never recorded,
-and seven work items living in a stale table. Nobody was careless. The task was too big to
-finish, so it ended early, and nothing could tell the difference between "finished" and
-"stopped".
-
-WHY A CHECKLIST DOES NOT FIX THIS. A checklist is read once, at the start, by a context that
-then fills with the work itself. By item six the first item is a memory. Every section this
-sweep covers was ALREADY named in a schema the orchestrator wrote and could see. Knowing the
-list was never the problem; finishing it was.
+A sweep asked to refresh a whole document gives a spotty update that never finishes. The task
+is too big to finish, so it ends early, and nothing can tell the difference between "finished"
+and "stopped".
 
 SO THE MECHANISM IS THIS: the script holds the list, hands out ONE item, and will not hand out
-the next until the current one passes a check the orchestrator cannot write. Three properties,
-each load-bearing:
+the next until the current one passes a check the orchestrator cannot write. `next` prints
+exactly one step, `done` runs a mechanical gate for that step and refuses if it fails, and a
+step that changes nothing must state its reason on the record.
 
-  1. ⭐ ONE SECTION PER STEP, and `next` prints exactly that step and nothing else. Not the
-     list, not the progress bar, not the next two. A prompt that shows what is coming invites
-     planning ahead, and planning ahead is how a step gets done shallowly.
-
-  2. ⭐ THE COMPLETION TOKEN IS EARNED, NOT ASSERTED. `done` runs a MECHANICAL gate for that
-     specific step and REFUSES if it fails. "I finished §2.1" is a claim; "no closed entry
-     remains in §2.1 and the file changed since this step opened" is a measurement. Without
-     this the sweep is a to-do list that grades its own homework, which is the failure it
-     exists to remove.
-
-  3. ⭐ A NO-CHANGE STEP MUST STATE ITS REASON, ON THE RECORD. Sections legitimately need
-     nothing. But "nothing needed" and "I did not look" are indistinguishable from outside, so
-     the sweep makes the first one cost a sentence. That sentence lands in the report the
-     auditor reads.
-
-AND THEN THE PART THAT MAKES IT TRUSTWORTHY - THE INDEPENDENT AUDIT.
-
-The human, again: *"run by a completely separate 'auditor' lane with no knowledge of what the
-updater lanes did - this would prevent predisposition to simply agree with the updater lanes."*
-
-Exactly right, and it is why `audit` emits a seed carrying the WORK EVIDENCE (commits, touched
+THE INDEPENDENT AUDIT. `audit` emits a seed carrying the WORK EVIDENCE (commits, touched
 files, lane branches since the baseline) and the CURRENT doc - and deliberately WITHHOLDS every
 step report. An auditor shown the updater's reasoning audits the reasoning. An auditor shown
 only the evidence audits the document. Those are different jobs and only the second one can
 find what the updater never thought of.
 
-⭐ THE STRONGEST FORM IS ONE FRESH WORKER PER SECTION. `next --lane` prints a ready headless
-command whose entire brief is one subsection. A fresh context cannot drift, cannot get tired at
-item six, and cannot carry a wrong assumption in from item two. That is the human's observation
-turned into architecture rather than advice: the deliverable is small because the WORKER is
-small.
-
-  sweep start  --doc o9              open a sweep; snapshot the doc + baseline commit
-  sweep next   --doc o9 [--lane]     print THE one current step (idempotent; survives compaction)
-  sweep done   --doc o9 --report "…" run the gate; advance only if it passes
-  sweep done   --doc o9 --no-change --because "…"     record a justified no-op
-  sweep audit  --doc o9              emit the independent auditor seed (reports withheld)
-  sweep status --doc o9              where the sweep is, without printing the step
-
 State lives in `.orchdoc-sweep/<doc>.json` so a sweep survives compaction, a restart, or being
 picked up by a different session tomorrow.
-
-THE FRESH-EYES SWEEP (o9:W76) - a reviewer from OUTSIDE a group reads that group's doc and
-reports which open boxes are already done, startable, falsely blocked, untracked, or cut off from
-their heading. It reads and never fixes; the group acts on the report.
-
-  fresh due                          which docs are due: 7 days after the last report, or 3 when
-                                     25+ boxes were added since. No box to check: skipped
-  fresh seed --doc o8                print the lane brief(s) for one doc, and the candidate traps
-                                     from recent reports for o9 to review
-  fresh run  --doc o8 --lane o9L<m>  start one headless Sonnet lane per ~15 boxes (lane_spawn.py),
-                                     at most 5 per run; run again to start the rest
-  fresh land --run <dir>             once every lane has named every box it was given, commit the
-                                     report as orchdoc-sweeps/o8/<date>.md - one path, to main
-
-Everything reads the doc from ONE pinned commit of origin/main, never a working copy, so the
-line numbers a lane is given are the lines of what landed. Reports: `orchdoc-sweeps/`. Traps
-every lane is told about: `orchdoc-sweeps/TRAPS.md`, and nothing else - a lane's own "new traps"
-reach a brief only when o9 copies them there. `orchdoc.py check` warns W-SWEEPOPEN while the
-latest report has action rows and no entry cites it.
 """
 import argparse
 import json
@@ -108,20 +43,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import orchdoc as od  # noqa: E402
 
-STATE_DIR = HERE.parent.parent / ".orchdoc-sweep"
+STATE_DIR = pathlib.Path(os.environ.get("ORCHDOC_SWEEP_STATE_DIR")
+                         or HERE.parent.parent / ".orchdoc-sweep")
 
 
-# ----------------------------------------------------------------------------- step definitions
-#
-# Each step is (key, section, one-line goal, the brief). The brief is written AT the orchestrator
-# doing that one section, in the second person, and it always asks BOTH halves of the question:
-#
-#   (a) is what is HERE still true?      - catches stale status, the o9 §3 table
-#   (b) is anything MISSING?             - catches D5, the decision four people asked for
-#
-# (b) is the half a status-only pass drops, and it is where every serious miss on 2026-08-07
-# actually lived. A section can be perfectly consistent and still be silent about the thing that
-# matters most.
 
 def _brief(section, title, closed_to, kind_word):
     return """\
@@ -162,8 +87,6 @@ STEPS = [
     ("2.2", "Questions", "99.2", "questions that need the human's answer"),
     ("2.3", "To-Dos", "99.3", "to-dos that need the human's action"),
     ("3", "ON CLAUDE'S PLATE", "99.3", "the orchestrator's own open work"),
-    # a finished finding leaves §4 for §99's Findings subsection, which `archive` finds or
-    # makes (W83); it used to stay in §4, so this said "4"
     ("4", "FINDINGS", "99", "findings - what was learned and why it holds"),
     ("1", "LINKS AND DOCS", "1", "every doc and URL this orchestrator owns"),
     ("5", "GUARDS", "5", "what this orchestrator will not do"),
@@ -198,11 +121,6 @@ def git(args, cwd=None):
 
 def extra_sections(lines):
     """Sections the orchestrator added in the 6-98 range. Enumerated, never assumed.
-
-    The human's point: *"the same could be done for findings, links, and any other additional
-    sections added beyond the first 3 by the specific Orch."* A sweep that covers only the
-    sections the SCHEMA knows about would skip exactly the sections an orchestrator cared
-    enough to invent - and those are the ones nobody else will check.
     """
     out = []
     for line in lines:
@@ -236,12 +154,6 @@ def build_steps(doc):
 
 def gate(doc, step, before_text, require_change=True):
     """Can this step be marked done? Returns (ok, [reasons]).
-
-    ⭐ Every rule here is something the orchestrator CANNOT satisfy by asserting it. That is the
-    whole point of the gate: a step that ends on the worker's own say-so is a to-do list, and a
-    to-do list is what already failed. These are cheap, local, and specific to the one section
-    - a gate that re-checks the whole document would fire on other sections' problems and get
-    overridden, which is how a gate dies.
     """
     text = doc.read_text(encoding="utf-8")
     lines = text.split("\n")
@@ -258,21 +170,6 @@ def gate(doc, step, before_text, require_change=True):
     span = od.section_span(lines, sec)
     if span:
         here = [e for e in entries if _entry_section_num(e) == sec]
-        # A closed item left in a live section is the one thing this step is FOR.
-        #
-        # TERMINAL_STATUS, never "not in PLATE_STATUS". PLATE_STATUS is {OPEN, BLOCKED} - what
-        # belongs on the human's plate - and its complement is not "closed", it is "everything
-        # else": DEFERRED, PAUSED, ADOPTED, CONFIRMED, RECORDED, SHIPPED, and IN PROGRESS.
-        #
-        # ⛔ IN PROGRESS was created the SAME DAY, specifically to mean an item is NOT closed,
-        # and this gate classified it as closed and demanded it be archived - which would have
-        # buried the exact entries that status exists to keep visible. The only way to satisfy
-        # the gate was to revert them to RESOLVED: undoing the correct fix in order to pass the
-        # check that enforces it.
-        #
-        # `archive` had this right and the gate rolled its own answer. ONE predicate, shared -
-        # a second definition of "closed" that happens to agree today is a contract waiting to
-        # break the next time anyone adds a status.
         stuck = [e["id"] for e in here
                  if od.status_of(e["body"]) in od.TERMINAL_STATUS and not e.get("archived")
                  and not sec.startswith("99") and sec in ("2.1", "2.2", "2.3", "3")]
@@ -290,22 +187,11 @@ def gate(doc, step, before_text, require_change=True):
                 "generated plate and no invariant runs on it. Give each item an "
                 "`### <ID> - title` heading." % (sec, len(body)))
 
-        # ⛔ THE FORM RULES, ENFORCED HERE RATHER THAN DOCUMENTED SOMEWHERE (the human, 2026-08-10).
-        #
-        # W-STRIKEDONE is the cautionary case: the strike-through rule existed, the check fired
-        # 14 times a run, it was ADVISORY, and it printed a bare count with no line numbers. It
-        # went unfixed for weeks and cost the human his reading time. **Detection was never the
-        # problem; nothing REQUIRED anything.**
-        #
-        # So these run against THIS SECTION, at the moment a step is closed, and a step cannot
-        # be closed while they fail. Scoped to the one section on purpose - a gate that re-checks
-        # the whole document fires on other sections' problems and gets overridden, which is how
-        # a gate dies.
         FORM = {
             "E-SETTLEDNOTSTRUCK": "settled sub-items are not `- [x]` (the checked box renders "
                                   "green, grey and struck NATIVELY - that is the whole form)",
             "E-ALLSUBSDONE":      "every sub-item is done but the container is still live",
-            "E-IDSHAPE":          "an id is not PREFIX+NUMBER (`D7 - pause cues`, not `D-PAUSE`)",
+            "E-IDSHAPE":          "an id is not PREFIX+NUMBER (`D9907 - pick a layout`, not `D-PAUSE`)",
             "E-IDORDER":          "numbers do not run in order, so the section must be scanned",
         }
         try:
@@ -333,6 +219,33 @@ def _entry_section_num(e):
 
 # ------------------------------------------------------------------------------------- commands
 
+def doc_differs_from_canonical(doc):
+    """A warning sentence when `doc` is not the text on the canonical ref, else "".
+    """
+    try:
+        rel = subprocess.run(["git", "ls-files", "--full-name", "--", doc.name],
+                             capture_output=True, text=True, cwd=str(doc.parent),
+                             creationflags=flags(), timeout=30).stdout.strip()
+        if not rel:
+            return ""
+        r = subprocess.run(["git", "show", "%s:%s" % (od.CANONICAL_REF, rel)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           cwd=str(doc.parent), creationflags=flags(), timeout=30)
+        if r.returncode != 0:
+            return ""
+        crlf = chr(13) + chr(10)
+        mine = doc.read_text(encoding="utf-8").replace(crlf, "\n")
+        if mine == r.stdout.replace(crlf, "\n"):
+            return ""
+    except Exception:   # a warning must never be the thing that fails `start`
+        return ""
+    return ("%s differs from %s. This sweep is bound to %s, which may be stale or hold "
+            "local edits; edits made elsewhere will not be seen. To sweep the current text, "
+            "work in a worktree at %s and set ORCHDOC_WORKSPACE to that worktree's path "
+            "before `start`. This is a warning, not a refusal."
+            % (doc.name, od.CANONICAL_REF, doc, od.CANONICAL_REF))
+
+
 def cmd_start(args):
     doc = od.resolve_doc_arg(args.doc)
     if not doc or not doc.exists():
@@ -349,15 +262,19 @@ def cmd_start(args):
     st = {"doc": args.doc, "path": str(doc), "i": 0, "steps": steps, "reports": [],
           # The CANONICAL ref, not HEAD. OrchDoc work lands on canonical via `orchdoc
           # commit`; the local branch never moves, so a HEAD baseline made every range empty
-          # and the audit seed reported "(no commits in range)" while 149 commits sat in the
+          # and the audit seed reported "(no commits in range)" while commits sat in the
           # real range. An evidence gatherer that silently gathers nothing is worse than none.
           "baseline_commit": git(["rev-parse", od.CANONICAL_REF]) or git(
               ["rev-parse", "HEAD"]),
           "baseline_stamp": subprocess.run(
               [sys.executable, str(HERE / "orchdoc_stamp.py")],
               capture_output=True, text=True, creationflags=flags()).stdout.strip(),
-          "before": doc.read_text(encoding="utf-8"), "finished": False}
+          "before": doc.read_text(encoding="utf-8"), "before_step": 0, "finished": False}
     save(args.doc, st)
+    stale = doc_differs_from_canonical(doc)
+    if stale:
+        print("WARNING: %s" % stale)
+        print()
     print("sweep opened on %s - %d step(s)." % (doc.name, len(steps)))
     print("  baseline commit : %s" % (st["baseline_commit"][:10] or "(none)"))
     print()
@@ -365,7 +282,7 @@ def cmd_start(args):
     print("  list, not what is coming. A step that can see the next step gets planned around")
     print("  instead of finished.")
     print()
-    print("  next:  python .shared/scripts/orchdoc_sweep.py next --doc %s" % args.doc)
+    print("  next:  python <scripts>/orchdoc_sweep.py next --doc %s" % args.doc)
     return 0
 
 
@@ -380,8 +297,10 @@ def cmd_next(args):
         return 0
     step = st["steps"][st["i"]]
     doc = pathlib.Path(st["path"])
-    st["before"] = doc.read_text(encoding="utf-8")   # re-baseline: `next` is idempotent
-    save(args.doc, st)
+    if st.get("before_step") != st["i"] or "before" not in st:
+        st["before"] = doc.read_text(encoding="utf-8")
+        st["before_step"] = st["i"]
+        save(args.doc, st)
 
     if args.lane:
         seed = _brief(step["section"], step["title"], step["closed_to"], step["kind"])
@@ -390,7 +309,7 @@ def cmd_next(args):
                 "below in %s. Do not read or edit any other section.\n\n%s" % (doc.name, seed))
         print("# ONE FRESH WORKER, ONE SECTION. A fresh context cannot drift, cannot tire at")
         print("# step six, and cannot carry a wrong assumption in from step two.")
-        print("# Probe the app credential first; if it 401s, export the secrets token instead.")
+        print("# If claude -p answers 401, set CLAUDE_CODE_OAUTH_TOKEN to a token from: claude setup-token")
         print()
         print("claude -p %s --model opus \\" % json.dumps(seed))
         print("  --allowedTools Read,Edit,Write,Bash,Grep,Glob < /dev/null &")
@@ -463,7 +382,7 @@ def cmd_done(args):
         print("  ⚠ The sweep is not finished until it has been audited by someone who did")
         print("    not do it. Your own pass cannot find what you never thought to look for.")
         print()
-        print("  python .shared/scripts/orchdoc_sweep.py audit --doc %s" % args.doc)
+        print("  python <scripts>/orchdoc_sweep.py audit --doc %s" % args.doc)
         return 0
     save(args.doc, st)
     nxt = st["steps"][st["i"]]
@@ -494,11 +413,6 @@ def cmd_status(args):
 
 def cmd_audit(args):
     """Emit the auditor seed. Carries EVIDENCE; withholds every step report.
-
-    ⭐ The withholding is the design, not an omission. An auditor shown the updater's reasoning
-    audits the reasoning - it reads a plausible account and agrees, because agreeing with a
-    coherent story is what reading one does. An auditor shown only the WORK and the DOCUMENT has
-    to derive the answer independently, and only that can find what the updater never considered.
     """
     st = load(args.doc)
     if not st:
@@ -538,8 +452,8 @@ YOUR ONE QUESTION:
 THE DOCUMENT
   {path}
   Read it in full. Run these yourself and do not take anyone's word for their output:
-    python .shared/scripts/orchdoc.py review --doc {doc}
-    python .shared/scripts/orchdoc.py check  --doc {doc}
+    python <scripts>/orchdoc.py review --doc {doc}
+    python <scripts>/orchdoc.py check  --doc {doc}
 
 GATHER YOUR OWN EVIDENCE - run these, do not assume:
     git log --oneline --no-merges {base}..{tip}
@@ -550,9 +464,8 @@ GATHER YOUR OWN EVIDENCE - run these, do not assume:
   Baseline: {base}   Tip: {tip}   ({stamp})
 
   *** IF THE COMMIT RANGE COMES BACK EMPTY, THAT IS A FINDING ABOUT THE BASELINE, NOT A
-  *** VERDICT ABOUT THE DOCUMENT. This exact bug shipped and was caught by hand: the baseline
-  *** was recorded from local HEAD while the work lands on the canonical ref, so the range was
-  *** empty while 149 commits sat in the real one. An audit with no input is a rubber stamp.
+  *** VERDICT ABOUT THE DOCUMENT. A baseline recorded from local HEAD gives an empty range while
+  *** the work lands on the canonical ref. An audit with no input is a rubber stamp.
   *** Establish which case you are in before concluding anything.
 
 WHAT TO LOOK FOR, IN ORDER OF HOW OFTEN IT IS THE ANSWER:
@@ -584,7 +497,7 @@ is worth nothing - it is indistinguishable from not having looked.
 
     if args.lane:
         print("# INDEPENDENT AUDIT - a separate worker, with the step reports withheld.")
-        print("# Probe the app credential first; if it 401s, export the secrets token.")
+        print("# If claude -p answers 401, set CLAUDE_CODE_OAUTH_TOKEN to a token from: claude setup-token")
         print()
         print("claude -p %s --model opus \\" % json.dumps(seed))
         print("  --allowedTools Read,Bash,Grep,Glob < /dev/null &")
@@ -593,19 +506,6 @@ is worth nothing - it is indistinguishable from not having looked.
     return 0
 
 
-# =============================================================================================
-# THE FRESH-EYES SWEEP (o9:W76)
-# =============================================================================================
-#
-# SOURCE: `working_corpus_o8/W-UPKEEP-LESSONS-2026-09-22.md` section 3. A sweep of o8's doc,
-# which was attested current, found 32 of 52 open items startable and never started and 4
-# already done or moot. None of it was findable by reading the doc; every finding came from a
-# reader who had never seen the entry. The orchestrator that wrote an entry holds the same
-# picture of the world the entry encodes, so it is the one reader who cannot see it is stale.
-#
-# The unit is the unticked BOX, not the entry: that is where "already done" and "cut off from
-# its heading" live (o9's own pass on 2026-09-24 found 11 untracked items and 9 bodies detached
-# from their headings, all at box level).
 
 import datetime as _dt          # noqa: E402
 import hashlib                  # noqa: E402
@@ -621,15 +521,6 @@ FRESH_BUSY_DAYS = 3             # ...or this long, when FRESH_BUSY_BOXES boxes a
 FRESH_BUSY_BOXES = 25
 FRESH_BATCH = 15                # boxes per lane
 FRESH_MODEL = "sonnet"
-# ⛔ NO Write, NO Edit, AND ONE SHELL COMMAND: `sweep_read.py`, by absolute path. The lane
-# reads and never fixes; its report is its stdout. Every verdict must name the command it ran,
-# so a shell stays - but only this wrapper, which allows read-only git, `gh pr view` and
-# route.py's ask path, and checks the arguments AFTER the shell has joined quotes.
-# The prefix rules it replaced (`Bash(git log:*)` and the rest) let the second review of
-# 0521fb89 write files with `git log --output=` and edit docs with `route.py enrich`; a deny
-# rule for `--output` was beaten by `--outp''ut`. See sweep_read.py's docstring.
-# The second spelling exists because `MSYS_NO_PATHCONV=1` has to come first on a Git Bash line
-# (TRAPS.md); it runs the same wrapper.
 WRAPPER_REL = ".shared/scripts/sweep_read.py"
 
 
@@ -651,11 +542,9 @@ FRESH_BRIEF_MAX = 24000
 FRESH_BOX_TEXT_MAX = 240
 FRESH_FINDINGS_MAX = 40         # findings quoted per brief, most specific first
 TRAPS_REL = upk.SWEEP_DIR + "/TRAPS.md"
-ACTION_VERDICTS = ("DONE", "DETACHED", "UNTRACKED", "NEEDS-THE HUMAN", "FALSE-BLOCKER", "STARTABLE")
+ACTION_VERDICTS = ("DONE", "DETACHED", "UNTRACKED", "NEEDS-HUMAN", "FALSE-BLOCKER", "STARTABLE")
 DOC_NAME_RE = re.compile(r"^ORCHESTRATOR-DECISIONS-(o\d+)\.md$")
 _ID = r"[A-Z]{1,3}(?:\d+[a-z]?|-[A-Z][A-Z0-9]*\d*)"
-# `W76:1a2b3c4d`, `none:1a2b3c4d.2`. The id is the entry the box sits in; the hash is its text,
-# so a moved box keeps its key and an edited box gets a new one ("new or changed").
 BOX_KEY_RE = re.compile(r"(?<![\w:.])((?:%s|none):[0-9a-f]{8}(?:\.\d+)?)(?![\w])" % _ID)
 # What makes an entry "name a blocker": the three fields orchdoc.py's W-NOBLOCKER accepts, or
 # the phrases its W-STALLED accepts. `**Depends:**` is NOT here - on these docs it names the
@@ -678,20 +567,13 @@ class SweepError(Exception):
 # ------------------------------------------------------------------------------ where it reads
 
 class GitSource:
-    """The landed state: every read is from ONE pinned commit of the canonical ref.
-
-    ⛔ Not the working copy. The shared checkout has sat hundreds of commits behind origin/main,
-    and a brief built from a stale copy hands a lane line numbers that point at other text. So
-    the tip is resolved once, here, and every doc, report and trap list is read from that one
-    commit - the same pinning `land_note` does, for the same reason."""
+    """The landed state: every read is from ONE pinned commit of the canonical ref."""
 
     def __init__(self, root=None, ref=None, fetch=False):
         self.root = pathlib.Path(root or od.PROJECTS)
         self.ref = ref or od.CANONICAL_REF
         self.fetched = None
         if fetch:
-            # A report lands on the remote without touching any checkout, so a ref that was
-            # last fetched yesterday does not know it exists and calls the doc overdue.
             rc, _ = self._git(["fetch", "--quiet", self.ref.split("/", 1)[0]])
             self.fetched = rc == 0
         rc, out = self._git(["rev-parse", "--verify", "%s^{commit}" % self.ref])
@@ -794,16 +676,40 @@ def _box_text(lines, i):
     return " ".join(" ".join(parts).split())
 
 
+def _indent(line):
+    """The line's indent in columns, a tab counting 4 as CommonMark does: counted in characters,
+    a child indented by one tab under a two-space parent looks shallower than its parent."""
+    wide = line.expandtabs(4)
+    return len(wide) - len(wide.lstrip())
+
+
+def box_subtree(lines, i, hidden=lambda n: False):
+    """(last line, open child count) of the box on 1-based line `i`: its children run to the next
+    non-blank line at its own indent or shallower (a sibling, a parent or a heading), and
+    NOT to the first gap.
+
+    `hidden(n)` is true of a line doc_boxes does not treat as a box (a code fence, a fold, a
+    generated region): it neither ends the range nor counts as a child."""
+    indent = _indent(lines[i - 1])
+    last, kids = i, 0
+    for n in range(i + 1, len(lines) + 1):
+        ln = lines[n - 1]
+        if not ln.strip() or hidden(n):
+            continue
+        if _indent(ln) <= indent:
+            break
+        last = n
+        if upk.UNCHECKED_RE.match(ln):
+            kids += 1
+    return last, kids
+
+
 def _names_blocker(entry):
     if od.status_of(entry["body"]) in ("BLOCKED", "SEQUENCED"):
         return True
     return bool(BLOCKER_RE.search(od.without_attested_by(entry["body"])))
 
 
-# o9's ruling on the pilot (2026-09-25): a box inside a D or Q entry that is still open and is
-# owned by the human is one of the choices he picks from, not a task. Measured before the ruling:
-# 45 of o8's 119 boxes and 26 of o1's 108 were in D entries. Boxes inside CLOSED entries stay
-# in - they are where W76's own sweep found cut-off bodies and forgotten work.
 OPTION_ENTRY_RE = re.compile(r"^[DQ]\d")
 
 
@@ -816,12 +722,6 @@ def is_human_option(entry):
 
 def doc_boxes(text, name):
     """(boxes, live_entry_count) for one doc's text.
-
-    A box is an unticked `- [ ]` outside a code fence, a `<details>` fold and a generated
-    region, and not an option inside an open decision or question owned by the human
-    (`is_human_option`). Each carries: key, line, entry (id, or "none" when no entry holds it -
-    a box cut off by a heading), the entry's line range, its text, and whether the entry names
-    a blocker.
     """
     lines = text.splitlines()          # check_doc splits the same way, so line numbers agree
     entries, _ = od.parse_entries(lines)
@@ -831,11 +731,13 @@ def doc_boxes(text, name):
     cover = d.cover()
     heads = [(i, len(m.group(1))) for i, ln in enumerate(lines, 1)
              if not d.fenced[i] for m in [re.match(r"^(#{1,6})\s", ln)] if m]
+
+    def hidden(n):
+        return d.fenced[n] or d.folded[n] or any(lo <= n - 1 <= hi for lo, hi in derived)
+
     boxes, seen = [], {}
     for i, raw in enumerate(lines, 1):
-        if d.fenced[i] or d.folded[i] or not upk.UNCHECKED_RE.match(raw):
-            continue
-        if any(lo <= i - 1 <= hi for lo, hi in derived):
+        if hidden(i) or not upk.UNCHECKED_RE.match(raw):
             continue
         e = cover[i]
         if is_human_option(e):
@@ -855,10 +757,12 @@ def doc_boxes(text, name):
                 if ln > i and (lv == 0 or lv2 <= lv):
                     hi = ln - 1
                     break
+        sub_hi, kids = box_subtree(lines, i, hidden)
         base = "%s:%s" % (eid, hashlib.sha1(body.encode("utf-8")).hexdigest()[:8])
         n = seen[base] = seen.get(base, 0) + 1
         boxes.append({"key": base if n == 1 else "%s.%d" % (base, n), "line": i,
-                      "entry": eid, "lo": lo, "hi": hi, "text": body, "blocker": blocker})
+                      "entry": eid, "lo": lo, "hi": hi, "text": body, "blocker": blocker,
+                      "sub_hi": sub_hi, "kids": kids})
     live = sum(1 for e in entries if upk._is_live(e, od))
     return boxes, live
 
@@ -879,9 +783,8 @@ def select_boxes(boxes, prev_keys, last_checked):
       * new or changed since the doc commit the last report read (all of them, when there is
         no last report, or its commit cannot be read);
       * every box whose entry names a blocker - a blocker is the fact most likely to have moved
-        (o8's report, P4: seven entries rested on blockers that were already false);
       * the quarter of the rest checked longest ago, never-checked first.
-    """
+      """
     picked, rest = [], []
     for b in boxes:
         b = dict(b)
@@ -978,14 +881,7 @@ def _trap_key(s):
 
 
 def trap_lines(src, now=None):
-    """Every `- ` line of TRAPS.md, duplicates dropped. THE ONLY SOURCE OF A BRIEF'S TRAPS.
-
-    ⛔ A lane's "new traps" section is NOT copied in, and it used to be. The review of
-    ef7d883e reproduced all three ways that goes wrong: a hostile line copied word for word into
-    every later brief, a report's closing summary sentence taken as a trap, and one 40,000-char
-    line pushing a single-box brief past the Windows command-line limit. A lane's output is
-    untrusted text; o9 reads the candidates (`candidate_traps`) and copies the good ones here
-    by hand."""
+    """Every `- ` line of TRAPS.md, duplicates dropped. THE ONLY SOURCE OF A BRIEF'S TRAPS."""
     lines, seen = [], set()
     for ln in (src.text(TRAPS_REL) or "").split("\n"):
         if ln.startswith("- "):
@@ -998,8 +894,8 @@ def trap_lines(src, now=None):
 
 def candidate_traps(src, now=None, clip=300):
     """[(report relpath, line)] - "new traps" lines from any group's reports in the last
-    FRESH_TRAP_DAYS days that TRAPS.md does not already hold. For o9 to review; never sent to
-    a lane. Each line is clipped, because it is quoted lane output."""
+    FRESH_TRAP_DAYS days that TRAPS.md does not already hold. Each line is clipped, because
+    it is quoted lane output."""
     have = set(_trap_key(t) for t in trap_lines(src, now))
     since = (_as_date(now) - _dt.timedelta(days=FRESH_TRAP_DAYS)).isoformat()
     out, seen = [], set()
@@ -1034,6 +930,12 @@ REPOS: the evidence for a box is often in a product repo, not the workspace. Jud
 YOUR BOXES: key | doc line | entry id | entry line range | box text
 {boxes}
 Read each entry by its line range, never the whole doc.
+A box marked CHILDREN has open sub-boxes: read the whole range given, up to the next box at its own level or a heading. A blank line does not end a parent. Never call a parent DONE while a child in that range is open.
+BEFORE you call another lane dead, finished or abandoned, look for its mailbox and report in the main checkout as well as on origin/main; a lane report is often uncommitted there. Run Glob with `path` set to each folder here that could hold it, with pattern `<lane id>*` and then `<lane id>*/*`:
+{lane_dirs}
+Also try Read on `<group folder>/<lane id>-REPORT.md`, the group folder being the parent of a mailboxes folder. If you checked only origin/main, mark the verdict INFERRED.
+Never Glob or Grep across {root} or a whole group folder: the tool times out at 20 seconds there and finds nothing. Never open <your-secrets-folder>, any private-feedback folder or anything under private_inbox.
+An entry stamped `**Enriched:** NO` can still hold its decision text. Read the text under the stamp; never call an entry empty from the stamp.
 READ THIS FIRST - already reported for your lines by `orchdoc.py check` and the upkeep checks:
 {findings}
 Do not repeat these; cite a code where it explains a verdict.
@@ -1047,8 +949,8 @@ EVIDENCE: each verdict gives file:line, a commit or a PR, and the command you ra
 TRAPS:
 {traps}
 REPORT:
-1 Up to 10 action rows, costliest first: DONE, DETACHED, UNTRACKED, NEEDS-THE HUMAN, FALSE-BLOCKER, STARTABLE.
-2 Table: key | line | entry | verdict | evidence | OPENED/INFERRED. One row per box, its key exactly as given. A verdict is one of DONE, DETACHED, UNTRACKED, NEEDS-THE HUMAN, FALSE-BLOCKER, STARTABLE, BLOCKED (the blocker is still true), COULD-NOT-TELL.
+1 Up to 10 action rows, costliest first: DONE, DETACHED, UNTRACKED, NEEDS-HUMAN, FALSE-BLOCKER, STARTABLE.
+2 Table: key | line | entry | verdict | evidence | OPENED/INFERRED. One row per box, its key exactly as given. A verdict is one of DONE, DETACHED, UNTRACKED, NEEDS-HUMAN, FALSE-BLOCKER, STARTABLE, BLOCKED (the blocker is still true), COULD-NOT-TELL.
 3 Examined: boxes given, boxes checked, files opened.
 4 New traps you hit.
 """
@@ -1059,11 +961,31 @@ def _clip(s, n):
     return s if len(s) <= n else s[:n - 3].rstrip() + "..."
 
 
+def _kids_note(b):
+    """` [CHILDREN: n open, read L<box>-L<end>]` when the box has open sub-boxes."""
+    if not b.get("kids"):
+        return ""
+    return " [CHILDREN: %d open below it; read L%d-L%d, past any blank line]" % (
+        b["kids"], b["line"], b["sub_hi"])
+
+
+def lane_dirs(root):
+    """The folders of the main checkout that hold lane mailboxes and reports, named one by one."""
+    root = pathlib.Path(root)
+    import orchdoc_config
+    found = [root / "mailboxes", root / orchdoc_config.get_text("work_notes_dir",
+                                                                "lane-notes")]
+    for top in sorted(root.iterdir()):
+        if top.name.startswith(".") or not top.is_dir() or (top / ".git").is_file():
+            continue
+        found += [top / sub for sub in ("mailboxes", "lanes", "logs")]
+    return [p.as_posix() for p in found if p.is_dir()]
+
+
 def render_brief(seed, batch, snapshot=None, findings_max=FRESH_FINDINGS_MAX):
-    """The brief for one batch - o9's template, filled."""
-    rows = ["%s | L%d | %s | L%d-L%d | %s" % (b["key"], b["line"], b["entry"], b["lo"], b["hi"],
-                                               _clip(b["text"], FRESH_BOX_TEXT_MAX))
-            for b in batch]
+    rows = ["%s | L%d | %s | L%d-L%d | %s%s" % (
+                b["key"], b["line"], b["entry"], b["lo"], b["hi"],
+                _clip(b["text"], FRESH_BOX_TEXT_MAX), _kids_note(b)) for b in batch]
     ranges = sorted(set((b["lo"], b["hi"]) for b in batch))
     hits = []
     for f in seed["findings"]:
@@ -1075,14 +997,15 @@ def render_brief(seed, batch, snapshot=None, findings_max=FRESH_FINDINGS_MAX):
     shown = ["L%d %s %s" % (f["line"], f["code"], _clip(f["msg"], 200))
              for f in hits[:findings_max]]
     if len(hits) > findings_max:
-        shown.append("(+%d more on these lines - `python .shared/scripts/orchdoc.py check "
+        shown.append("(+%d more on these lines - `python <scripts>/orchdoc.py check "
                      "--doc %s --strict` lists them)" % (len(hits) - findings_max, seed["doc"]))
     rel = seed["name"]
     where = ("%s is a copy of it at that commit" % snapshot) if snapshot else (
         "read it with `python %s git show %s:%s` (the landed copy)"
         % (seed["wrapper"], seed["doc_commit"][:12], rel))
     return BRIEF.format(
-        name=rel, where=where, sha10=seed["doc_commit"][:10], wrapper=seed["wrapper"],
+        name=rel, where=where, root=seed["root"], sha10=seed["doc_commit"][:10],
+        wrapper=seed["wrapper"], lane_dirs="\n".join(seed["lane_dirs"]),
         repos="\n".join("%s | %s" % (p, n) for p, n in seed["repos"]) or "(none found)",
         boxes="\n".join(rows),
         findings="\n".join(shown) if shown else "(none reported on these lines)",
@@ -1093,10 +1016,7 @@ def fresh_seed(src, slug, now=None, batch_size=FRESH_BATCH, findings_fn=None, sn
                repos=None, wrapper=None):
     """Everything one doc's sweep needs, as a dict: the boxes picked, why, the batches with a
     rendered brief each, and the commit it was all read from.
-
-    `repos` defaults to sweep_read.known_repos() - the same list the wrapper's `gh --repo`
-    accepts - so the brief names every product repo a lane may need (the review of 0521fb89:
-    o6's evidence is in product-website, and the brief sent lanes to the workspace)."""
+    """
     if repos is None:
         import sweep_read
         repos = [(pathlib.Path(p).as_posix(), n) for p, n in sweep_read.known_repos()]
@@ -1121,6 +1041,7 @@ def fresh_seed(src, slug, now=None, batch_size=FRESH_BATCH, findings_fn=None, sn
             findings.append({"line": f.line, "code": f.code, "msg": f.msg})
     seed = {"doc": slug, "name": name, "doc_commit": src.sha, "ref": src.ref,
             "root": str(_main_checkout()).replace("\\", "/"),
+            "lane_dirs": lane_dirs(_main_checkout()),
             "seeded_at": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             "repos": [list(r) for r in repos], "wrapper": wrapper or wrapper_path(),
             "boxes_total": len(boxes), "live_entries": live,
@@ -1141,9 +1062,6 @@ def fresh_seed(src, slug, now=None, batch_size=FRESH_BATCH, findings_fn=None, sn
         if len(brief) > FRESH_BRIEF_MAX:
             brief = render_brief(seed, batch, snapshot, findings_max=5)
         if len(brief) > FRESH_BRIEF_MAX:
-            # ⛔ REFUSED, NOT SENT. A longer brief does not reach the lane at all: Windows
-            # refuses the command line (WinError 206). With box text and findings clipped, the
-            # only thing left that can do this is TRAPS.md, so that is where to look.
             raise SweepError(
                 "the brief for box %s is %d characters even alone, over the %d limit. Box text "
                 "and findings are clipped, so TRAPS.md (%d traps) is the likely cause - shorten it"
@@ -1171,8 +1089,6 @@ def fresh_due(src, now=None, only=None):
                "added": None, "due": False, "why": ""}
         rows.append(row)
         if not boxes:
-            # o9, 2026-09-25: nothing to check means nothing is due. How to sweep a doc that
-            # tracks its work without boxes (o7's shape) is a later decision.
             row["why"] = "skipped - no box to check (%d live entr%s)" % (
                 live, "y" if live == 1 else "ies")
             continue
@@ -1213,12 +1129,6 @@ _LANE_MARK_RE = re.compile(r"ORCHDOC_LANE=o\d+L\d+", re.I)
 def process_table():
     """{pid: (parent pid, name, command line)} for every live process, or None when it cannot
     be read. The same source lane_status.py reads lanes from (Win32_Process)."""
-    # UTF-8 OUT, UTF-8 IN (o9, 2026-09-25). Windows PowerShell writes redirected stdout in the
-    # console's legacy code page, which has no curly quotes, so it wrote U+201C/U+201D as a plain
-    # `"` AFTER ConvertTo-Json had decided they needed no escaping. One live process whose command
-    # line held them made this return None for the whole machine. Setting the console output
-    # encoding to UTF-8 sends them as themselves; the try/catch keeps the old behaviour if a host
-    # refuses it. lane_status.py had the same fault (8423e555).
     script = ("try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}; "
               "Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, "
               "CommandLine | ConvertTo-Json -Depth 2 -Compress")
@@ -1226,7 +1136,6 @@ def process_table():
         p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=120, creationflags=flags())
-        # A byte-order mark would make json.loads refuse the whole list; none was measured.
         rows = (json.loads((p.stdout or "").lstrip("\ufeff"), strict=False)
                 if p.returncode == 0 else None)
     except Exception:                              # noqa: BLE001 - None means "could not look"
@@ -1243,12 +1152,7 @@ def lane_ancestors(table, pid):
     """[str] - this process or an ancestor that shows a lane is running: a `claude` process
     started with `-p`/`--print` (every lane is one), or a command line carrying
     `ORCHDOC_LANE=o<N>L<m>` (how a lane is launched and named).
-
-    ⭐ A child cannot edit its parents' command lines, so unsetting variables does not hide this.
-    Only a process NAMED claude counts for `-p`: a shell's command line holds its whole command
-    text, so `mkdir -p x && ...` under a `.claude/` snapshot path would otherwise read as one.
-    Measured 2026-09-25: the desktop app's claude.exe runs with `--output-format stream-json
-    ... --resume=...` and no `-p`, so an orchestrator's chain is clean."""
+    """
     out, seen = [], set()
     while pid in table and pid not in seen and len(seen) < 64:
         seen.add(pid)
@@ -1270,15 +1174,6 @@ def _ancestors_now():
 
 def lane_markers(environ, role=None, ancestors=None):
     """Every sign that THIS process runs inside a lane. [] for an orchestrator.
-
-    More than one, because a lane can clear any one of them - the review of 0521fb89 unset
-    ORCHDOC_LANE and CLAUDE_CODE_SESSION_ID, set ORCHDOC_ME, and was granted.
-      * ORCHDOC_LANE / ORCHDOC_LANE_MAY_SPAWN - set by whoever launched the lane
-      * CLAUDE_CODE_ENTRYPOINT=sdk-cli - kept, but a lane started from the desktop app inherits
-        `claude-desktop`, so on its own this never fires for one
-      * the session's own title reads as a lane (`o9L12: ...`), via orchdoc.session_role
-      * THE ANCESTOR CHAIN (`lane_ancestors`), which a lane cannot rewrite. `ancestors=None`
-        reads the live process table, and an unreadable table counts as a marker.
     """
     out = []
     for var in ("ORCHDOC_LANE", "ORCHDOC_LANE_MAY_SPAWN"):
@@ -1314,27 +1209,17 @@ def refuse_in_lane(verb, environ=None, role=None, ancestors=None):
     call it: starting lanes and committing to main are the orchestrator's acts."""
     markers = lane_markers(dict(os.environ if environ is None else environ), role, ancestors)
     if markers:
-        # ⛔ The message names what was seen, never a way past it: the review of 0521fb89 got a
-        # grant by doing exactly what the old refusal text suggested.
         raise SweepError("`fresh %s` is refused inside a lane (%s)" % (verb, "; ".join(markers)))
 
 
 def lane_env(lane, environ=None, orchestrator=None, role=None, ancestors=None):
     """The environment lane_spawn.py needs to start the sweep's lanes. -> dict
-
-    lane_spawn only runs inside a marked lane that was granted spawning. `fresh run` is how an
-    ORCHESTRATOR grants it: `--lane` names a top-level lane id from ORCHESTRATOR-REGISTRY.md and
-    the sweep's lanes become its children, `o9L<m>.1`, `.2`, ... So:
-      * refused inside a lane, whatever it passes (`refuse_in_lane`, which reads the ancestor
-        chain when `ancestors` is None);
-      * refused unless the group in `--lane` is the orchestrator running this - o9 cannot start
-        lanes under o8's number, and an unknown orchestrator is refused, not assumed.
     """
     env = dict(os.environ if environ is None else environ)
     refuse_in_lane("run", env, role, ancestors)
     if not lane:
-        raise SweepError("--lane is required: take a top-level lane id (o<N>L<m>) from "
-                         "ORCHESTRATOR-REGISTRY.md. The sweep's lanes are its children.")
+        raise SweepError("--lane is required: pick a top-level lane id (o<N>L<m>). "
+                         "The sweep's lanes are its children.")
     m = re.match(r"^(o\d+)L\d+$", lane)
     if not m:
         raise SweepError("--lane %r is not a top-level lane id (o<N>L<m>)" % lane)
@@ -1427,11 +1312,7 @@ def start_lanes(run_dir, manifest, env, model=FRESH_MODEL, limit=FRESH_MAX_LANES
     after, so a failure part-way - WinError 206, a crash, a killed shell - never leaves a lane
     running that the manifest does not know about. A batch that fails to start goes back to
     `pending` with its error, and the next `run` tries it again.
-
-    ⛔ A batch left `starting` WITH an output file may be a lane that is running: lane_spawn
-    opens the log before it starts the process. It is reported, never restarted blind - two
-    lanes on one batch would write one log. One left `starting` with no output file never
-    reached lane_spawn, and is started again. -> [(n, lane id or None, error or None)]"""
+    """
     runner = runner or subprocess.run
     run_dir = pathlib.Path(run_dir)
     out, todo = [], []
@@ -1495,8 +1376,8 @@ def count_action_rows(text):
 
 
 def keys_missing(keys, output):
-    """The keys a lane was given that its output never names. Matched as whole keys, so naming
-    `W7:1a2b3c4d.2` does not count as naming `W7:1a2b3c4d`."""
+    """The keys a lane was given that its output never names.
+    """
     named = set(BOX_KEY_RE.findall(output or ""))
     return [k for k in keys if k not in named]
 
@@ -1548,20 +1429,6 @@ def build_report(manifest, outputs, now=None):
 
 def land_file(root, rel, data, message, ref=None, attempts=3, before_push=None):
     """Commit ONE new file to the canonical branch and push it. -> (ok, detail, commit).
-
-    ⛔ Written beside `orchdoc.land_note`, not on top of it: that function is being rewritten
-    on `o9/note-loss-2`. Same shape, for the same reasons:
-      * the tip is pinned once per attempt, and the commit is built from that one commit;
-      * the commit is built in a PRIVATE index, so no working tree and no real index is
-        touched - this can run from any checkout, including one that is far behind;
-      * the commit must touch exactly `rel`, checked from the objects, or it does not go;
-      * a push refused because the branch moved starts again from the new tip.
-    It never overwrites: a path already on the tip with other content is refused.
-
-    ⛔ AND IT LANDS ONE KIND OF FILE ON ONE BRANCH: a report name under `orchdoc-sweeps/`
-    (REPORT_REL_RE), on `main`. The review of ef7d883e called it directly with
-    `ESCAPE-new-file.md`, a `../` path and `ref=origin/other-branch`, and it landed all three -
-    a helper that commits straight to a remote must not take its target on trust.
     """
     ref = ref or od.CANONICAL_REF
     remote, _, branch = ref.partition("/")
@@ -1791,13 +1658,7 @@ def cmd_fresh_run(args):
 
 
 def check_outputs(run_dir, manifest, requeue_silent=False):
-    """(outputs, problems, requeue) - `land` lands only when `problems` is empty.
-
-    ⛔ EVERY KEY OR NOTHING. A lane that names some of its boxes and not others checked some and
-    not others, and a report built from it would reset the doc's due date on a sweep that did
-    not happen - the review of ef7d883e measured that the old test (names ANY key) passed such a
-    lane. A batch whose output falls short goes back in the queue, and its output is KEPT under
-    a new name first, so re-running it cannot overwrite what it said."""
+    """(outputs, problems, requeue) - `land` lands only when `problems` is empty."""
     outputs, problems, requeue = [], [], []
     for b in manifest["batches"]:
         st = _status(b)
@@ -1891,7 +1752,7 @@ def cmd_fresh_land(args):
         return _print_err(ex)
     rel = report_rel(src.names("%s/%s" % (upk.SWEEP_DIR, manifest["doc"])), manifest["doc"],
                      day)
-    who = (os.environ.get("ORCHDOC_ME") or os.environ.get("CLAUDE_ORCH_ID") or "o9").strip()
+    who = (os.environ.get("ORCHDOC_ME") or os.environ.get("CLAUDE_ORCH_ID") or "orchestrator").strip()
     message = ("%s: fresh-eyes sweep of %s - %d boxes, %d action rows\n\n%s\n\n"
                "Orchdoc-Lander: fresh-sweep\n" % (who, manifest["doc"], counts["boxes_given"],
                                                   counts["action_rows"], rel))
@@ -1932,21 +1793,21 @@ def main():
             p.add_argument("--because", help="required with --no-change")
         p.set_defaults(func=fn)
 
-    pf = sub.add_parser("fresh", help="the fresh-eyes sweep (o9:W76): due, seed, run, land")
+    pf = sub.add_parser("fresh", help="the fresh-eyes sweep: due, seed, run, land")
     fsub = pf.add_subparsers(dest="fcmd", required=True)
     p = fsub.add_parser("due", help="which docs are due a fresh-eyes sweep")
-    p.add_argument("--doc", action="append", help="only this doc (o8); repeatable")
+    p.add_argument("--doc", action="append", help="only this doc (o99); repeatable")
     p.add_argument("--now", help="today, as YYYY-MM-DD (default: the real date)")
     p.set_defaults(func=cmd_fresh_due)
     p = fsub.add_parser("seed", help="print the lane brief(s) for one doc")
-    p.add_argument("--doc", required=True, help="o8")
+    p.add_argument("--doc", required=True, help="o99")
     p.add_argument("--now", help="today, as YYYY-MM-DD (default: the real date)")
     p.add_argument("--batch", type=int, default=FRESH_BATCH, help="boxes per lane")
     p.add_argument("--summary", action="store_true", help="print only the sizes")
     p.set_defaults(func=cmd_fresh_seed)
     p = fsub.add_parser("run", help="start the lanes for one doc through lane_spawn.py")
-    p.add_argument("--doc", required=True, help="o8")
-    p.add_argument("--lane", help="top-level lane id from ORCHESTRATOR-REGISTRY.md (o9L<m>); "
+    p.add_argument("--doc", required=True, help="o99")
+    p.add_argument("--lane", help="top-level lane id (o<N>L<m>); "
                                   "the sweep's lanes are its children")
     p.add_argument("--model", default=FRESH_MODEL)
     p.add_argument("--batch", type=int, default=FRESH_BATCH, help="boxes per lane")

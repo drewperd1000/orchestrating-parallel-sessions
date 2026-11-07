@@ -108,7 +108,7 @@ something untrue of my setup*.
 was correct - reword a record, revert a status, delete a reference - that is the detail that
 changes the design instead of patching a regex.
 
-> ⚠️ **This layout changed on 2026-08-07.** The repo previously held a single skill with
+> ⚠️ **This layout changed.** The repo previously held a single skill with
 > `SKILL.md` at the root, installed by dropping the directory into `~/.claude/skills/`. If you
 > installed it that way, that copy is stale — remove it and use the steps above. The change was
 > needed to hold more than one skill in one repo.

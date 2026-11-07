@@ -2,49 +2,14 @@
 
 <!-- subject: orchestration -->
 
-THE HUMAN'S CONUNDRUM, 2026-08-07:
+A record needs a required format, and anyone can falsify a format by following it. A format
+cannot solve that, because a format is satisfied by anything of the right shape. Three layers
+do different jobs, and only the third resists gaming:
 
-    "There needs to be a requirement of a specific output onto the record so that it is
-     recorded, but recorded with an enforced format - BUT it must be done in a way that it
-     cannot falsify it by just following the format. It seems like a conundrum."
-
-It is a real conundrum and a format cannot solve it, because a format is satisfied by anything
-of the right shape. Three layers do different jobs, and only the third resists gaming:
-
-  1. FORMAT     - a slot must exist. Cheap, structural, and by itself gameable.
-  2. ORACLE     - what goes in the slot must be checkable BY SOMEONE ELSE: a sha, a path, a
-                  command. Not prose. `E-RUBBERSTAMP` already enforces this for findings.
-  3. IMMUTABILITY - ⭐ the text inside `~~ ~~` must be the SAME text that was there before it
-                  was struck. This is what makes following-the-format insufficient, and it is
-                  fully mechanical, because git holds the previous version.
-
-THE FAILURE IT CATCHES, from a real incident an hour before this was written. o7 had:
-
-    - **Copy is UNCHANGED pending your call** (o1 asked me to hold, and I agree - ...)
-
-`E-CLOSEDWITHOPENSUBS` fired on the word *pending*, and at the time striking the line did not
-clear it. So they reworded the historical record to get past a regex:
-
-    - ~~**Copy is UNCHANGED, held for your call.**~~ **RESOLVED - ...**
-
-They disclosed it and called it gaming, which is why it is a usable fixture. **The check would
-have caught it either way** - the line gained `~~` and its inner text changed in the same
-commit, which is the whole signature.
-
-⭐ WHY THIS ONE IS TRUSTWORTHY WHERE TODAY'S OTHERS WERE NOT. Three checks shipped on
-2026-08-07 and were wrong on the fleet, and every one of them read PROSE to infer INTENT. This
-reads a DIFF: two versions of one line, and whether the words between the tildes survived. It
-needs no theory about what the author meant. That is the same property that makes "29 lines, 0
-entries" reliable while "does this bullet look unfinished?" is not.
-
-  restrike --doc o7 [--since <ref>]   walk history, report strikes that also reworded
-
-⚠️ ADVISORY BY DESIGN, and it must stay that way. Rewording while striking is sometimes exactly
-right - a line that says "pending your call" IS false once the call is made, and rewriting it to
-"you ruled on the 7th" makes the record MORE accurate, not less. **The two are identical in a
-diff.** What separates them is whether the change was made to be true or made to pass, and
-nothing mechanical can see that. So this reports the edit and asks; it never blocks. The
-independent auditor is where the judgement belongs.
+  1. FORMAT       a slot must exist.
+  2. ORACLE       what goes in the slot must be checkable by someone else: a sha, a path, a command.
+  3. IMMUTABILITY the text inside `~~ ~~` must be the same text that was there before it was
+                  struck, which git can check, because it holds the previous version.
 """
 import argparse
 import datetime
@@ -69,16 +34,6 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import orchdoc as od  # noqa: E402
 
-# ⛔ BOTH FORMS, OR THE GUARANTEE SILENTLY LAPSES. This matched `~~ ~~` only, and the canonical
-# form for a settled sub-item is now a CHECKED CHECKBOX - which carries no tildes at all. So the
-# moment the form changed, this immutability check stopped finding anything to check, and would
-# have reported "clean" forever while the thing it protects went unguarded.
-#
-# ⭐ That is the same failure as `is_active_section` returning False for an unrecognised name and
-# as the schema check exempting docs with no sections: a change to the STRUCTURE silently turns
-# off a READER of that structure, and the reader keeps printing a passing result.
-#
-# Legacy `~~` lines still exist across the corpus, so both are matched, not one replaced.
 STRUCK_RE = re.compile(r"~~(.+?)~~|^\s*[-*+]\s*\[[xX]\]\s+(.+?)\s*$")
 
 
@@ -99,10 +54,6 @@ def contained_fraction(needle, hay):
     if not needle:
         return 0.0
     sm = difflib.SequenceMatcher(None, needle, hay)
-    # Only runs of >=4 characters count. Scattered single-character matches - a shared space,
-    # an 'e', a digit - are noise, and for a short needle there are enough of them to push an
-    # unrelated line to 89%. Measured: two lines with nothing in common but a date scored 89%
-    # by accumulating fragments. A run of four characters is a word, not a coincidence.
     return sum(b.size for b in sm.get_matching_blocks() if b.size >= 4) / float(len(needle))
 
 
@@ -216,21 +167,11 @@ def main():
             # An unchanged strike leaves the inner text intact SOMEWHERE in the old line.
             if any(inner and inner in norm(r) for r in cand):
                 continue
-            # CONTAINMENT, not similarity. The first version used SequenceMatcher.ratio(),
-            # which is symmetric and length-penalised - so a short struck phrase compared
-            # against the long line it came from scored BELOW threshold, and the one real
-            # specimen in the corpus was missed while a numeric table row matched at 55%.
-            # The question is not "are these two lines alike" but "how much of the STRUCK
-            # TEXT came from this old line", which is asymmetric by nature.
             best, best_frac = None, 0.0
             for r in cand:
                 f = contained_fraction(inner, norm(r))
                 if f > best_frac:
                     best, best_frac = r, f
-            # 0.75, set by reading every hit on five real documents rather than by tuning
-            # against one. Below three-quarters containment the old line is not plausibly the
-            # source of the struck text at all: measured, everything under it was two
-            # unrelated lines sharing a date or a stock phrase.
             if best is None or best_frac < 0.75:
                 continue                  # a genuinely NEW struck item, not a reword
             ratio = best_frac
@@ -258,10 +199,6 @@ def main():
             print("  %d DONE stamp(s) examined; every one is consistent with its commit." % seen)
             print()
         else:
-            # NOT "all clean". Zero stamps examined means the convention has not been adopted
-            # here, which is a different fact and needs to print differently - the exact
-            # "nothing to look at vs looked and found nothing" collapse this session named
-            # three times, reproduced inside the check built to close it, within the minute.
             print("  NO DONE stamps found in this range - 0 examined, so this proves NOTHING")
             print("  about the document. The `- [x] text - DONE dd-Mon-yyyy @ HH:MM` form is")
             print("  new; until sub-items carry it there is nothing here to verify.")

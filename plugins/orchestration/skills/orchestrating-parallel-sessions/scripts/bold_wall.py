@@ -2,22 +2,14 @@
 
 <!-- subject: orchestration -->
 
-THE THRESHOLD COMES FROM THE CORPUS, NOT FROM TASTE. Measured across 9,954 prose paragraphs in
-one project's long-lived documents, the share of each paragraph that sits inside `**...**`:
+THE THRESHOLD COMES FROM MEASURING, NOT FROM TASTE. Measure the share of each paragraph in your
+long-lived documents that sits inside `**...**`. It tends to have two peaks, because wrapping a
+whole paragraph in bold is a distinct habit rather than the far end of over-emphasis. 80% is a
+starting value for the trough between the peaks. Measure your own documents before changing it.
 
-      0- 9%  2463      50-59%   725
-     10-19%  1522      60-69%   345
-     20-29%  1724      70-79%   176   <- the trough
-     30-39%  1559      80-89%    46
-     40-49%  1074      90-99%   320   <- a SECOND population
-
-The distribution has two peaks. It decays steadily to 176 and then rises again to 320, so
-wrapping a whole paragraph in bold is a distinct habit rather than the far end of over-emphasis,
-and 80% sits in the trough between the two. Measure your own documents before changing it.
-
-IT READS THE DIFF, NEVER THE DOCUMENT. 366 of those paragraphs were already over the line. A gate
-reading whole documents would refuse everything on its first day and be switched off within the
-week. Scoped to what a landing ADDS, the backlog is untouched and nobody is blocked by history.
+IT READS THE DIFF, NEVER THE DOCUMENT. A gate reading whole documents would refuse every old
+paragraph over the line on its first day and be switched off within the week. Scoped to what a
+landing ADDS, the backlog is untouched and nobody is blocked by history.
 
 WHAT GOOD BOLD LOOKS LIKE. Bold opens a paragraph and states its premise, the way a bullet would
 summarise it, so that a reader skimming only the bold can decide whether to read the rest. Three
@@ -32,16 +24,9 @@ THE UNIT IS THE LIST ITEM WHERE THERE IS ONE, NOT THE PARAGRAPH. A bulleted list
 bullet opens with a bold label is the shape being asked for; measured as one paragraph it looks
 like thirteen scattered bold runs.
 
-WHY ONE RULE BLOCKS AND THE OTHERS ONLY REPORT, measured over 300 landings:
-
-      >= 80% bold (the wall)                30.0% of landings
-      bold does not open the unit           41.0%
-      no lead AND 3+ runs                    7.7%   <- blocks
-      2+ bold runs (the literal rule)       84.7%   <- cannot block
-
-Blocking the literal rule would refuse five landings in six on the day it shipped, and a gate
-nobody can land past gets switched off rather than obeyed. So the rare unambiguous shape - bold
-scattered three or more times with nothing opening the unit, where no run is the summary -
+WHY ONE RULE BLOCKS AND THE OTHERS ONLY REPORT. Two or more bold runs in a unit is common, and a
+gate nobody can land past gets switched off rather than obeyed. So the rare unambiguous shape -
+bold scattered three or more times with nothing opening the unit, where no run is the summary -
 refuses; the common one is counted and shown on every landing, so that a decision to tighten can
 be made from the counts.
 

@@ -123,6 +123,10 @@ def git_workspace(parent, name="ws", files=None):
     `files` is {relative path: text} committed as the first commit (a README if omitted).
     Returns the repo path. Nothing in it can reach a real remote.
     """
+    # Imported here and not at the top of this file: orchdoc.py imports this module and runs
+    # in the pre-commit hook, where it needs the GIT_DIR and GIT_INDEX_FILE that git_guard
+    # removes.
+    import git_guard  # noqa
     parent = pathlib.Path(parent)
     ws, bare = parent / name, parent / (name + ".git")
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], capture_output=True,

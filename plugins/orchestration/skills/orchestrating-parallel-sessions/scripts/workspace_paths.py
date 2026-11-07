@@ -6,37 +6,16 @@
 <!-- route-tags: workspace path portable shippable root memory scripts resolve hardcoded
      claude home secrets worktrees main checkout project slug cloud linux second machine -->
 
-⛔ THE REASON PHASE 1-3 SHIPPED NOWHERE. Every gate was wired with
-`WS = Path(r"C:\\Users\\<the-owner>\\<the-workspace>")` - one machine's absolute path, spelled
-out. That is not a configuration detail, it is
-the thing that made the whole decision tree workspace-local by construction: a script carrying
-one machine's absolute path cannot run in a skill, a fresh clone, a worktree or a cloud
-session. The human asked what percentage had shipped. The answer was zero, and this was why.
-
-⭐ FOUR SOURCES, MOST SPECIFIC FIRST, and each one is a fact rather than a guess:
-
-  1. `$CLAUDE_WORKSPACE` - an explicit override always wins
-  2. `git rev-parse --show-toplevel` - the repo the CALLER is actually in. This is what makes
-     a worktree work: knowledge_gate once read DEV-DOCS-INDEX from the main checkout while
-     committing from a worktree, and printed an instruction impossible to satisfy
-  3. walk up from THIS file - these scripts live at `<workspace>/.shared/scripts/`, so the
-     grandparent is the workspace whenever the file is where it belongs
-  4. the historical default, `<home>/<your-workspace>` - so nothing breaks on the one machine
-     that has it (found through the home folder since D64 Phase 1, not spelled out)
-
-The memory dir gets the same treatment via `$CLAUDE_MEMORY_DIR`.
+The workspace comes from, most specific first: `$CLAUDE_WORKSPACE`; `git rev-parse
+--show-toplevel`; walking up from this file, which lives at `<workspace>/.shared/scripts/`.
+The memory dir can be set the same way, with `$CLAUDE_MEMORY_DIR`.
 
 Import and use; never re-derive:
 
     from workspace_paths import WS, MEM, SCRIPTS
 
-THE ONE PATH MODULE (D64 Phase 1, o9L983, 2026-10-02). Scripts, hooks and scheduled tasks must
-find their files on this laptop, in a Linux cloud VM (the repo cloned to a path such as
-`/home/user/<private-repo>`) and on a second Windows computer whose user name differs.
-So no name below spells out a home folder. Each reads its environment variable first:
-
   name            variable                  default
-  WS              CLAUDE_WORKSPACE          the tree the caller is in (the four sources above)
+  WS              CLAUDE_WORKSPACE          the tree the caller is in
   MAIN_CHECKOUT   (follows WS)              the main checkout of WS's repo: the parent of
                                             `git rev-parse --git-common-dir`; WS itself when WS
                                             is not a worktree
@@ -55,42 +34,8 @@ WS OR MAIN_CHECKOUT? They differ only when the caller runs inside a worktree.
   - WS is the tree you are working in: the files a commit from here carries, the index a
     pre-commit guard reads, the docs and indexes you regenerate.
   - MAIN_CHECKOUT is what exists once per machine and only in the main checkout: gitignored
-    folders such as `.shared/secrets`, `.git/hooks`, the sibling product repos, the worktrees
+    folders such as `<your-secrets-folder>`, `.git/hooks`, the sibling product repos, the worktrees
     folder, and the name of the memory folder.
-
-WHY MEM FOLLOWS THE MAIN CHECKOUT. Claude Code keeps a project's memory under
-`<CLAUDE_HOME>/projects/<slug of the project path>/memory`, and a session started inside a
-worktree uses the main checkout's folder: measured 2026-10-02, a session whose working
-directory was `.worktrees\\o9-w65b` had `C--Users-<name>-Claude-Projects\\memory` (the laptop's
-user name for <name>) as its memory folder. So the slug is taken from MAIN_CHECKOUT, never
-from `--show-toplevel`.
-
-CLAUDE_WORKSPACE DOES NOT MOVE MEM (o9L985 finding 2). That variable points the tools at
-another tree, most often a test's sandbox clone (test_knowledge_process.py sets it and nothing
-else, then runs this checkout's tools with their working directory in the clone). The module
-before D64 Phase 1 kept MEM where it was when it was set, and so does this one: with
-CLAUDE_WORKSPACE set, MEM is named after the main checkout of the workspace that holds THIS
-FILE (the historical default when the file is not in a workspace), never after the folder the
-variable names or the caller's directory. MAIN_CHECKOUT, SECRETS_DIR and WORKTREES_ROOT still
-follow WS. A caller that wants MEM moved sets CLAUDE_MEMORY_DIR, the explicit setting for it.
-
-WHY SECRETS_DIR FOLLOWS THE MAIN CHECKOUT. `.shared/secrets/` is gitignored, so a worktree has
-no copy of it (measured 2026-10-02 in `.worktrees/o9L983-paths-base`). SECRETS_DIR is a PATH
-ONLY: nothing in this module opens, lists or reads it.
-
-THE SLUG RULE (`project_slug`), read from the Claude Code CLI on 2026-10-02 (the function that
-names a folder under `<CLAUDE_HOME>/projects`): every character of the path that is not an
-ASCII letter or digit becomes `-` (one per UTF-16 code unit, as JavaScript counts); a result
-longer than 200 characters is cut to 200 and gets `-` plus the base-36 absolute value of the
-path's 32-bit string hash (h = h * 31 + code unit). Checked against the 47 folder names in
-that folder on 2026-10-02: 46 follow it; the 47th, made 2026-03-21, kept a space, from an older
-CLI. Examples: `C:\\Users\\<name>\\<your-workspace>` -> `C--Users-<name>-Claude-Projects`;
-`/home/user/<private-repo>` -> `-home-user-<private-repo>`.
-
-OVERRIDES. A variable that is set and not empty wins, even when its folder does not exist yet:
-falling back to the real folder would point a test that set it at the human's real files. The two
-older variables, CLAUDE_WORKSPACE and CLAUDE_MEMORY_DIR, count only when their folder exists,
-as they always have. `~` in a value is expanded.
 
 CLI:  workspace_paths.py          every name, and whether WS is a real workspace (exit 0 or 1)
       workspace_paths.py --json   every name as a JSON object (exit 0)
@@ -104,8 +49,6 @@ except ImportError:  # a partial delivery must not take the tool down
     def flags(extra=0):
         return extra
 
-# Source 4. It was the laptop's path spelled out; since D64 Phase 1 it is found through the home
-# folder, which gives the same path on the laptop and a likely one on a second computer.
 _HISTORICAL_WS = pathlib.Path.home() / "<your-workspace>"
 
 ENV_WORKSPACE = "CLAUDE_WORKSPACE"
@@ -207,9 +150,7 @@ def _read_first_line(path):
 
 
 def _common_from_files(path):
-    """The git common dir of the repo that holds `path`, read from the files git writes, with
-    no git process: for when git is missing, times out or refuses (o9L985 finding 1).
-
+    """
     Walks up from `path` to the first `.git`, as git does. A `.git` FOLDER is the common dir.
     A `.git` FILE holds `gitdir: <git dir>` (absolute, or relative to the folder holding the
     file); a worktree's git dir holds a `commondir` file naming the common dir (relative to the
@@ -316,7 +257,7 @@ def project_slug(path):
     """The folder name Claude Code gives the project at `path` under `<CLAUDE_HOME>/projects`.
 
     Pass the path as Claude Code sees it (a Windows path on Windows, a POSIX path on Linux);
-    it is used exactly as given. See THE SLUG RULE in the module docstring.
+    it is used exactly as given. Each character that is not an ASCII letter or digit becomes `-`.
     """
     text = os.fspath(path)
     slug = "".join(ch if ("a" <= ch <= "z" or "A" <= ch <= "Z" or "0" <= ch <= "9")
@@ -333,13 +274,12 @@ def memory_dir_for(project, claude_home=None):
     return home / "projects" / project_slug(project) / "memory"
 
 
-# Kept so any caller that named it still works; resolve_memory() no longer reads it.
 _HISTORICAL_MEM = memory_dir_for(_HISTORICAL_WS, pathlib.Path.home() / ".claude")
 
 
 def _memory_project(main):
     """The checkout whose slug names MEM: `main`, the main checkout of WS, unless
-    `$CLAUDE_WORKSPACE` chose WS. See CLAUDE_WORKSPACE DOES NOT MOVE MEM in the docstring."""
+    `$CLAUDE_WORKSPACE` chose WS."""
     if _ws_override() is None:
         return main
     return main_checkout(_from_file() or _HISTORICAL_WS)

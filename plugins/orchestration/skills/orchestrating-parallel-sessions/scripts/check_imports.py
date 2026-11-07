@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Import every Python file beside this one. If a shipped script cannot start, say so.
 
-WHY THIS EXISTS. On 2026-09-17 six scripts in this repository failed on import - route.py,
+WHY THIS EXISTS. Six scripts in this repository failed on import - route.py,
 corpus.py, knowledge_gate.py, knowledge_pages.py, dev_docs_index.py and commitment_guard.py -
 because a module they all import at the top had never been published. route.py is the first
 thing this repository's documentation tells a reader to run, and it had never run for anyone

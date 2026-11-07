@@ -4,29 +4,6 @@
 
 <!-- route-tags: seed lane launch hook citation propagation worker prompt -->
 
-THE FINDING THIS IMPLEMENTS (o9L10, the adversarial pass, as its single best unseen idea):
-**the lane-launch junction is interceptable.** Launching a worker is a Bash tool call, so a
-PreToolUse hook can refuse a seed that asserts knowledge without citing where it came from.
-
-THE DAMAGE IT PREVENTS (o10, verbatim): *"an inherited fact repeated into N worker prompts is N
-copies of an unverified claim, and none of them carry their own provenance."* Their bootstrap
-said *"v1 is CURRENT; v2 and v5 are DEPRECATED"*; they propagated it into FOUR lane seeds without
-verifying it, then repeated it to the human - who immediately asked a question the inherited one-liner
-could not answer. **A registry entry has ONE home to correct. Four seeds have four, and the
-author has to remember all four.**
-
-⭐ WHY A HOOK AND NOT A RULE. The only mechanism that demonstrably changes behaviour here is one
-that arrives INSTEAD of the result: `block_python_heredoc.py` stopped two orchestrators seven
-times in one day with immediate compliance. `W-STRIKEDONE` detected its defect 14 times per run
-for weeks and was ignored. Same detection, opposite outcome - one refuses, one reports.
-
-⛔ SCOPED DELIBERATELY NARROW, because a guard that fires on correct work is the failure mode
-this workstream hit four times in one day. It fires ONLY when a seed does BOTH:
-  1. asserts a checkable fact about a known operational subject (a vendor, an endpoint, a
-     credential, a deploy target) - in the present tense, as a given, and
-  2. cites NOTHING - no file path, no `route.py`, no memory note, no URL.
-A seed that asks a lane to FIND something, or that carries one citation, passes untouched.
-
 Exit 0 = allow. Exit 2 = refuse (stderr shown to the model).
 """
 import json
@@ -34,9 +11,6 @@ import pathlib
 import re
 import sys
 
-# Paths are RESOLVED, not hardcoded - see workspace_paths.py. A script carrying one
-# machine's absolute path cannot run in a skill, a fresh clone, a worktree or the cloud,
-# which is why none of this shipped anywhere until 2026-08-13.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
 
@@ -49,19 +23,6 @@ except Exception:
 # A lane launch: `claude -p ...`. Not `claude mcp`, not `claude setup-token`.
 LAUNCH_RE = re.compile(r"\bclaude\b[^|;&\n]*?\s-p\b")
 
-# Operational subjects where an unverified inherited claim has actually cost us.
-#
-# ⛔ TWO HALVES, AND ONLY ONE OF THEM TRAVELS. The generic half below - `token`, `webhook`,
-# `migration`, `staging` - is true of any workspace that runs anything. The other half is a list
-# of THIS workspace's vendors and products, which is vocabulary, not mechanism: a different
-# corpus has entirely different names, and hardcoding ours here means the gate is either wrong
-# or silent everywhere else. So the vendor half is read from facets_vocabulary.json, the same
-# file facets.py and block_retired_path.py already treat as the one place a workspace's own
-# nouns are declared.
-#
-# ⭐ An absent vocabulary is a REAL STATE: the generic half still fires. That is the right
-# degradation for a guard - a narrower gate, never a broken one, and never an exception thrown
-# inside a PreToolUse hook that would take a legitimate launch down with it.
 GENERIC_SUBJECTS = ["oauth", "api key", "token", "webhook", "endpoint", "migration",
                     "production", "staging", "prod db", "database"]
 
@@ -149,14 +110,12 @@ def main():
     print("", file=sys.stderr)
     print("An inherited fact repeated into N worker prompts is N copies of an unverified claim,",
           file=sys.stderr)
-    print("and none of them carry provenance. That is not hypothetical: four seeds went out",
+    print("and none of them carry provenance, so the claim cannot answer the first question",
           file=sys.stderr)
-    print("carrying 'the payments API v1 is CURRENT, v2/v5 DEPRECATED' from an unchecked seed,",
-          file=sys.stderr)
-    print("and the claim could not answer the first question asked of it.", file=sys.stderr)
+    print("asked of it.", file=sys.stderr)
     print("", file=sys.stderr)
     print("DO ONE OF THESE - each takes a line:", file=sys.stderr)
-    print("  1. CITE it.  python .shared/scripts/route.py <subject>   then name the artifact",
+    print("  1. CITE it.  python <scripts>/route.py <subject>   then name the artifact",
           file=sys.stderr)
     print("     the fact came from, so the lane can re-read the source rather than trust you.",
           file=sys.stderr)

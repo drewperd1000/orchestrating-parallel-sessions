@@ -14,14 +14,6 @@ A `.git` FOLDER there makes that folder the main checkout. A `.git` FILE (a work
 `.git`), and the main checkout is its parent. A file that cannot be read, or a path in no
 workspace, gives `<home>/<your-workspace>`, which is what a cloud session or a second computer
 has. workspace_paths.checkout_of() calls this, so the two cannot disagree.
-
-⛔ THE FOUR HOOKS HOLD A COPY OF THE FUNCTION BELOW, NOT AN IMPORT OF THIS FILE (o9L1391,
-2026-10-21). A hook runs on every tool call or reply. Importing workspace_paths costs a git
-process plus pathlib, subprocess and ctypes (12 to 42 ms per hook); importing this file costs
-3 to 4 ms, almost all of it Python scanning the 679-file scripts folder for ONE module and
-compiling it (PYTHONDONTWRITEBYTECODE is set, so nothing is cached). A copy costs under 1 ms.
-The copy sits between `# BEGIN checkout_of` and `# END checkout_of` markers, named
-`_checkout_of`; test_workspace_paths.py fails if a copy differs from the function here.
 """
 import os
 

@@ -2,31 +2,10 @@
 
 <!-- subject: claude-tooling -->
 
-WHY. Over one session this pattern produced the same defect at least four times: a regex or a
-Windows path written into Python source that was inlined in a shell heredoc, where the author
-lost track of which escaping layer they were in.
-
   "\\b"           -> a literal 0x08 BACKSPACE byte, so the regex matched nothing, silently
   "C:\\Users\\..." -> SyntaxError: 'unicodeescape' codec can't decode
   "\\d"           -> SyntaxWarning: invalid escape sequence
   "\\\\b" vs "\\b"  -> an assertion comparing two strings that differ only in escaping
-
-⭐ THE HEREDOC IS NOT THE BUG, WHICH IS WHY THIS BLOCK IS NARROW. A quoted heredoc (<<'EOF')
-passes its body through verbatim; nothing is mangled in transit. What actually fails is that
-writing Python inside a shell command puts TWO escaping layers in front of one string, and the
-author reasons about one of them. The block is therefore not "heredocs are dangerous" - it is
-"do not hand-escape source code when a file needs no escaping at all."
-
-THE ALTERNATIVE COSTS NOTHING AND IS STRICTLY BETTER: write the script with the Write tool and
-run it. Zero escaping layers, the file survives for debugging, a syntax error surfaces before
-anything executes, and the source is reviewable afterwards instead of living only in a shell
-history. Measured across one session: every heredoc failure stopped the moment the author
-switched, and none recurred.
-
-⚠️ DELIBERATELY NARROW - THREE CONDITIONS, ALL REQUIRED:
-  1. the command invokes python
-  2. it feeds a heredoc
-  3. THE HEREDOC BODY CONTAINS A BACKSLASH
 
 Condition 3 is what keeps this from becoming a nuisance. A heredoc carrying a commit message,
 a JSON blob or plain prose has no backslashes and passes untouched - and those are the uses the

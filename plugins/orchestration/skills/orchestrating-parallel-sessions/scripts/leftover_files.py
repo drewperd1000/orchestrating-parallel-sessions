@@ -6,13 +6,6 @@
 <!-- route-tags: leftover leftovers untracked deleted moved renamed deliver never deletes
      generator dev-docs-index knowledge-pages index-regen nightly landing origin main history -->
 
-o9:W149, ruled by o9 on 2026-10-03 at about 17:50 PT, on the must-fix lane o9L1027 found in the
-nightly landing (land_generated_indexes.py). deliver.py writes files and never deletes them, so
-when a session deletes or moves a marked doc on origin/main, the old file stays in the main
-checkout as an untracked file. The generators read the disk, so they listed it again: that
-night's commit put back the row the session removed, and a moved doc got two rows, one at a
-path origin/main no longer has. The row count went up, so the shrink guard did not fire.
-
 THE TEST. A file is a LEFTOVER of `base` in `repo` when all three hold:
   1. it is in the repo's own tree: no folder between the repo's top and the file holds a
      `.git`. A nested product repo has its own history, and the memory store is another repo.
@@ -25,16 +18,12 @@ THE TEST. A file is a LEFTOVER of `base` in `repo` when all three hold:
 A new untracked doc whose path the history never held is NOT a leftover, and keeps its row.
 
 TWO STRICTNESSES, ONE TEST.
-  strict  `base` given. The nightly land step passes the origin/main it pinned. When the test
+  strict  `base` given. A landing job passes the origin/main it pinned. When the test
           cannot run (a git error, a base that does not resolve, a folder that is not the top
-          of a repository) CannotCheck is raised, and the land step refuses that output.
-  plain   `base` None: a generator run by hand, or by self-heal's two checks. The base is
+          of a repository) CannotCheck is raised, and the job refuses that output.
+  plain   `base` None: a generator run by hand. The base is
           origin/main. When the test cannot run, nothing is dropped, which is what the
           generators did before this module, so a plain run never fails where it worked.
-
-⛔ ONLY EVER SKIPS. Nothing here deletes, moves or rewrites a file: a leftover stays on disk for
-a person to clear. Nothing here prints a path, and a git message that names a folder whose
-files outsiders write (private_folders.py) is withheld from CannotCheck; callers report counts.
 """
 import os
 import subprocess
@@ -47,10 +36,8 @@ except ImportError:  # a partial delivery must not take the tool down
 
 import private_folders  # the folders outsiders write, ONE definition
 
-#: What a plain run checks against: the ref the nightly land step pins as its base.
+#: What a plain run checks against: the ref a landing job pins as its base.
 PLAIN_BASE = "refs/remotes/origin/main"
-#: Seconds for each git call. Measured 2026-10-03 on this workspace's 4,757 commits: the
-#: deletion query took 0.2 s.
 TIMEOUT = 60
 #: Paths per `git log`, so its command line stays far below Windows' 32,767 characters.
 BATCH = 100
@@ -172,4 +159,4 @@ def drop(arts, repo, base=None, skipped=None):
 def note(n):
     """The one line a generator prints for `n` leftovers skipped: counted, never named."""
     return ("   %d leftover file(s) skipped: untracked, and origin/main's history deleted their "
-            "paths (deliver.py writes and never deletes); left on disk for a person to clear" % n)
+            "paths (the delivery step writes and never deletes); left on disk for a person to clear" % n)

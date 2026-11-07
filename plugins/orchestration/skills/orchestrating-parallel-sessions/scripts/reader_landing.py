@@ -1,32 +1,6 @@
 #!/usr/bin/env python3
-"""The OrchDoc Reader's landing worker (o9:W123): it puts saved changes on origin/main in the
-background, so a save in the Reader returns as soon as the change is written to disk.
-
+"""
 <!-- subject: orchestration -->
-
-The human, 2026-10-01: *"Something is making the OrchDoc Reader lag very badly. Every time I add an
-instruction or make a change there, the pause can last as long as 30 seconds ... It needs to be
-pushed to whatever background process that can hold it while i continue to work with it."*
-
-WHAT TOOK THE TIME (measured 2026-10-01). Each save ran `orchdoc.py note` (or `instruct`, or
-`today`) and waited for all of it: the write itself took 7-115 ms, and then the same process
-landed the change - a `git fetch`, a commit and a `git push` to GitHub, three attempts when main
-moved in between. That was 3-6 s on a quiet day and up to about 27 s when main was busy, and the
-page waited the whole time.
-
-HOW IT WORKS NOW.
-  * A save runs `orchdoc.py note|instruct|today --queue-landing`. Under the doc's lock, that
-    writes one job file into `.shared/state/reader-landing/` and then the doc, and returns.
-  * This worker - one thread inside the Reader - runs `orchdoc.py land-job --job <file>` on the
-    jobs one at a time. `land-job` lands exactly the text that save wrote, with that save's own
-    commit subject, and deletes the job file only after the commit is on origin/main.
-  * A failure keeps the job file, and the change stays on disk. The job is tried again after a
-    pause that starts at 3 seconds and doubles up to 5 minutes. A job that fails twice for a
-    reason a retry cannot fix (main holds a conflicting change) is PARKED: it is still retried
-    every 5 minutes and the page shows it, and later changes to OTHER notes of the same doc land
-    past it. A later change to the same note or entry waits behind it.
-  * When the Reader starts, the first scan finds every job left by a crash, a restart or a
-    failed push, and lands it.
 
 ORDER. Jobs of one doc land oldest first, one after another; a job is never landed while an
 older job of its doc is waiting for its retry pause, so the commits reach main in the order the
@@ -34,12 +8,6 @@ saves were made.
 
 Nothing here writes a doc or a commit itself. `orchdoc.py` stays the only writer, with its lock
 and every check it already had.
-
-THE COPIES (`CopyWatch`, o9:W123). Measured 2026-10-01: o9's doc in the shared checkout stopped
-following main at about 17:57, and every save the human made after that went into that copy and
-nowhere else, while the page went on showing it as if it were current. Nothing said so. The
-watcher compares each OrchDoc on this computer with main every 30 seconds and tells the page
-when one has stopped following it, and since when, so the page can say so at the top.
 """
 import fnmatch
 import hashlib
@@ -76,9 +44,6 @@ JOB_TIMEOUT = 900          # seconds one `land-job` may run before it is stopped
 TEMP_MAX_AGE = 600         # seconds before a leftover temp file in the queue is removed
 DONE_KEEP = 900            # seconds a landed change stays in `status()["done"]`, for the page
 DONE_MAX = 200             # ...and at most this many of them
-#: o9cL1: a landing starts this many seconds after the latest save the Reader told the worker
-#: about (READER_LAND_DEBOUNCE), so a burst of saves is not landed one push per save while
-#: the human is still working, and the page is not competing with `git` for the processor.
 LAND_DEBOUNCE = 2.0
 #: Windows: the priority class each `land-job` runs at, with its git calls (they inherit it).
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
@@ -91,8 +56,7 @@ COPY_SCAN = 30.0           # READER_COPY_SCAN: seconds between looks at the copi
 COPY_CONFIRM = 20.0        # READER_COPY_CONFIRM: a copy that stopped following main is shown
                            # once it has stayed so this long
 COPY_BEHIND_GRACE = 600.0  # READER_COPY_BEHIND_GRACE: a copy that is only an older version of
-                           # main is shown once it is this far behind; deliver.py refreshes it
-COPY_DEPTH = 200           # versions of a doc listed (o9's doc had 28 in the 24 hours to 2026-10-01)
+COPY_DEPTH = 200
 COPY_PAST_BEST = 12        # versions read past the closest one found, before the search stops
 #: Must equal `orchdoc.READER_TIPS_REL` (the test asserts it): the Reader's record of its own
 #: last write to each doc, which tells a copy waiting for its saves to land from a stuck one.
@@ -160,12 +124,7 @@ class LandingWorker:
         return self
 
     def notify(self):
-        """A save was just queued: look now, and retry a failed landing without waiting.
-
-        o9cL1: the copy watcher is NOT poked here any more. A save leaves its doc with a queued
-        job, which the watcher reports as "sending" without reading git, so a look now told the
-        page nothing new and cost a `git log` and a read of the doc in this process while the human
-        was typing. It is poked after each landing (`_record`), when the copy can have changed."""
+        """A save was just queued: look now, and retry a failed landing without waiting."""
         now = time.monotonic()
         with self._mx:
             for st in self._state.values():
@@ -218,7 +177,6 @@ class LandingWorker:
         return out
 
     def _queued_blobs(self):
-        """o9:W164: {doc file name: {blob id of the text each queued change of it wrote}}."""
         out = {}
         try:
             names = [p.name for p in self.dir.iterdir() if JOB_NAME_RE.match(p.name)]
@@ -234,9 +192,8 @@ class LandingWorker:
         return self._thread is not None and self._thread.is_alive()
 
     def brief(self):
-        """(a landing is running now, how many changes are queued), for the Reader's timing line
-        on every request (o9:W150). One folder listing; reads no job file and waits on nothing
-        but this object's own short lock."""
+        """One folder listing; reads no job file and waits on nothing but this object's own short
+        lock."""
         try:
             waiting = sum(1 for n in os.listdir(str(self.dir)) if JOB_NAME_RE.match(n))
         except OSError:
@@ -315,8 +272,6 @@ class LandingWorker:
                     "entry": str(was.get("entry") or entry_now),
                     "nid_now": nid_now, "entry_now": entry_now,
                     "op": str(op.get("op") or ""),
-                    # o9:W164: the text this save wrote, as a blob id: a copy that is exactly
-                    # this is explained by the job (see `CopyWatch._judge`).
                     "blob": blob_id(job["snapshot"].encode("utf-8"))
                             if isinstance(job.get("snapshot"), str) else ""}
             why = None
@@ -397,8 +352,6 @@ class LandingWorker:
         res, why = None, ""
         try:
             env = dict(os.environ, ORCHDOC_WORKSPACE=str(self.workspace))
-            # cwd = the workspace: orchdoc reads which branch is canonical from the repo it
-            # runs in, and the Reader may have been started from anywhere.
             p = subprocess.Popen([self.python, str(self.orchdoc), "land-job",
                                   "--job", str(self.dir / name), "--json"],
                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -443,9 +396,6 @@ class LandingWorker:
         now = time.monotonic()
         with self._mx:
             if res is not None and res.get("restored"):
-                # Main refused this change and the lander put this computer's copy back as it
-                # was (o9:W116), so nothing is left to land. Final, not a failure to retry: the
-                # page shows the reason on the entry.
                 self._state.pop(name, None)
                 wall = time.time()
                 self._done = [d for d in self._done if wall - d["at"] < DONE_KEEP][-DONE_MAX:]
@@ -581,32 +531,6 @@ class LandingWorker:
         return out
 
 
-# ==========================================================================================
-# ⭐ IS EACH COPY STILL FOLLOWING MAIN? (o9:W123 (a))
-#
-# o9's doc on this computer stopped following main at about 17:57 on 2026-10-01: a Do-today item
-# saved there never landed, deliver.py does not overwrite a copy that holds a change main lacks,
-# and the copy then missed every landing after it. The page went on showing it, the human's saves went
-# into it, and nothing anywhere said the copy was stale.
-#
-# Each pass reads which version of each doc main has (`git rev-parse`, `git ls-tree`: no file
-# contents) and the blob id of the copy on disk, worked out here without git. Then each copy is:
-#   * "current"  the same blob as main's;
-#   * "sending"  what this Reader last wrote, on top of a version of main, while its changes are
-#                still queued: they land, and the copy is refreshed when the last one has;
-#   * "behind"   an older version of main, word for word: deliver.py brings it up to date;
-#   * "ahead"    every change main made, and changes of its own that are not on main;
-#   * "stopped"  anything else: it lacks changes main made, and nothing here will bring them in.
-# For "behind" and "stopped" the watcher works out the last version of main the copy had, and
-# so the time of the first change on main it lacks: when it stopped following main. A change on
-# main the copy already has (a save made here, landed without the copy being refreshed after)
-# is the copy's own, and is not counted as one it lacks.
-# The page is told of a "stopped" copy after COPY_CONFIRM seconds, and of one "behind" or
-# "sending" while it lacks changes made on main more than COPY_BEHIND_GRACE seconds ago.
-# "main" is the workspace's `ref` (origin/main) as of its last fetch: deliver.py and every
-# landing fetch it. The watcher itself never fetches, never writes, and reads file contents
-# from git only for a copy that is not current, sending or behind.
-# ==========================================================================================
 def _low_priority():
     """creationflags for a background `land-job`: below-normal priority on Windows, so the
     browser and the Reader keep the processor while it fetches, rebases and pushes."""
@@ -652,8 +576,6 @@ class CopyWatch:
         self.ref = ref
         self.tips = self.workspace / TIPS_REL
         self.queued = queued or (lambda: {})
-        # o9:W164: {doc: {blob ids of the texts this Reader's queued changes wrote}}. Without it
-        # no queued change is known to explain a copy.
         self.queued_blobs = queued_blobs or (lambda: {})
         self.log = log or (lambda msg: None)
         self.every = _env_seconds("READER_COPY_SCAN", COPY_SCAN)
@@ -859,15 +781,6 @@ class CopyWatch:
                (run or {}).get("base"))
         hit = self._judged.get(key)
         if hit is None and nqueued and run is None and disk in self._own.get(name, ()):
-            # o9cL1: this Reader's saves to this doc are still queued and this text of the copy
-            # is not one its own record names (`run`), so the full judge (a `git log` of the doc
-            # and reads of several versions of it) has nothing to go on but the job count. Not
-            # kept, so it is judged in full once the queue is empty.
-            # ⛔ o9:W164: ONLY WHEN A QUEUED JOB OF THIS READER WROTE EXACTLY THIS TEXT. Any queued
-            # job used to make every copy of that doc "sending", so a copy that fell behind main
-            # for another reason (or that someone else wrote) was neither reported nor alerted
-            # for as long as any job was queued or parked. Otherwise the full judge runs, which
-            # says "behind" or "stopped" and alerts as it always did.
             return {"state": "sending"}
         if hit is None:
             hit = self._judge_new(path, disk, ref_sha, ref_blob, head_blob, nqueued, tip, run)
@@ -883,8 +796,6 @@ class CopyWatch:
         base = (run or {}).get("base")
         # 1. This Reader's own saves, on top of a version of main, still on their way.
         if nqueued:
-            # o9:W164: a copy with no record of the Reader's writes was "sending" whatever it
-            # held. Now only a text a queued job wrote is (`_judge`); any other is judged below.
             if not tip.get("tip") and disk in self._own.get(path.name, ()):
                 return {"state": "sending"}   # queued before the record existed: cannot tell
             if run is not None and base in blobs:
