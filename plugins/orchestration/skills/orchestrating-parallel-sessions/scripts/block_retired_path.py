@@ -5,12 +5,10 @@
 <!-- access: mcp -->
 <!-- route-tags: retired removed hook pretooluse intercept mcp stale footgun redirect remedy -->
 
-The workspace owner, 2026-08-13: *"is this a hook, or is this counting on prose?"*
-
-It was prose, and he was right to ask. The `<!-- retired: -->` facet makes a doc FINDABLE - real
-code, `facet_aliases()` in route.py. But the redirect itself was a banner an agent had to read
-and obey, and **the original failure was never a search.** Sessions called the removed
-`mcp__<platform>__*` tools DIRECTLY. A banner in a document nobody opened stops nothing.
+The `<!-- retired: -->` facet makes a doc FINDABLE - real code, `facet_aliases()` in route.py.
+But the redirect itself was a banner an agent had to read and obey, and **the original failure
+was never a search.** Sessions called the removed `mcp__<platform>__*` tools DIRECTLY. A banner
+in a document nobody opened stops nothing.
 
 ⛔ THE PATTERN THIS WORKSPACE KEEPS RELEARNING: a deploy platform's MCP integration was
 documented as removed in THREE places and sessions kept reaching for it for weeks. Three copies
@@ -40,7 +38,6 @@ import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from mentions import executable_part  # noqa: E402
 
-# ⛔ ONE SOURCE, READ - NOT A SECOND COPY (the human, 2026-08-13: *"Can it programmatically check
 # for retired: [KW]?"*). The first version hardcoded its own retired list here, which is a
 # second copy of what `facets.py` already declares - and two copies of one vocabulary is the
 # contract defect this workspace keeps rediscovering. It would have drifted the first time
@@ -107,13 +104,13 @@ def _instead(entries):
 # text, then picks the target. So does a target written as an id, or any name not on the list.
 # And the allowance covers only the plain form of the command - see _plain_allowed_use().
 #
-# ⭐ A DOCUMENTED RECIPE IS NOT A NESTED COMMAND (o9 W97 second review, 2026-09-28). The allowed
-# use is often run after reading a credential from a file, and the documented way to read it is
-# a `$(...)`. The plain form refuses every `$(...)`, so it refused the documented command. The
-# entry lists each such recipe as a pattern under "value_recipes", and each match is read as one
-# plain word before the form is judged: that recipe passes, and any other `$(...)` still fails.
-# The patterns live in the vocabulary, never here, because the recipe names a vendor. A pattern
-# that does not compile is skipped, so a bad pattern allows less, never more.
+# The allowed use is often run after reading a credential from a file, and the documented way to
+# read it is a `$(...)`. The plain form refuses every `$(...)`, so it refused the documented
+# command. The entry lists each such recipe as a pattern under "value_recipes", and each match
+# is read as one plain word before the form is judged: that recipe passes, and any other
+# `$(...)` still fails. The patterns live in the vocabulary, never here, because the recipe
+# names a vendor. A pattern that does not compile is skipped, so a bad pattern allows less,
+# never more.
 def _allowed(entries):
     """{retired key: (flags, lowercased allowed values, compiled value recipes)} for entries
     that name allowed targets."""
@@ -169,11 +166,10 @@ def _targets_only_allowed(segment, allowed):
     return bool(vals) and all(v.lower() in values for v in vals)
 
 
-# ⛔ THE ALLOWANCE COVERS ONE PLAIN COMMAND FORM, AND NOTHING NESTED OR HIDDEN (o9 W97 review,
-# 2026-09-28). The first version judged the flags of each segment that held the term, and a
-# reviewer got a refused use through it three ways: nested in an allowed segment with $(...) or
-# backticks; run by `sh -c '...'` with the allowed flag after it; and chained after a '#' inside
-# quotes or a URL, where executable_part cuts the line and hides the rest of it.
+# The first version judged the flags of each segment that held the term, and a reviewer got a
+# refused use through it three ways: nested in an allowed segment with $(...) or backticks; run
+# by `sh -c '...'` with the allowed flag after it; and chained after a '#' inside quotes or a
+# URL, where executable_part cuts the line and hides the rest of it.
 #
 # So the allowance reads the RAW command, with each documented value recipe read as one plain
 # word, and holds it to a plain form: no $(, backtick, <(, >(, heredoc or '#' anywhere; the term
@@ -261,7 +257,6 @@ def main():
     # arguments. What remains is what the shell would actually execute.
     # ⭐ ONE DEFINITION, in mentions.py. This logic was written HERE first, then copied into
     # block_shared_tree_ops, and meanwhile five other guards hit the same defect without it -
-    # the answer sitting four files away. Centralised 2026-08-17; see that module's docstring
     # for all eight instances.
     raw = cmd
     cmd = executable_part(cmd)
@@ -276,7 +271,6 @@ def main():
     # thing this guard exists to teach. Refusing it blocks the correct response to its own
     # message.
     #
-    # ⭐ Reported twice by o11 on read-only route.py searches, and it blocked o9's own grep while
     # investigating the very claim the guard was getting wrong. Third instance today of a guard
     # refusing the correct action - and refusing correct work is what teaches people to reach
     # for the escape, which disables the rule for the real case.
@@ -285,12 +279,11 @@ def main():
     # sailed through. A search does not launder what follows it, so any chaining operator
     # disqualifies the exemption.
     search = bool(_SEARCH.match(cmd)) and not _CHAINED.search(cmd)
-    # ⛔ AN ENTRY WITH AN ALLOWANCE READS THE EXEMPTION MORE STRICTLY, AND ONLY IT (o9 W97 second
-    # review, 2026-09-28). It reads the chaining from FULL, and also counts a newline, a single
-    # '&' that is not part of a redirect, <( and >( as running another command: `grep x f`, a
-    # newline, then a refused use passed. Every other entry keeps the exemption exactly as it
-    # was, read from `cmd` - reading FULL for every entry newly refused 111 of 1,480 generated
-    # commands, searches such as `grep -n "<term>" "a#b"; echo x` among them.
+    # It reads the chaining from FULL, and also counts a newline, a single '&' that is not part
+    # of a redirect, <( and >( as running another command: `grep x f`, a newline, then a refused
+    # use passed. Every other entry keeps the exemption exactly as it was, read from `cmd` -
+    # reading FULL for every entry newly refused 111 of 1,480 generated commands, searches such
+    # as `grep -n "<term>" "a#b"; echo x` among them.
     search_whole = bool(_SEARCH.match(full)) and not _RUNS_ANOTHER.search(
         _CONTINUATION.sub(" ", full).strip())
 

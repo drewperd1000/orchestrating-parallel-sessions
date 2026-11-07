@@ -19,20 +19,14 @@ complete. So the SHAPE is authored (`knowledge_subjects.json`) and the CONTENT i
 artifact whose tags or FACETS intersect a node. Adding a node is a deliberate act; filling one
 is not.
 
-⛔ THE FIRST EIGHT SUBJECTS WERE DERIVED FROM TAG FREQUENCY, WHICH IS A MEASURE OF THE PAST.
-The human, 2026-08-17: *"These are some that I would expect, but not necessarily the organized
-taxonomy I would expect. That taxonomy feels a bit shotgun."* A taxonomy is a claim about the
-business; counting what happened to get written agrees with that only by accident. The tree is
-now business-shaped, and a node must pass four tests before it earns a place - stated in
-`knowledge_subjects.json`, argued in `docs/specs/2026-08-17-cornerstone-taxonomy.md`.
+⛔ THE FIRST EIGHT SUBJECTS WERE DERIVED FROM TAG FREQUENCY, WHICH IS A MEASURE OF THE PAST. That
+taxonomy feels a bit shotgun."* A taxonomy is a claim about the business; counting what happened
+to get written agrees with that only by accident.
 
-⛔ OWNERSHIP IS SINGULAR; APPEARANCE IS PLURAL. An earlier draft of that rule said "one
-cornerstone per doc" and the human caught it: *"if an agent mistakenly searches ONLY the wrong
-cornerstone, what keeps it from assuming the document doesn't exist?"* Nothing - that version
-recreated the exact failure this system exists to stop. So `route.py` NEVER restricts by
-cornerstone (a node affects RANKING, never SCOPE), and every page carries three buckets: owned
-here, owned elsewhere, and **owned by nobody** - the last one printed rather than hidden,
-because it is the worklist.
+⛔ OWNERSHIP IS SINGULAR; APPEARANCE IS PLURAL. So `route.py` NEVER restricts by cornerstone (a
+node affects RANKING, never SCOPE), and every page carries three buckets: owned here, owned
+elsewhere, and **owned by nobody** - the last one printed rather than hidden, because it is the
+worklist.
 
 ⛔ NEVER HAND-EDIT A GENERATED PAGE. Every file this writes carries the banner, and a rerun
 overwrites it. Curate `knowledge_subjects.json` beside this file; that is the one hand-authored
@@ -51,9 +45,7 @@ import pathlib
 import re
 import sys
 
-# Paths are RESOLVED, not hardcoded - see workspace_paths.py. A script carrying one
-# machine's absolute path cannot run in a skill, a fresh clone, a worktree or the cloud,
-# which is why none of this shipped anywhere until 2026-08-13.
+# Paths are RESOLVED, not hardcoded - see workspace_paths.py.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
 try:
@@ -72,6 +64,10 @@ from mentions import ROUTE_TAGS as TAG_RE  # noqa: E402 - ONE definition, see th
 from mentions import declaration_region, declares, outside_fences  # noqa: E402
 import private_folders  # noqa: E402 - the folders outsiders write, ONE definition
 import leftover_files  # noqa: E402 - untracked files origin/main deleted, ONE definition
+try:
+    import generated_writes  # noqa: E402 - what --write put on disk, ONE definition
+except ImportError:  # a partial delivery must not stop a write; the copy is just not recorded
+    generated_writes = None
 
 # ⛔ ONE DEFINITION OF THE OWNERSHIP MARKER, IMPORTED BY EVERY READER. A marker format is a
 # contract between every tool that reads it, and three copies of a regex is three chances to
@@ -113,16 +109,7 @@ def sot_of(text, path=None):
 # rather than about the repository. A row backed by a committed marker and a row backed by an
 # unsaved edit were INDISTINGUISHABLE in the output.
 #
-# ⛔ AND IT HAS ALREADY BEEN WRONG TWICE, SILENTLY BOTH TIMES. The human found two rows resting on
-# uncommitted edits in repos he does not own (o9:T8.n1, 2026-09-18: *"This needs to be guarded
-# against, ESPECIALLY with any SOT"*), and one of them was the half that makes the science
-# duplicate visible - without it the map reports ONE claimant and looks clean, which is the
-# exact state the duplicate check exists to prevent. o10 found the other, and how they found it
-# is the argument for this code: `release.mjs` refused to run with DIRTY_TREE, a gate that knows
-# nothing about sot markers and was looking for something else entirely.
-#
-# ⭐ TWO CATCHES, ZERO OF THEM BY THE INSTRUMENT. o10's words: *"a check that finds a defect by
-# side effect will not find the next one."*
+# ⛔ AND IT HAS ALREADY BEEN WRONG TWICE, SILENTLY BOTH TIMES.
 #
 # The ref is the repo's own default branch, resolved per artifact, because the corpus spans
 # several repos (the workspace plus the nested product repos) and each has its own.
@@ -166,10 +153,7 @@ def committed_sot(path, domain):
     Returns (state, detail) where state is "committed", "uncommitted" or "unknown".
 
     ⭐ IT CALLS `sot_of` ON THE COMMITTED BLOB rather than re-deriving the marker with a
-    regex. One reader, two texts. A second reader of this marker is the contract defect
-    `memory/marker_format_is_a_contract.md` is about, and `sot_of`'s own docstring records
-    what a bare search did here: it matched a docstring EXAMPLE and listed the generator
-    itself as the source of truth for `legal`.
+    regex. One reader, two texts.
 
     ⛔ "unknown" IS NOT "fine". An answer this cannot get is reported, never swallowed - the
     whole defect being fixed is a row that looks settled while resting on nothing.
@@ -209,12 +193,11 @@ def sot_states(arts):
 # contains that marker, so the difference has to be structural rather than a special case per
 # file. A fence means "here is what one looks like"; a bare line means "here is mine".
 #
-# ⭐ FOUND 2026-08-17 (o9L17) BY THE COMMERCE PAGE LISTING A LANE SEED AS AN OWNER. The seed
-# quoted the three markers a new cornerstone must carry, in a fenced block, exactly as a seed
-# should - and the generator read the illustration as a declaration. The page was wrong the
-# moment it was first correct: a launch INPUT appeared as an artifact the node keeps current.
-# Cost of the fix is a false negative on a marker somebody fences by accident, which is the
-# survivable direction.
+# The seed quoted the three markers a new cornerstone must carry, in a fenced block, exactly as
+# a seed should - and the generator read the illustration as a declaration. The page was wrong
+# the moment it was first correct: a launch INPUT appeared as an artifact the node keeps
+# current. Cost of the fix is a false negative on a marker somebody fences by accident, which is
+# the survivable direction.
 FENCE_RE = re.compile(r"^(```|~~~).*?^\1", re.S | re.M)
 
 # Door 3 of the gate, used honestly: a generated VIEW is not a source, and routing someone
@@ -245,11 +228,29 @@ def _load_tree():
         raw = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    return {k: (v.get("parent"), v.get("description", ""), list(v.get("aliases", [])))
+    return {k: (v.get("parent"), v.get("description", ""),
+                list(v.get("aliases", [])) + list(v.get("page_only_aliases", [])))
+            for k, v in raw.items() if not k.startswith("_")}
+
+
+def _load_page_only():
+    """{slug: {word}} - words that list a document on the node's page but do not reach search.
+
+    An alias does two jobs: `buckets` uses it to list documents on a page, and route.py
+    gives it to every document declaring the node, at weight 3. A vendor word on a node as
+    large as `infrastructure` should do only the first.
+    """
+    p = pathlib.Path(__file__).resolve().parent / "knowledge_subjects.json"
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {k: set(v.get("page_only_aliases", []))
             for k, v in raw.items() if not k.startswith("_")}
 
 
 CORNERSTONES = _load_tree()
+PAGE_ONLY = _load_page_only()
 
 # ⛔ WHERE THE VENDORS WENT, AND WHY THEY ARE NOT NODES. The owner's shape asked for
 # Infrastructure with a sub-cornerstone per vendor - the deploy platform, the GPU host, the
@@ -260,10 +261,9 @@ CORNERSTONES = _load_tree()
 # taxonomy the map is lying. That is the drift the "an index must be generated" rule exists to
 # stop, arriving through a side door.
 #
-# ⭐ So the vendor breakdown is GENERATED into this node's page from the facet table. The human gets
-# the shape he asked for and nobody maintains it: adding a platform to the vocabulary adds its
-# row on the next run. Capabilities (secrets, deploys, backup, tooling) stay as authored children
-# because they cut ACROSS vendors and so cannot be expressed as vendor sections at all.
+# ⭐ So the vendor breakdown is GENERATED into this node's page from the facet table.
+# Capabilities (secrets, deploys, backup, tooling) stay as authored children because they cut
+# ACROSS vendors and so cannot be expressed as vendor sections at all.
 VENDOR_PARENT = "infrastructure"
 
 
@@ -307,7 +307,8 @@ def subtree_aliases(slug):
 # declaration into its vocabulary at query time. Keeping the name and the shape means the router
 # needed no change for the hierarchy at all - a parent resolves to its whole subtree, a child to
 # its own branch, and neither end knows a tree exists.
-SUBJECTS = {k: (v[1], sorted(subtree_aliases(k))) for k, v in CORNERSTONES.items()}
+SUBJECTS = {k: (v[1], sorted(subtree_aliases(k) - set().union(*PAGE_ONLY.values())))
+            for k, v in CORNERSTONES.items()}
 
 
 def owner_of(text):
@@ -321,18 +322,15 @@ def harvest(base=None, skipped=None):
     `skipped` mean what they mean for dev_docs_index.harvest: the land step's pinned commit
     (strict), or None (origin/main; everything kept when the test cannot run, as before).
 
-    ⭐ FACETS CARRY THE MASS. Measured 2026-08-17: 49 artifacts carry route-tags and NINE carry
-    an ownership marker, but 182 carry a platform/access/component facet. Membership built from
-    tags alone produced pages that were technically correct and nearly empty. A facet says "this
-    document relates to X", which is precisely what an "also relevant" section is for.
+    ⭐ FACETS CARRY THE MASS. Membership built from tags alone produced pages that were
+    technically correct and nearly empty. A facet says "this document relates to X", which
+    is precisely what an "also relevant" section is for.
     """
     # ⛔ THE DECLARED VALUE, NOT ONLY ITS EXPANSION. `facet_aliases` returns the alias PHRASES
-    # ("marketing site", the site's hostname), which split into the words `marketing` and
-    # `site` - and no node is called either. Measured 2026-08-17: `marketing-site` rendered
-    # EMPTY while forty artifacts declared exactly that component, which is a map reporting
-    # "nobody has written this down" about the most-written-about surface in the workspace.
-    # The declared value is the one token guaranteed to be the vendor's or component's real
-    # name, so it is indexed alongside the expansion rather than instead of it.
+    # ("marketing site", the site's hostname), which split into the words `marketing` and `site`
+    # - and no node is called either. The declared value is the one token guaranteed to be the
+    # vendor's or component's real name, so it is indexed alongside the expansion rather than
+    # instead of it.
     try:
         from facets import declared, FACETS
     except Exception:                     # never let a decoration break the map
@@ -341,15 +339,11 @@ def harvest(base=None, skipped=None):
         def declared(_t, _f):
             return set()
 
-    # ⛔ PLATFORM AND COMPONENT CROSS-LIST; ACCESS DOES NOT, AND THE REASON IS MEASURED.
-    # A platform or component facet says WHICH THING a document is about, and those spread
-    # across the tree - pwa 85, marketing-site 40, orchestration 35, offer-page 29, the deploy
-    # platform 40, the payment vendor 32.
-    # An ACCESS facet says HOW a service is reached, which most technical documents
-    # mention whatever their subject: 109 of 209 artifacts declare one, and because all eight
-    # values are mechanisms they collapse onto a single node. Measured 2026-08-17 with access
-    # included: `secrets-and-access` listed 113 artifacts as its worklist - 54% of the corpus.
-    # A list that size is not a worklist, it is the corpus wearing one.
+    # ⛔ PLATFORM AND COMPONENT CROSS-LIST; ACCESS DOES NOT, AND THE REASON IS MEASURED. An
+    # ACCESS facet says HOW a service is reached, which most technical documents mention
+    # whatever their subject: 109 of 209 artifacts declare one, and because all eight values are
+    # mechanisms they collapse onto a single node. A list that size is not a worklist, it is the
+    # corpus wearing one.
     #
     # ⭐ THE VOCABULARY MAPPING STAYS. `webhook` and `cli` remain aliases of that node, so a
     # SEARCH for them still ranks it and a doc declaring it still inherits them. What is
@@ -374,22 +368,14 @@ def harvest(base=None, skipped=None):
                     out |= {a.lower() for a in table.get(val, []) if " " not in a}
         return out
     # ⛔ THE SCAN SET COMES FROM corpus.py - it is not this file's to decide, and deciding it
-    # here twice is what broke the cornerstone sheet. Measured 2026-08-17: this harvester
-    # reached 198 artifacts while route.py reached 1,326, and NEITHER entered a product repo.
-    # The candidate sheet built from the 198 was judging 15% of the corpus while reading as a
-    # survey of all of it. The human: *"the referenced docs were only just barely better than
-    # randomly assigned."*
+    # here twice is what broke the cornerstone sheet. The candidate sheet built from the 198 was
+    # judging 15% of the corpus while reading as a survey of all of it. The human: *"the
+    # referenced docs were only just barely better than randomly assigned."*
     #
-    # ⭐ The one exclusion this store still ASKS for is a declared slice of that enumeration,
-    # not a private list: our own generated pages, because routing to a view instead of a
-    # source puts a middleman in front of the answer. (Voice notes used to be the second ask;
-    # they are now excluded for every consumer - the human ruled them out of this process on
-    # 2026-08-17.) Both are rows in corpus.EXCLUSIONS, with counts, where a reader sees them.
-    # ⛔ A TOMBSTONED DOC IS NOT A LIVE ENTRY, AND LISTING IT IS THE FAILURE THE INDEX RULE NAMES.
-    # Measured 2026-09-17: four generated pages carried a row for `LEGAL-CLAIMS-SOT.md` AFTER it
-    # was superseded - and once the replacement landed, `legal.md` listed BOTH, side by side, with
-    # nothing saying which was current. An index whose whole value is being current was offering
-    # the reader a dead document and a live one as equals.
+    # ⭐ The one exclusion this store still ASKS for is a declared slice of that enumeration, not
+    # a private list: our own generated pages, because routing to a view instead of a source
+    # puts a middleman in front of the answer. An index whose whole value is being current was
+    # offering the reader a dead document and a live one as equals.
     #
     # ⭐ THE SHAPE IS IMPORTED, NEVER RE-WRITTEN. `knowledge_gate.TOMBSTONE_OPEN` is the contract,
     # and its own docstring says it is imported by anything that reads a tombstone. A second
@@ -409,10 +395,6 @@ def harvest(base=None, skipped=None):
     tombstoned = []
     private = 0
     for kind, p in corpus_files(include_generated=False):
-        # ⛔ NEVER READ: a file under a folder named app-feedback or email_briefing holds text
-        # an outsider wrote, and corpus.py lists the whole memory store, the email briefing's
-        # folder included. Dropped here BEFORE it is opened, and counted, never named
-        # (o9:W149 review fix 2; private_folders.py is the one definition).
         if private_folders.has_private_part(p):
             private += 1
             continue
@@ -448,7 +430,6 @@ def harvest(base=None, skipped=None):
     if private:
         print("   %d file(s) under a folder named %s skipped unread (outsiders' text)"
               % (private, " or ".join(private_folders.NAMES)))
-    # ⛔ A LEFTOVER IS NOT AN ARTIFACT (o9:W149, o9's ruling of 2026-10-03). The file list comes
     # from corpus.py, which stays as it is, so leftovers are dropped here, after the harvest:
     # a doc deleted or moved on origin/main that deliver.py left on disk would otherwise come
     # back as a page entry, and in every count on INDEX.md.
@@ -487,11 +468,9 @@ def buckets(slug, arts, direct_only=False):
 def _link(a):
     """A clickable link for anything inside the repo; PLAIN TEXT for anything outside it.
 
-    ⛔ TWO LINK BUGS, AND THE SECOND IS THE ONE WORTH STATING. (1) A workspace-relative path was
-    emitted verbatim from a page living two directories down, so every root-level document
-    linked to `docs/knowledge/<name>` and 404'd. (2) The memory store is OUTSIDE the workspace
-    entirely, so `../../memory/x.md` never resolved anywhere - not here, and not in a clone,
-    where that directory does not exist at all.
+    ⛔ TWO LINK BUGS, AND THE SECOND IS THE ONE WORTH STATING. (1) A workspace-relative path
+    was emitted verbatim from a page living two directories down, so every root-level
+    document linked to `docs/knowledge/<name>` and 404'd.
 
     ⭐ A BROKEN LINK IS WORSE THAN NO LINK, so the second case is not "fixed" with a deeper
     relative path that happens to work on one laptop. It is rendered as plain text, which is
@@ -527,7 +506,7 @@ def _rows(title, arts, note, show_owner=False):
 def _section(slug, arts, direct_only=False):
     here, elsewhere, unowned = buckets(slug, arts, direct_only)
     L = ["## %s" % slug.replace("-", " ").title(), "", CORNERSTONES[slug][1], "",
-         "**Searched as:** %s" % ", ".join("`%s`" % a for a in sorted(own_aliases(slug))), ""]
+         "**Searched as:** %s" % ", ".join("`%s`" % a for a in sorted(own_aliases(slug) - PAGE_ONLY.get(slug, set()))), ""]
     if not (here or elsewhere or unowned):
         # ⭐ An empty node is INFORMATION, not an omission to hide. "Nobody has written this
         # down" is exactly the answer a session needs, and the whole failure this workstream
@@ -605,7 +584,7 @@ def render_index(arts):
          "The cornerstone tree. **Generated** - curate `knowledge_subjects.json` beside "
          "`.shared/scripts/knowledge_pages.py`, never these files. Design record, with every "
          "disagreement argued: "
-         "[the taxonomy spec](../specs/2026-08-17-cornerstone-taxonomy.md).", "",
+         "the taxonomy spec.", "",
          "Do not read this to find ONE thing - `route.py <terms>` is faster and searches the "
          "whole corpus. **A cornerstone affects RANKING, never SCOPE**: no search is ever "
          "confined to a branch, so no document can be missed by guessing the wrong one. Read "
@@ -767,6 +746,8 @@ def main():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with open(path, "w", encoding="utf-8", newline="") as fh:
                     fh.write(new)
+                if generated_writes:
+                    generated_writes.record(WS, path.relative_to(WS).as_posix(), new)
 
     # ⛔ A RETIRED NODE MUST TAKE ITS PAGE WITH IT. `lead-magnets` became a child of `marketing`,
     # and its old top-level file would otherwise sit there generated, banner-stamped and never
@@ -805,7 +786,6 @@ def main():
     return 0
 
 
-# The eight subjects that existed before the 2026-08-17 rewrite, and the vocabulary they carried.
 # A MIGRATION fact, not part of the tree: the tree may be re-authored freely, and this must
 # still refuse to lose a word.
 #
@@ -829,7 +809,21 @@ def _legacy():
     return set(raw.get("slugs", [])), set(raw.get("vocab", []))
 
 
+def _legacy_retired():
+    """{word: reason} - pre-rewrite words removed ON PURPOSE, each with the commit that did it.
+
+    Recording it here keeps the guard strict for every other word. Removing a word from the
+    check instead would blind the guard to the next accidental drop.
+    """
+    p = pathlib.Path(__file__).resolve().parent / "knowledge_subjects.json"
+    try:
+        return dict(json.loads(p.read_text(encoding="utf-8")).get("_legacy", {}).get("retired", {}))
+    except Exception:
+        return {}
+
+
 LEGACY_SLUGS, LEGACY_VOCAB = _legacy()
+LEGACY_RETIRED = _legacy_retired()
 
 
 def cmd_selftest():
@@ -856,11 +850,9 @@ def cmd_selftest():
       all(subtree_aliases(p) >= own_aliases(c)
           for c, v in CORNERSTONES.items() for p in [v[0]] if p))
     t("the vendor parent is a real node", VENDOR_PARENT in CORNERSTONES)
-    # ⛔ THE TWO REGISTRIES MUST NOT DRIFT APART, and this is the ONLY thing that can see it.
-    # A facet value with no node alias still gets a row in the generated vendor table, so the
-    # page looks complete - while every artifact declaring that facet joins no node's list at
-    # all. Measured 2026-08-17: thirteen values were unmapped, including `offer-page` and
-    # `orchestration`, whose own nodes rendered empty while 29 and 35 artifacts declared them.
+    # ⛔ THE TWO REGISTRIES MUST NOT DRIFT APART, and this is the ONLY thing that can see it. A
+    # facet value with no node alias still gets a row in the generated vendor table, so the page
+    # looks complete - while every artifact declaring that facet joins no node's list at all.
     # The failure is silent by construction, which is exactly why it needs an assertion.
     try:
         import facets as _f
@@ -875,15 +867,13 @@ def cmd_selftest():
     t("the compatibility view route.py reads is populated for every node",
       all(SUBJECTS[k][1] for k in CORNERSTONES))
     t("the ownership marker reads BOTH spellings",
-      owner_of("<!-- cornerstone: pwa -->") == "pwa"
-      and owner_of("<!-- subject: pwa -->") == "pwa")
-    # ⛔ A FENCED MARKER IS AN EXAMPLE. Every doc that TEACHES the declaration contains one -
-    # CREATE.md, every lane seed that quotes it - and reading those as claims put a launch
-    # INPUT on a cornerstone's "owned here" list on 2026-08-17. The bare line beneath the fence
-    # must still be read, or the fix would un-declare any doc that documents itself.
+      owner_of("<!-- cornerstone: app -->") == "app"
+      and owner_of("<!-- subject: app -->") == "app")
+    # ⛔ A FENCED MARKER IS AN EXAMPLE. The bare line beneath the fence must still be read, or
+    # the fix would un-declare any doc that documents itself.
     t("a marker inside a code fence is an example, not a declaration",
-      owner_of("```\n<!-- cornerstone: pwa -->\n```\n") is None
-      and owner_of("```\n<!-- cornerstone: pwa -->\n```\n<!-- subject: legal -->") == "legal")
+      owner_of("```\n<!-- cornerstone: app -->\n```\n") is None
+      and owner_of("```\n<!-- cornerstone: app -->\n```\n<!-- subject: legal -->") == "legal")
     # Any node will do, and taking one from the tree rather than naming one is deliberate:
     # a hardcoded slug turns a rename into a selftest failure that says nothing about renaming.
     t("a node with nothing filed renders the finding, not a blank page",
@@ -908,9 +898,20 @@ def cmd_selftest():
         everything = set()
         for k in CORNERSTONES:
             everything |= own_aliases(k)
-        lost = sorted(LEGACY_VOCAB - everything)
-        t("no pre-rewrite alias was dropped from the tree (lost: %s)" % (lost or "none"),
+        lost = sorted(LEGACY_VOCAB - everything - set(LEGACY_RETIRED))
+        t("no pre-rewrite alias was dropped from the tree (lost: %s; retired on purpose: %s)"
+          % (lost or "none", sorted(LEGACY_RETIRED) or "none"),
           not lost)
+        # A retired word that is reachable again means the record is stale; fail so it is cleaned.
+        back = sorted(set(LEGACY_RETIRED) & everything)
+        t("no retired word is back in the tree (back: %s)" % (back or "none"), not back)
+        t("every retired word is a pre-rewrite word with a reason",
+          all(w in LEGACY_VOCAB and LEGACY_RETIRED[w] for w in LEGACY_RETIRED))
+    page_only = set().union(*PAGE_ONLY.values())
+    t("a page-only word lists documents on its node and is not given to search (%s)"
+      % (sorted(page_only) or "none"),
+      all(w in own_aliases(k) for k in PAGE_ONLY for w in PAGE_ONLY[k])
+      and not any(page_only & set(SUBJECTS[k][1]) for k in SUBJECTS))
     print("\nselftest %s" % ("PASSED" if ok else "FAILED"))
     return 0 if ok else 1
 

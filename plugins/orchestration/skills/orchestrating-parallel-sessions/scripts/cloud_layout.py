@@ -5,16 +5,13 @@
 <!-- route-tags: cloud layout .shared/cloud MANIFEST.json hooks.json hook-status.json format
      validate read cloud session published rules memory copy freshness stale -->
 
-`cloud_publish.py` writes this folder; `cloud_start.py` reads it. Both import the paths, the
-readers and the validators from here, so a format is defined once and a file that does not
-match it is refused the same way on both sides (o9 W140, cloud Phase 2, plan section 5).
+`cloud_publish.py` writes this folder; `cloud_start.py` reads it.
 
 THE LAYOUT, relative to the repo root:
 
     .shared/cloud/global-rules.md    the laptop's global CLAUDE.md, byte for byte (named so that
                                      Claude Code never loads it as a folder's CLAUDE.md; see
                                      CLAUDE_MD below)
-    .shared/cloud/memory/MEMORY.md   the memory index, then the `m/N.md` pointers it links to and
     .shared/cloud/memory/...         the note behind each pointer, laid out as in the memory folder
     .shared/cloud/hooks.json         the hooks a cloud session registers (format below)
     .shared/cloud/MANIFEST.json      what was published, from what, and when (format below)
@@ -31,12 +28,10 @@ MANIFEST.json, written last by cloud_publish.py:
       "publisher": ".shared/scripts/cloud_publish.py",
       "sources": {                                    what the copy was made from
         "CLAUDE.md":            {"sha256": "<64 hex>", "bytes": 8912},
-        "memory/MEMORY.md":     {"sha256": "...", "bytes": ...},
         "settings.json hooks":  {"sha256": "...", "bytes": ...},   canonical JSON of the
                                                                     registered hook commands
         "hook-status.json":     {"sha256": "...", "bytes": ...}
       },
-      "outputs": {"global-rules.md": "<64 hex>", "memory/MEMORY.md": "...", "hooks.json": "...",
                   ...},
                                                       every file written, relative to
                                                       .shared/cloud/, MANIFEST.json itself excepted
@@ -111,12 +106,11 @@ import re
 FORMAT = 1
 
 CLOUD_DIR = ".shared/cloud"
-#: The published copy of the laptop's global CLAUDE.md. ⛔ NOT NAMED CLAUDE.md (o9L1015,
-#: 2026-10-03). Claude Code loads a CLAUDE.md in any folder whose files a session reads, so a
-#: cloud session that touched `.shared/cloud/` got the global rules in its context twice (seen in
-#: the second cloud check), and a laptop session reading a file there would load this copy,
-#: which can be older than the real rules. The folder holds no other file of a name Claude Code
-#: loads as instructions.
+# Claude Code loads a CLAUDE.md in any folder whose files a session reads, so a : cloud session
+# that touched `.shared/cloud/` got the global rules in its context twice (seen in : the second
+# cloud check), and a laptop session reading a file there would load this copy, : which can be
+# older than the real rules. The folder holds no other file of a name Claude Code : loads as
+# instructions.
 CLAUDE_MD = CLOUD_DIR + "/global-rules.md"
 #: Where earlier publishers wrote that copy. cloud_publish.py removes it from origin when it is
 #: still there, and the walkers skip it like a generated copy.
@@ -128,12 +122,8 @@ MANIFEST_JSON = CLOUD_DIR + "/MANIFEST.json"
 HOOK_STATUS_JSON = CLOUD_DIR + "/hook-status.json"
 BUILD_RULES = CLOUD_DIR + "/BUILD-RULES.md"
 
-#: The generated copies under CLOUD_DIR: cloud_publish.py writes them from the laptop's global
-#: CLAUDE.md and memory folder; RETIRED_COPIES names where an earlier publisher wrote one. A
-#: walker of the workspace skips them (it reads the same files where they are written) and keeps
-#: the hand-kept files beside them, BUILD-RULES.md and hook-status.json. is_generated_copy() is the one test; the three walkers call it
-#: (dev_docs_index.py, check_unfiled_decisions.py, correction.py). gbrain_catalog_build.py called it
-#: until its union step was removed (o9 W160, lane o9L1130).
+# : The generated copies under CLOUD_DIR: cloud_publish.py writes them from the laptop's global
+# : CLAUDE.md and memory folder; RETIRED_COPIES names where an earlier publisher wrote one.
 GENERATED_COPIES = (CLAUDE_MD, MEMORY_DIR) + RETIRED_COPIES
 
 
@@ -167,7 +157,8 @@ SOURCE_HOOK_STATUS = "hook-status.json"
 
 DECISIONS = ("published", "laptop-only", "needs-port")
 EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "SessionStart", "SessionEnd",
-          "Stop", "SubagentStop", "UserPromptSubmit", "Notification", "PreCompact")
+          "Stop", "SubagentStart", "SubagentStop", "UserPromptSubmit", "Notification",
+          "PreCompact")
 
 #: A hook's arguments: plain words, flags and `key=value`, single spaces between them.
 ARGS_RE = re.compile(r"^(?:[A-Za-z0-9_.:=/-]+(?: [A-Za-z0-9_.:=/-]+)*)?$")

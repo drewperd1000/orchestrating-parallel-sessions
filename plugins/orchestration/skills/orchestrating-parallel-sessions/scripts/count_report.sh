@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Print a verdict DERIVED from the result, never a label typed next to it.
 #
-# THE DEFECT THIS REMOVES, which bit three times in one session in o9's own shell output:
-#
 #     grep -n "pattern" file | head
 #     echo "  (no output above = none left)"      <- prints whether or not the grep ran
 #

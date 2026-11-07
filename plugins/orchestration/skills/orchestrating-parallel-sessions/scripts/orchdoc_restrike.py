@@ -2,8 +2,6 @@
 
 <!-- subject: orchestration -->
 
-THE HUMAN'S CONUNDRUM, 2026-08-07:
-
     "There needs to be a requirement of a specific output onto the record so that it is
      recorded, but recorded with an enforced format - BUT it must be done in a way that it
      cannot falsify it by just following the format. It seems like a conundrum."
@@ -18,10 +16,6 @@ of the right shape. Three layers do different jobs, and only the third resists g
                   was struck. This is what makes following-the-format insufficient, and it is
                   fully mechanical, because git holds the previous version.
 
-THE FAILURE IT CATCHES, from a real incident an hour before this was written. o7 had:
-
-    - **Copy is UNCHANGED pending your call** (o1 asked me to hold, and I agree - ...)
-
 `E-CLOSEDWITHOPENSUBS` fired on the word *pending*, and at the time striking the line did not
 clear it. So they reworded the historical record to get past a regex:
 
@@ -31,13 +25,10 @@ They disclosed it and called it gaming, which is why it is a usable fixture. **T
 have caught it either way** - the line gained `~~` and its inner text changed in the same
 commit, which is the whole signature.
 
-⭐ WHY THIS ONE IS TRUSTWORTHY WHERE TODAY'S OTHERS WERE NOT. Three checks shipped on
-2026-08-07 and were wrong on the fleet, and every one of them read PROSE to infer INTENT. This
-reads a DIFF: two versions of one line, and whether the words between the tildes survived. It
-needs no theory about what the author meant. That is the same property that makes "29 lines, 0
-entries" reliable while "does this bullet look unfinished?" is not.
-
-  restrike --doc o7 [--since <ref>]   walk history, report strikes that also reworded
+⭐ WHY THIS ONE IS TRUSTWORTHY WHERE TODAY'S OTHERS WERE NOT. This reads a DIFF: two versions of
+one line, and whether the words between the tildes survived. It needs no theory about what the
+author meant. That is the same property that makes "29 lines, 0 entries" reliable while "does
+this bullet look unfinished?" is not.
 
 ⚠️ ADVISORY BY DESIGN, and it must stay that way. Rewording while striking is sometimes exactly
 right - a line that says "pending your call" IS false once the call is made, and rewriting it to

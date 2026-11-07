@@ -13,15 +13,11 @@ nothing about content. Git's own protection is TOPOLOGICAL - it refuses a non-fa
 and that is a different question from "does this commit delete somebody's writing?" A push can
 be a perfectly clean fast-forward and still remove every line another person just added.
 
-⭐ THE PRECIPITATING INCIDENT IS INSTRUCTIVE FOR WHAT IT DOES *NOT* SHOW. The human edited a
-README in the GitHub web editor while an agent was pushing to it; his commit was rejected for a
-conflict and the text was lost from the browser. **Nothing here could have saved that** - it
-was never committed anywhere, and no agent-side tool can see a browser textarea.
+⭐ THE PRECIPITATING INCIDENT IS INSTRUCTIVE FOR WHAT IT DOES *NOT* SHOW. **Nothing here could
+have saved that** - it was never committed anywhere, and no agent-side tool can see a browser
+textarea.
 
-But the near-miss underneath it is entirely preventable: **had he committed successfully first,
-the agent's next push would have built on a stale base and silently removed his lines**, with
-git perfectly happy because the topology was fine. That is the case this gate covers, and it
-needs nothing from the human at all.
+That is the case this gate covers, and it needs nothing from the human at all.
 
 WHAT IT CHECKS. Fetch the remote, diff the local tree against the remote tip for each staged
 path, and refuse if any non-trivial line present on the remote is absent locally. Whitespace
@@ -86,9 +82,6 @@ def check(cwd, remote, branch):
     override. So the gate trained its user to override it, on evidence that was never real,
     which is precisely how a guard stops being read. It fired hardest exactly when a colleague
     was working alongside me - the case it exists to protect.
-
-    Now it asks the only question that matters: does the tree I am about to PUSH drop a line the
-    remote has?
     """
     rc, _, err = git(["fetch", "-q", remote, branch], cwd)
     if rc != 0:
@@ -96,12 +89,7 @@ def check(cwd, remote, branch):
 
     ref = "%s/%s" % (remote, branch)
 
-    # ⛔ ONLY A FAST-FORWARD CAN DELETE ANYTHING. If the remote tip is NOT an ancestor of HEAD,
-    # the push will be rejected as non-fast-forward and the rebase path below runs - so every
-    # line the remote has and HEAD lacks is a line I have simply not fetched yet, not a line I
-    # am about to destroy. Reporting those as losses conflates "I am behind" with "I would
-    # delete", and it produces the largest, most alarming, least real number this gate can
-    # print: 104 lines on its first run in that state, none of them at risk.
+    # ⛔ ONLY A FAST-FORWARD CAN DELETE ANYTHING.
     #
     # Same disease as everywhere else tonight - two different states rendered identically.
     rc_a, _, _ = git(["merge-base", "--is-ancestor", ref, "HEAD"], cwd)
@@ -240,9 +228,7 @@ def main():
             # hunting - inside a commit whose message was about something else entirely.
             #
             # --soft moves HEAD and LEAVES THE INDEX ALONE. The index still held my older tree,
-            # including a stale copy of a file another session had since corrected. `git add
-            # <my-file>` stages one path, but `git commit` commits the WHOLE INDEX - so the next
-            # commit reverted their work as collateral, in a file I never opened.
+            # including a stale copy of a file another session had since corrected.
             #
             # Measured, not reasoned: with --soft the colleague's file rides along and reads
             # 'old'; with --mixed it is absent from the commit and reads 'CORRECTED'.

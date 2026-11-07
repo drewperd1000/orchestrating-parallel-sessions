@@ -5,17 +5,10 @@
 
 <!-- route-tags: knowledge gate registration tombstone superseded reachable index dev-docs -->
 
-WHAT THIS IS FOR, measured rather than asserted
------------------------------------------------
-`--audit` over the workspace on 2026-08-12: 82 knowledge docs examined, 63 registered in
-DEV-DOCS-INDEX, 10 ephemeral (seeds/prompts/bootstraps), and **9 genuinely unreachable**.
-
-Two of those nine are a payment vendor's OAuth homework note and its test-purchase runbook,
-both dated in their filenames and sitting at the workspace root. On 2026-08-11 a session
-searched for that vendor's setup process, found nothing, and reported that none existed. It
-existed - at the workspace root, unindexed. The runbook even carries an owner ruling ("THIS
-WILL NOT BE DONE. REMOVE IT AS A TO-DO") that a session unable to find it will re-raise as an
-open question.
+Two of those nine are a payment vendor's OAuth homework note and its test-purchase runbook, both
+dated in their filenames and sitting at the workspace root. It existed - at the workspace root,
+unindexed. The runbook even carries an owner ruling ("THIS WILL NOT BE DONE. REMOVE IT AS A
+TO-DO") that a session unable to find it will re-raise as an open question.
 
 ⭐ So the defect this blocks is not hypothetical and not rare: it is ~11% of the corpus, and
 its cost is a session confidently reporting absence, then redoing solved work.
@@ -36,10 +29,8 @@ identical on disk today; door 3 makes them different, and costs one line.
 
 THE TOMBSTONE CONTRACT (`TOMBSTONE_OPEN`)
 -----------------------------------------
-o10, 2026-08-12: *"a format that differs per orchestrator is worse than none, since the entire
 value is that a session recognises a tombstone it has never seen."* Correct, so the shape lives
 HERE, in one importable place, and is matched by SHAPE not by prose - the marker-format-is-a-
-contract rule (`memory/marker_format_is_a_contract.md`).
 
     <!-- tombstone: superseded-by=<path> date=YYYY-MM-DD by=<session> -->
     # SUPERSEDED - this document is no longer current
@@ -80,9 +71,7 @@ try:
 except Exception:
     pass
 
-# Paths are RESOLVED, not hardcoded - see workspace_paths.py. A script carrying one
-# machine's absolute path cannot run in a skill, a fresh clone, a worktree or the cloud,
-# which is why none of this shipped anywhere until 2026-08-13.
+# Paths are RESOLVED, not hardcoded - see workspace_paths.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
 
@@ -90,18 +79,14 @@ from workspace_paths import WS, MEM  # noqa: E402
 def _root():
     """The repo THIS commit is happening in - not a hardcoded path.
 
-    ⛔ FOUND BY THE GATE REFUSING ITS OWN CORRECT COMMIT, 2026-08-12. `INDEX` was
-    `WS / "DEV-DOCS-INDEX.md"`, an absolute path to the main checkout. Committing from a
-    WORKTREE therefore judged the staged rename against a DIFFERENT copy of the index - the
-    one that still had the old rows - so a commit that correctly updated its own index was
-    refused, with a message naming rows the committer had already fixed.
+    `INDEX` was `WS / "DEV-DOCS-INDEX.md"`, an absolute path to the main checkout.
+    Committing from a WORKTREE therefore judged the staged rename against a DIFFERENT copy
+    of the index - the one that still had the old rows - so a commit that correctly updated
+    its own index was refused, with a message naming rows the committer had already fixed.
 
     ⭐ Worse than a plain false positive: the instruction it printed was impossible to satisfy.
     The rows it complained about were fixed in the very commit being refused, and no amount of
     editing the worktree's index could change the file it was actually reading.
-
-    This is the multi-repo cwd rule (`memory/feedback_multi_repo_cwd_discipline.md`) inside a
-    guard: never rely on a fixed root when the operation has its own.
     """
     try:
         p = subprocess.run(["git", "rev-parse", "--show-toplevel"],
@@ -125,7 +110,7 @@ from mentions import ROUTE_TAGS  # noqa: E402 - ONE definition
 UNINDEXED = re.compile(r"<!--\s*unindexed:\s*(.+?)\s*-->")
 # The back-pointer badge convention from project CLAUDE.md. A doc WEARING it while absent from
 # the index is worse than an unregistered doc: the badge answers the reader's question falsely,
-# so they stop checking. Measured 2026-08-12: 3 of 38 badge-wearers were not in the index.
+# so they stop checking.
 BACKPOINTER = re.compile(r"Indexed in\s*\[?DEV-DOCS-INDEX", re.I)
 
 
@@ -146,25 +131,16 @@ def tombstone_header(superseded_by, date, by, title, why):
 EPHEMERAL = re.compile(r"(-SEED|-PROMPT|-bootstrap|-bridge|-PREVIEW|-SKILL-DRAFT)\.md$", re.I)
 NEVER_GATE = {"CLAUDE.md", "DEV-DOCS-INDEX.md", "ORCHESTRATOR-REGISTRY.md", "README.md",
               "MEMORY.md", "AUTHORING-CHECKLIST.md", "AUTHORING-CHECKLIST.md",
-              # File U of the writing router, the rules that bind every writing type. The
-              # router check reads it (check_checklist_router.FILES), so it is exempt for the
-              # same reason as the rule files below; added for o9 W156 (lane o9L1065).
+              # File U of the writing router, the rules that bind every writing type.
               "AUTHORING-CHECKLIST-UNIVERSAL.md",
-              # The script-writing checklist was split into a router + 4 rule files on
-              # 2026-08-12, and file 2 was split again into 2 + 2B on 2026-08-13; the
-              # companions are the same artifact and carry the same exemption.
-              "SCRIPT-CHECKLIST-2-LENGTH.md", "SCRIPT-CHECKLIST-2B-PAUSE.md",
-              "SCRIPT-CHECKLIST-3-DROPDOWNS.md",
-              "SCRIPT-CHECKLIST-4-VOICE.md", "SCRIPT-CHECKLIST-4B-BANNED-WORDS.md",
-              "SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md",
-              # The AT book, a rule file of the same router since o9:D71 (2026-10-05).
-              "SCRIPT-CHECKLIST-AT.md", "SCRIPT-CHECKLIST-AT-B-NIGHT-RAMPS-BREATH.md",
-              # Files 0, 6, 6B and 7, rule files of the same router that this list missed
-              # when they were made (2026-08-17 to 2026-10-02); added for o9 W156.
-              # test_rule_file_lists.py fails when a rule file the router check reads is
-              # missing here.
-              "SCRIPT-CHECKLIST-0-UNIVERSAL.md", "SCRIPT-CHECKLIST-6-REFERENT-AND-STRENGTH.md",
-              "SCRIPT-CHECKLIST-6B-STRENGTH-AND-REACH.md", "SCRIPT-CHECKLIST-7-ARC.md"}
+              "WRITING-RULES-TO-THE HUMAN.md",
+              
+              
+              
+              
+              
+              
+              }
 
 
 def git(args, cwd=None):
@@ -205,11 +181,9 @@ def reachable(rel, text, index_text):
         return True, "DEV-DOCS-INDEX row"
     # ⭐ THE BEST DOOR, and the one to prefer. route-tags freeze a doc at the vocabulary of the
     # day it was written; a SUBJECT inherits that subject's whole alias set at query time, so
-    # widening the subject later retroactively finds this doc too. Measured 2026-08-13: a doc
-    # declaring `subject: commerce` and never containing the payment vendor's NAME is found by
-    # searching that name; the identical doc without the line is invisible. That is the founding
-    # failure - the webhook version filed under a note named for refunds - closed by one line.
-    # The pattern is IMPORTED, never retyped - see the note on route.py's SUBJECT_RE. A doc
+    # widening the subject later retroactively finds this doc too. That is the founding failure
+    # - the webhook version filed under a note named for refunds - closed by one line. The
+    # pattern is IMPORTED, never retyped - see the note on route.py's SUBJECT_RE. A doc
     # declaring `cornerstone:` must open this door too, or the gate refuses documents the router
     # has already accepted, and the two tools disagree about what "declared" means.
     try:
@@ -256,10 +230,6 @@ def check_tombstones(paths):
 def _malformed_marker(rel):
     """Does this doc ATTEMPT a marker the reader cannot parse? Returns the offending line.
 
-    ⛔ o7, 2026-08-18, on a doc refused as unreachable while its route-tags line sat correctly in
-    the file - unreadable only because three private copies of the regex omitted re.S and the
-    marker wrapped at this workspace's own column width:
-
         "The author would have had no way to tell the difference between 'my marker is wrong'
          and 'the reader is broken'."
 
@@ -299,7 +269,7 @@ def report_block(bad, examined):
             print("          reader is the thing that is wrong; say so rather than editing.")
     print()
     print("          A doc nobody can find is not knowledge, it is a second copy of the")
-    print("          problem. Measured 2026-08-12: 9 such docs already sit in this")
+    print("          problem. Measured once: 9 such docs already sit in this")
     print("          workspace, and two of them are the vendor runbooks a session searched for,")
     print("          failed to find, and reported as non-existent.")
     print()
@@ -319,11 +289,8 @@ SUPERSEDES = re.compile(r"<!--\s*supersedes:\s*(.+?)\s*-->")
 DISTINCT = re.compile(r"<!--\s*distinct-from:\s*(.+?)\s*-->")
 OVERLAP_FLOOR = 3
 
-# ⭐ CORRESPONDENCE IS A CONVERSATION ABOUT ONE TOPIC, AND SHARING TAGS IS WHAT A THREAD IS.
-# Measured 2026-08-17: 15 docs in this workspace would be refused by the overlap check, and 7 of
-# them are our own inter-orchestrator messages overlapping EACH OTHER on 5-9 tags -
-# `O9-TO-o10-voice-data-promise`, `O10-REPLY-voice-data-promise`, `O1-BRIEF-generated-track-
-# retention`. The gate was reading a reply as a duplicate of the message it replies to.
+# ⭐ CORRESPONDENCE IS A CONVERSATION ABOUT ONE TOPIC, AND SHARING TAGS IS WHAT A THREAD IS. The
+# gate was reading a reply as a duplicate of the message it replies to.
 #
 # The overlap rule is CORRECT for reference docs, where two live homes for one subject is the
 # defect. It is simply the wrong instrument for a thread: a reply is not a second home for the
@@ -346,11 +313,10 @@ CORRESPONDENCE_SHAPE = re.compile(r"^[oO]\d+-(BRIEF|REPLY|TO|NOTICE)[-.]", re.I)
 def is_correspondence(text, path=None):
     """Is this a DERIVED artifact - a thread, a generated view, a template, or a test?
 
-    ⭐ WIDENED 2026-08-17 from correspondence-only. The overlap check exists to stop two live
-    homes for one subject; none of the four derived kinds can BE a second home, because none of
-    them can drift on their own. A reply shares its subject's vocabulary by definition, a
-    generated page is recomputed, a template's examples are shapes, a test must contain the
-    strings it exercises.
+    The overlap check exists to stop two live homes for one subject; none of the four
+    derived kinds can BE a second home, because none of them can drift on their own. A reply
+    shares its subject's vocabulary by definition, a generated page is recomputed, a
+    template's examples are shapes, a test must contain the strings it exercises.
 
     ⛔ Still MARKER-driven, never filename shape. `looks_like_correspondence` below only
     SUGGESTS the marker in a refusal; granting the exemption on a name would let any future doc
@@ -370,9 +336,8 @@ def looks_like_correspondence(rel):
 def overlapping(rel, text, pool=None):
     """Existing artifacts sharing >= OVERLAP_FLOOR tags with this NEW doc.
 
-    ⛔ THE SAFEGUARD'S SAFEGUARD (the human, 2026-08-13): *"What if the process runs <words> that
-    don't actually capture the correct doc? My concern is to prevent multiple CREATE.md
-    creations of new processes that will then collide."*
+    My concern is to prevent multiple CREATE.md creations of new processes that will then
+    collide."*
 
     Correct, and nothing guarded it. A VERIFIED MISS is only as good as the words the searcher
     chose - the payment vendor's webhook version was correct, documented, and filed under a note
@@ -404,9 +369,8 @@ def overlapping(rel, text, pool=None):
     if is_correspondence(text):
         return []
     named = " ".join(SUPERSEDES.findall(text) + DISTINCT.findall(text))
-    # ⛔ THE 4000 STAYS, AND IT IS A RULING RATHER THAN AN OVERSIGHT (o9, 2026-09-08). A peer
-    # fixed the same-looking truncation in route.py, found this alongside it, and correctly
-    # stopped rather than changing it unasked.
+    # A peer fixed the same-looking truncation in route.py, found this alongside it, and
+    # correctly stopped rather than changing it unasked.
     #
     # ⭐ THE OTHER THREE READERS TRUNCATED A **DECLARATION**; THIS ONE TRUNCATES A **SIMILARITY
     # POOL**, and that is a different kind of number. A declaration either exists or it does
@@ -517,8 +481,67 @@ def asked_the_router():
     return False, True
 
 
+def merge_parents():
+    """The commits being merged in (MERGE_HEAD, one per line), or [] when this is no merge.
+
+    Git writes full commit ids here. Anything else was not written by a merge, so it counts as
+    no merge and the commit is judged in full; a line passed to `git diff` could also be an option.
+    """
+    rc, path, _ = git(["rev-parse", "--git-path", "MERGE_HEAD"])
+    if rc != 0 or not path:
+        return []
+    p = Path(path) if os.path.isabs(path) else ROOT / path
+    try:
+        heads = [ln.strip() for ln in p.read_text(encoding="utf-8", errors="replace").splitlines()
+                 if ln.strip()]
+    except OSError:
+        return []
+    return heads if all(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", h) for h in heads) else []
+
+
+def staged_changes(heads=None):
+    """`git diff --cached --name-status` lines this commit's AUTHOR is answerable for.
+
+    A normal commit: every staged change. A merge (heads = the MERGE_HEAD commits): only paths
+    whose result differs from the first parent AND from every merged-in parent. A doc that came
+    in unchanged from the other branch is identical to that parent, so it was not written by the
+    author of the merge and is not theirs to justify. A doc added by hand in the merge, or a
+    conflict resolution, differs from every parent and is judged as before.
+
+    from main, and the lane got past it with `git merge -X ours`, which runs no hook at all, so
+    the gate was skipped for the whole commit. Renames are off in the merge case so a path is
+    compared with itself in each diff.
+
+    If a git call in the merge case fails (git() also reports a timeout as a failure), the narrowing
+    is dropped and every staged change is judged, as before this rule existed. Returning an
+    error here would make check() allow the commit, which would turn the gate off for that merge.
+    """
+    def everything():
+        rc, out, _ = git(["diff", "--cached", "--name-status"])
+        return rc, out.splitlines()
+
+    if not heads:
+        return everything()
+    rc, out, _ = git(["diff", "--cached", "--name-status", "--no-renames", "HEAD"])
+    if rc != 0:
+        return everything()
+    mine = {}
+    for ln in out.splitlines():
+        parts = ln.split("\t", 1)
+        if len(parts) == 2:
+            mine[parts[1]] = ln
+    for h in heads:
+        rc, out, _ = git(["diff", "--cached", "--name-only", "--no-renames", h])
+        if rc != 0:
+            return everything()
+        differs = set(out.splitlines())
+        mine = {k: v for k, v in mine.items() if k in differs}
+    return 0, list(mine.values())
+
+
 def check():
-    rc, out, _ = git(["diff", "--cached", "--name-status"])
+    rc, lines = staged_changes(merge_parents())
+    out = "\n".join(lines)
     if rc != 0:
         return 0                                   # cannot tell: never block on ignorance
     added = [ln.split("\t", 1)[1] for ln in out.splitlines()
@@ -561,9 +584,7 @@ def check():
         # demanding it. That is a backlog item that can never be closed, whose only remedy is a
         # hand-edit of a file whose first line forbids hand-edits.
         #
-        # Measured 2026-08-17: the cornerstone map's 15 pages produced 47 refusals in one
-        # commit, every one of them a listed document's vendor. Matched with facets' OWN regex,
-        # not a second copy - a marker format is a contract.
+        # Matched with facets' OWN regex, not a second copy - a marker format is a contract.
         try:
             import facets
             # ⛔ ALSO EXEMPT A DECLARED-UNINDEXED DOC. Facets exist to make a doc findable;
@@ -578,8 +599,7 @@ def check():
 
     # \u2b50 THE ROUTER'S ARTIFACT TRIGGER. Asked once per commit, not per file - the question
     # is whether this session consulted the corpus before adding to it, and one consultation
-    # answers that. See F108 in ORCHESTRATOR-DECISIONS-o9.md for the measurement that motivated
-    # it: ~324 router runs in its 9-day build window, 4 in the 16 days after.
+    # answers that.
     unrouted = []
     if cands:
         asked, knowable = asked_the_router()
@@ -630,10 +650,8 @@ def check():
         # Several would have been false, and a false facet is worse than a missing one because
         # a searcher lands on the document that says the opposite of what they need.
         #
-        # ⭐ `declined()` HAS EXISTED FOR EXACTLY THIS AND THIS MESSAGE NEVER NAMED IT. A guard
-        # whose printed remedy is the wrong one is the same defect as a guard whose printed
-        # remedy cannot be performed - `block_shared_tree_ops` has that recorded from 2026-08-18.
-        # The author was left choosing between a false facet and a bypass.
+        # ⭐ `declined()` HAS EXISTED FOR EXACTLY THIS AND THIS MESSAGE NEVER NAMED IT. The
+        # author was left choosing between a false facet and a bypass.
         #
         # ⚠️ NOT auto-suppressed by looking for negation words. This file already prefers
         # structural signals to phrasing, and a decline carries a STATED REASON, which is
@@ -642,10 +660,8 @@ def check():
         print("          ⛔ IF THE DOC NAMES IT ONLY TO SAY IT IS ABSENT - an audit, a gap")
         print("          analysis, a boundary statement - DO NOT DECLARE IT. Decline it with a")
         print("          reason instead, and the check stops asking:")
-        # ⚠️ COLON AFTER THE FACET NAME, and the reason at least 12 characters - both required by
-        # `facets.NOT_FACET`. My first draft printed `not-facet: component pwa` without the colon
-        # and I ran it through `declined()` rather than trusting it: it returned an empty set.
-        # I nearly shipped an unperformable remedy INSIDE the fix for printing one.
+        # ⚠️ COLON AFTER THE FACET NAME, and the reason at least 12 characters - both required
+        # by `facets.NOT_FACET`.
         print("              <!-- not-facet: %s: %s - names it only to record that it is absent -->"
               % (facetgaps[0][1], facetgaps[0][2]))
         print("          The reason is required and is the point: a stated refusal is worth more")
@@ -707,7 +723,7 @@ def check():
         print()
         print("            Ask it - one command, and a HIT or PARTIAL means extend that file")
         print("            rather than add this one:")
-        print("              python .shared/scripts/route.py <your subject, in your own words>")
+        print("              python <scripts>/route.py <your subject, in your own words>")
         print()
         print("            Then commit again. A VERIFIED MISS is the verdict that licenses a")
         print("            new doc, and it carries a receipt.")
@@ -715,15 +731,8 @@ def check():
         print("            Not applicable? A doc that opts out of routing says so:")
         print("              <!-- unindexed: <why> -->")
         print()
-        # ⛔ THE RULE (the human, 2026-09-08; scope ruled 2026-10-05 in o9:D69, option A): lanes may
-        # DRAFT a new doc, a pilot script, or the pilot's process log; only orchestrators may
-        # LAND any of the three. His 2026-09-08 words: "lanes may draft, only orchestrators may
-        # land."
         #
-        # ⭐ HE ASKED FOR SOMETHING BETTER THAN THE CHECK THIS MESSAGE ENFORCES. His question was
-        # whether a headless lane could ping its orchestrator for clearance - "a second pair of
-        # eyes from a higher perspective on whether the new doc should be created at all". The
-        # ping cannot work: a `claude -p` lane runs to completion and exits, so there is no
+        # The ping cannot work: a `claude -p` lane runs to completion and exits, so there is no
         # moment at which it is still alive to receive an answer. Placing the responsibility
         # gets the same review with no round trip.
         #
@@ -735,32 +744,23 @@ def check():
         # structurally does not have.
         #
         # ⛔ WORDED AS A RULE, NOT AS AN INSTRUCTION TO WHOEVER IS READING - and the human is the
-        # reason. The first version opened "IF YOU ARE A LANE, THIS DOC IS NOT YOURS TO LAND",
-        # printed to every session, and I priced the cost of that as "an orchestrator reads a
-        # paragraph that does not apply and skips it". He asked how certain we are that they
-        # skip it, when the whole point of this workstream is determinism.
+        # reason.
         #
-        # ⭐ HE IS RIGHT, AND THE COST WAS MISPRICED RATHER THAN SMALL. An instruction shown to
         # someone it does not apply to is not neutral: an orchestrator reading "this doc is not
         # yours to land" might decline to land a doc that IS theirs. That is the same shape as a
         # false facet - wrong guidance carrying the tool's authority. Stating the RULE is true
         # for both readers and misleads neither.
         #
-        # ⚠️ IT CANNOT BE SHOWN ONLY TO LANES, AND THIS IS NOW MEASURED RATHER THAN ASSUMED. The
-        # desktop app saves one JSON file per session under
-        # `AppData/Roaming/Claude/claude-code-sessions/` (since 2026-10-28:
-        # `AppData/Local/Claude-Data/claude_*/claude-code-sessions/`), holding that session's title, which is
-        # how `orchdoc_stop_check.py` identifies orchestrators. Ran a headless `claude -p` and
-        # counted: 1354 files before, 1354 after. A headless lane gets NO file, so title-based
-        # detection would find nothing and conclude "not a lane" for exactly the sessions that
-        # are one.
+        # ⚠️ IT CANNOT BE SHOWN ONLY TO LANES, AND THIS IS NOW MEASURED RATHER THAN ASSUMED. Ran
+        # a headless `claude -p` and counted: 1354 files before, 1354 after. A headless lane
+        # gets NO file, so title-based detection would find nothing and conclude "not a lane"
+        # for exactly the sessions that are one.
         #
         # ⭐ THE DETERMINISTIC HALF IS NOT HERE AT ALL - it is in the lane seed, which the
         # orchestrator writes and which therefore KNOWS the answer without inferring it. See the
         # `orchestrating-parallel-sessions` skill. This message is the backstop for a lane whose
         # seed did not say it.
-        print("            THE RULE (the human, 2026-09-08; scope ruled 2026-10-05 in o9:D69,")
-        print("            option A): lanes may DRAFT a new doc, a pilot script, or the")
+        print("            THE RULE: lanes may DRAFT a new doc, a pilot script, or the")
         print("            pilot's process log; only orchestrators may LAND any of the three.")
         print("            A lane that reaches this refusal reports the draft to its")
         print("            orchestrator with why it believes the subject is new - it does not")
@@ -781,15 +781,12 @@ def check():
     return REFUSE
 
 
-#: failure-value: None   # what it returns when it CANNOT TELL - o8's rule, o9:F148
 def undurable(index_text):
     """Docs the INDEX names that exist on NO pushed branch - i.e. on one laptop only.
 
     ⛔ THE FAILURE A PRE-COMMIT HOOK STRUCTURALLY CANNOT CATCH. Gate 2 fires when a file is
-    STAGED. A file nobody ever staged is invisible to it forever. Measured 2026-08-12:
-    `orchdoc-template-design.md` and `sop-router-design.md` sat untracked for a day while
-    DEV-DOCS-INDEX carried rows pointing at them. A disk failure takes the docs and leaves
-    the map pointing at nothing.
+    STAGED. A file nobody ever staged is invisible to it forever. A disk failure takes the
+    docs and leaves the map pointing at nothing.
 
     ⭐ Autosave is NOT the safety net people assume. It force-pushes to rolling
     `autosave/YYYY-MM-DD` branches that self-prune after ~3 days, so it is a three-day
@@ -885,9 +882,7 @@ def audit():
     return 0
 
 
-# ⛔ BLOCK ONLY ON THE EXPLICIT REFUSAL CODE. `|| exit 1` blocks on ANY non-zero exit, which
-# includes this file failing to PARSE - and on 2026-08-12 it did, from a bad docstring edit,
-# which took every commit in the workspace down until it was noticed.
+# ⛔ BLOCK ONLY ON THE EXPLICIT REFUSAL CODE.
 #
 # ⭐ The try/except around main() cannot cover that: a SyntaxError happens before any of this
 # file's code runs, so the fail-open promise was never structural, only conditional on the
@@ -958,11 +953,11 @@ def selftest():
         ok &= bool(cond)
 
     print("knowledge_gate selftest")
-    t("a lane SEED is not gated", not in_knowledge_path("o9L9-SEED.md"))
-    t("a bootstrap prompt is not gated", not in_knowledge_path("o7-sales-vendor-bootstrap.md"))
-    t("an OrchDoc is not gated", not in_knowledge_path("ORCHESTRATOR-DECISIONS-o9.md"))
+    t("a lane SEED is not gated", not in_knowledge_path("o99L1-SEED.md"))
+    t("a bootstrap prompt is not gated", not in_knowledge_path("o99-sample-bootstrap.md"))
+    t("an OrchDoc is not gated", not in_knowledge_path("ORCHESTRATOR-DECISIONS-o99.md"))
     t("CLAUDE.md is not gated", not in_knowledge_path("CLAUDE.md"))
-    t("a root knowledge doc IS gated", in_knowledge_path("vendor-oauth-homework-2026-07-29.md"))
+    t("a root knowledge doc IS gated", in_knowledge_path("sample-notes-2026-07-29.md"))
     t("a docs/ doc IS gated", in_knowledge_path("docs/specs/whatever.md"))
     t("a repo doc is NOT gated (other repos own their own)",
       not in_knowledge_path("product-repo/docs/x.md"))
@@ -988,31 +983,31 @@ def selftest():
     # ⛔ THE PAIR THAT MUST DISAGREE. Identical tag overlap, opposite verdicts - the whole
     # claim is that the OVERLAP RULE is right for reference docs and wrong for a thread, so a
     # fixture proving only one half proves nothing. Nine shared tags, same corpus, same floor.
-    nine = "voice data promise generated tracks b2 retention privacy policy commitment"
+    nine = "client data promise stored files archive retention privacy policy commitment"
     tagline = "<!-- route-tags: %s -->\n" % nine
-    msg = "<!-- correspondence: from=o9 to=o10 -->\n" + tagline
+    msg = "<!-- correspondence: from=o99 to=o98 -->\n" + tagline
     pool_ref = [("neighbour.md", tagline + "# a reference doc")]
-    pool_msg = [("O10-REPLY-thing-2026-08-17.md", msg + "# o10 -> o9")]
+    pool_msg = [("O98-REPLY-thing-2026-08-17.md", msg + "# o98 -> o99")]
     t("two REFERENCE docs sharing 9 tags are still REFUSED (the rule still works)",
       len(overlapping("new.md", tagline, pool_ref)) == 1)
     t("...and the overlap it reports really is 9 tags",
       overlapping("new.md", tagline, pool_ref)[0][1] == sorted(set(nine.split())))
     t("two CORRESPONDENCE docs sharing 9 tags PASS",
-      overlapping("O9-TO-o10-thing.md", msg, pool_msg) == [])
+      overlapping("O99-TO-o98-thing.md", msg, pool_msg) == [])
     t("a reference doc is not refused for overlapping a MESSAGE (exempt on both sides)",
       overlapping("new.md", tagline, pool_msg) == [])
     t("a message is not refused for overlapping a REFERENCE doc",
-      overlapping("O9-TO-o10-thing.md", msg, pool_ref) == [])
+      overlapping("O99-TO-o98-thing.md", msg, pool_ref) == [])
     # ⛔ THE OVER-REACH THIS DELIBERATELY DOES NOT COMMIT. A filename regex would exempt any
     # future doc named this way; the marker is what grants it, and the name only suggests it.
     t("the NAME alone does not grant the exemption",
-      len(overlapping("O9-TO-o10-thing.md", tagline, pool_ref)) == 1)
+      len(overlapping("O99-TO-o98-thing.md", tagline, pool_ref)) == 1)
     t("...but the name DOES trigger the suggestion in the refusal",
-      looks_like_correspondence("O9-TO-o10-thing.md")
-      and looks_like_correspondence("O10-REPLY-x-2026-08-17.md")
+      looks_like_correspondence("O99-TO-o98-thing.md")
+      and looks_like_correspondence("O98-REPLY-x-2026-08-17.md")
       and not looks_like_correspondence("commerce-and-external-provider-access.md"))
     t("correspondence is exempt from OVERLAP ONLY - it still needs a door",
-      not reachable("O9-TO-o10.md", "<!-- correspondence: from=o9 to=o10 -->", "")[0])
+      not reachable("O99-TO-o98.md", "<!-- correspondence: from=o99 to=o98 -->", "")[0])
 
     badge = "> Indexed in [DEV-DOCS-INDEX](./DEV-DOCS-INDEX.md)\n"
     t("a badge with no matching row is caught", false_badge("x.md", badge, "other stuff"))
@@ -1020,7 +1015,7 @@ def selftest():
     t("no badge is never a false badge", not false_badge("x.md", "# t", ""))
 
     # the contract must round-trip: what we WRITE must be what we MATCH.
-    h = tombstone_header("docs/new.md", "2026-08-12", "o9", "New", "moved")
+    h = tombstone_header("docs/new.md", "2026-08-12", "o99", "New", "moved")
     m = TOMBSTONE_OPEN.search(h)
     t("the header we write is matched by the regex we read with", bool(m))
     t("...and carries the successor path", bool(m) and m.group("path") == "docs/new.md")

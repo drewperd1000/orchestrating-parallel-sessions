@@ -40,6 +40,19 @@ CONFIG states their specific choice.** This file says *"follow the human's stand
 because it is read by people who have different ones. Their config says *"mine is hybrid."*
 Putting the specific choice in the shared skill pushes one person's setup onto everyone else.
 
+## Choose your own entry kinds, ids and folders
+
+The id letters, folder names and document kinds in the examples belong to whoever wrote them. On a first run, read `ORCHESTRATION-SETUP.md` beside this file and walk the person through it before creating any entry: make the workspace a git repository with an `origin` remote (step 0), what they keep track of, which id letter each kind gets, which folders hold their documents and which of those the Reader opens under "Review documents", a first entry with its Purpose line filled in, and a check in the Reader.
+
+Where things live. Run every command from the person's workspace folder, naming each tool by its
+full path in this skill's `scripts` folder (written `<scripts>` below); a plugin update replaces
+that folder, so nothing of the person's is kept in it. The settings file `.orchdoc-config.json`
+and the decision documents `ORCHESTRATOR-DECISIONS-o<N>.md` are in the workspace folder. The
+plugin's hooks (error reminders, the stop check that holds a session until a note written in the
+Reader is acknowledged, and the check that every reply links its entries) come with the plugin.
+A person reviews documents in the Reader, and the "Leave a note on this file" button on a file's
+page opens or reuses an entry about that file and puts the note in it.
+
 ## How many orchestrators — and you do not need to know yet
 
 ⭐ **We start with one by default, unless you say otherwise. More can be added any time, at
@@ -249,15 +262,8 @@ information weekly, they were one world.
 
 **Keeping them apart, mechanically:**
 
-- ⛔ **Give each world its own BAND of numeric ids — RULED by the human, 2026-09-14.** One project
-  owns one band of 99, and the band is everything before the last two digits:
-
   | project | band | ids |
   |---|---|---|
-  | the first | `` (none) | `o1` – `o99` |
-  | the second | `1` | `o101` – `o199` |
-  | the tenth | `9` | `o901` – `o999` |
-  | the eleventh | `10` | `o1001` – `o1099` |
 
   ⭐ **The id stays a bare `o<N>`, so no tool changes, and the number still says which world it
   belongs to.** Each band keeps its own *"next free id"* counter in its own registry.
@@ -273,12 +279,7 @@ information weekly, they were one world.
   12 projects — every one resolves through every real parser, and **zero of the 19
   orchestrator-id regexes in the workspace has a 2-digit limit.**
 
-  ⛔ **Never zero-pad a band.** `o0101` and `o101` are int-equal, so any code keyed on
-  `int(id[1:])` treats them as one group while the strings differ.
-
-  ⚠️ Past the tenth project the band is not readable at a glance (`o110` is band 1 member 10;
-  `o1101` is band 11 member 01). The rule is unambiguous; the eye is not — use the registry's
-  generated contacts table.
+  The rule is unambiguous; the eye is not — use the registry's generated contacts table.
 - **Separate registries and separate mailbox directories.** An id is only unique inside its
   registry, so two hosts sharing one file will collide the first time both allocate.
 - **Separate decision docs, always.** A doc is the human's view of one world; merging two is how
@@ -287,10 +288,6 @@ information weekly, they were one world.
   — and that should be rare enough to notice, because if it is not, see the warning above.
 
 ### ⛔ Starting a session that must NOT be folded into an existing world
-
-**RULED by the human, 2026-09-14.** He started a session deliberately meant to stay outside the
-orchestrator process, touched no orchestrator, checked in with nobody — and the Maestro adopted
-the work anyway.
 
 ⭐ **THE TOOLING DID NOT DO IT, AND ASSUMING IT DID SENDS YOU TO FIX THE WRONG THING.** A session
 is bound to a decision doc **by its TITLE and nothing else** — `orchdoc_stop_check.py`'s
@@ -309,9 +306,7 @@ you should work around silently.
 
 **THE RULE — start it in a directory OUTSIDE the workspace root.**
 
-That is the only boundary that is **structural rather than declared**. One move sheds the project
-`CLAUDE.md`, the codesight orientation, the OrchDoc conventions, the router and the registry,
-with nothing to remember and nothing for another orchestrator to read differently.
+That is the only boundary that is **structural rather than declared**.
 
 ⛔ **Saying so in chat is NOT a substitute, and it is what was tried.** The next session cannot
 read that conversation. A boundary that lives only in an instruction is not a boundary.
@@ -321,8 +316,6 @@ workspace that should be unowned** — nothing marks that today. If you need it,
 human rather than inventing a status word.
 
 ## ⛔ Guard the ARTIFACT, not the claim — it predicts which guards will hold
-
-o1, 2026-08-17, and it is the most useful line anyone has written about this system:
 
 > **A guard that fires on producing an ARTIFACT — a file, a commit, a doc, a deploy — is
 > mechanisable, because the artifact passes through a chokepoint. A guard that fires on
@@ -338,21 +331,13 @@ orchestrator who had it loaded in context, on the day they wrote a memory note a
 failure shape. Treat those rules as pressure, and put the real guard on whatever the claim
 causes you to WRITE.
 
-⭐ **The residual class, stated because leaving it looking covered is worse:** an assertion of
-absence that leads to **no artifact at all**. o1 said "there is no DB backup process," took no
-action, and nothing could have caught it — the backup was a cron job, not a doc, so there was
-no chokepoint to sit at. The claim went straight to the human and only his memory caught it.
-That class is small, real, and **not closeable**.
+The claim went straight to the human and only the human's memory caught it. That class is small,
+real, and **not closeable**.
 
 ## ⛔ Disk is the durable channel. The message is only the notification.
 
 **Put it in a file. Send a pointer.** That is the rule; everything below is why, and what to do
 when something genuinely was not worth a file.
-
-o8's formulation, 2026-08-12, after **four** silent drops in both directions in a single day —
-and it is better than the two rules o1 and o9 each wrote before it, because those were both
-*"verify the send"* and this one is *"the send is never the artifact."* Verification is a
-**fallback**, not the safeguard.
 
 ⭐ This is not a new discipline. It is the mailbox discipline this skill has always prescribed
 for orchestrator↔worker traffic, finally applied to the lane it never covered:
@@ -372,10 +357,8 @@ in-flight turn finishes _if that session stays healthy_."** That last clause is 
 a queued message is **dropped** if the recipient compacts, is interrupted, or ends before it is
 processed. Nothing tells you. The send looks identical either way.
 
-⛔ **So silence from another orchestrator is NOT evidence they ignored you, and a successful send
-is NOT evidence they read it.** Measured 2026-08-12: o10 replied to o9 and the reply never
-arrived; o9's inbox showed zero messages while o10's transcript showed the send. Both sessions
-were behaving correctly. The human noticed before either of them did, which is the wrong order.
+Both sessions were behaving correctly. The human noticed before either of them did, which is the
+wrong order.
 
 **The check.** Read the recipient's own transcript — it is authoritative, where your inbox is not:
 
@@ -389,10 +372,7 @@ mcp__ccd_session_mgmt__list_events                  session_id: <theirs>, limit:
 in-flight turn and may never be folded in. So while `isRunning: true`, `list_events` is a
 **pending** indicator, not a delivery confirmation.
 
-o1 and o9 both made this exact mistake on 2026-08-12, within an hour of each other, *while
 writing this rule*: each confirmed the turn was present mid-flight and reported the hand-off
-done. o1's went on to vanish — o8 never received it, and two distinctive phrases from it now
-return nothing from o8's transcript, so the turn that was seen was real and then went away.
 **The rule failed in the way the rule exists to prevent, which is the strongest argument for
 not relying on it as the primary safeguard.**
 
@@ -400,7 +380,6 @@ not relying on it as the primary safeguard.**
 
 | receipt | what it means |
 |---|---|
-| `Message sent to session …` | **The confident one — and the one that has silently lied.** It accompanied both of o1's total drops. |
 | `Message queued …; processed after the in-flight turn finishes **if that session stays healthy**` | At least honest: it tells you it has *not* landed yet, and names the condition under which it never will. |
 
 Neither is proof. Treat the confident wording as the more dangerous of the two, because it reads
@@ -417,17 +396,13 @@ orchestrator dropped the ball, check whether they were ever told.**
 a phrase you know exists in that session — an empty result from a broken query looks exactly like
 a message that never arrived.
 
-⛔ **A DROPPED MESSAGE HAS NO SIGNATURE.** o1, 2026-08-12, after a send that returned the plain
-success receipt — *"Message sent to session …"* — and was never delivered anywhere: the text
-appeared in no transcript, `list_events` across 44 messages spanning the window did not contain
-it, and the file it asked for went untouched. **In the same window, sends between two other
-orchestrators delivered fine**, so the channel was healthy; that one send vanished.
+**In the same window, sends between two other orchestrators delivered fine**, so the channel was
+healthy; that one send vanished.
 
 The reason this is worth a rule rather than a caution: **a dropped message and a session that
 simply has not got to it yet look identical.** Receipt says sent, target is idle, nothing
-happened. o1 had `isRunning: false` and an activity timestamp that moved on send, and built a
 confident wrong story that fit both — then told the human twice that the brief was fine and waiting.
-He opened the session; there was nothing there. **The failure cannot be reasoned about, only
+The human opened the session; there was nothing there. **The failure cannot be reasoned about, only
 checked.** (Same shape as the 401 banner in the project CLAUDE.md: a status line that reads as a
 fact about the world when it is only a fact about what one call returned.)
 
@@ -490,8 +465,9 @@ broadcast.** Send it to that owner.
 
 A finding often splits, and the halves have different owners: *the number in the tracking file*
 belongs to whoever maintains it; *whether the work is abandoned or parked* belongs to the human,
-and only to him. Handing the whole thing to an orchestrator converts his decision into their
-task. It reaches him eventually - after three hops, having lost the fact that it was his to
+and only to them. Handing the whole thing to an orchestrator converts the human's decision into
+the orchestrator's task. It reaches the human eventually - after three hops, having lost the
+fact that it was theirs to
 make, and arriving as someone else's relay rather than as a question.
 
 **Split it before you send it. If a half is the human's call, that half goes to the human.**
@@ -802,14 +778,14 @@ cost, and let the rest run headless and report up.
 ⛔ **DO NOT ASK WHICH, EVERY TASK.** Read it:
 
 ```bash
-python scripts/orchdoc_config.py get launch_mode
+python <scripts>/orchdoc_config.py get launch_mode
 ```
 
 - **Set** → honour it silently. It does not change between tasks, and asking implies it might.
   Re-asking a settled preference is the single most common way this skill wastes attention.
 - **Unset** → ask ONCE, then record it so nobody asks again:
   ```bash
-  python scripts/orchdoc_config.py set launch_mode hybrid    # or: manual
+  python <scripts>/orchdoc_config.py set launch_mode hybrid    # or: manual
   ```
 
 ⚠️ **Unset is not a default.** An orchestrator that silently adopts a mode the human never
@@ -822,7 +798,9 @@ lives in `.orchdoc-config.json`, never in an edited copy of this file.** A share
 hand-modified per machine is a fork maintained by discipline, and it drifts silently the first
 time someone syncs.
 
-**Option 1 — Manual bootstrap (the human launches each session).** The orchestrator writes the lane prompt; the **human** opens a session and pastes it — in the desktop app, or via `claude -n "o1L2: api" "<prompt>"` in a terminal (the `-n` flag sets the session name, so no `/rename` afterward). The lane is a full interactive session the human can open, watch, and steer mid-task. Best when the human wants live eyes on each worker, the work needs interactive judgment, or only the human can supply something (their voice for a recording, an auth click).
+The lane is a full interactive session the human can open, watch, and steer mid-task. Best when
+the human wants live eyes on each worker, the work needs interactive judgment, or only the human
+can supply something (their signature on a form, an auth click).
 
 **Option 2 — Hybrid: the orchestrator self-launches headless; the human watches the mailbox.** The orchestrator launches each worker **itself** as a headless background process — a SEPARATE `claude` process (not a subagent in its own tree):
 
@@ -856,8 +834,8 @@ run in the background. This **frees the orchestrator's inference the instant it 
 
 #### ⛔ A LANE IS A LEAF BY DEFAULT - spawn capability is granted, never assumed
 
-**the human ruled this 2026-09-15** (o9:W25). Nothing about recursive lanes is removed; what changed
-is that fanning out is now something somebody said out loud.
+Nothing about recursive lanes is removed; what changed is that fanning out is now something
+somebody said out loud.
 
 ```
 # a normal lane - it cannot spawn children, and does not need to
@@ -872,8 +850,8 @@ env ORCHDOC_LANE=o<N>L<m> ORCHDOC_LANE_MAY_SPAWN=1 CLAUDE_CODE_OAUTH_TOKEN="$TOK
 starting anything. **The grant is not inherited** - a lane passes it on explicitly with
 `--may-spawn`, so a three-deep tree states it at each hop rather than once at the top.
 
-⭐ **WHAT A LANE DOES WHEN IT NEEDS TO FAN OUT AND CANNOT - the human's procedure, and it is the
-same shape he ruled for the ingress-taint hook:**
+⭐ **WHAT A LANE DOES WHEN IT NEEDS TO FAN OUT AND CANNOT - the procedure, and it is the
+same shape as the ingress-taint hook:**
 
 1. **Finish everything that does not need a sublane.** A refused spawn is not a dead lane.
 2. **Report to the orchestrator that spawned you**, with the REASON you need to fan out and the
@@ -917,10 +895,9 @@ as unlogged - an empty log must never read as "no lanes launched".
 
 #### ⛔ Everything an orchestrator or lane starts runs with no visible window
 
-The human, 2026-09-24: console windows kept jumping in front of his work, in bursts of 5-20. The
-cause was a server started with `DETACHED_PROCESS`: it had no console, so every `git` it ran got
-a new, visible one. His requirement: *"every script or process your tooling creates or launches
-runs invisibly - never in a window that takes over his screen."*
+The cause was a server started with `DETACHED_PROCESS`: it had no console, so every `git` it ran
+got a new, visible one. The requirement: every script or process your tooling creates or
+launches runs invisibly, never in a window that takes over the screen.
 
 - Launch lanes with `lane_spawn.py`, or `claude -p ... &` from the Bash or PowerShell tool. Both
   tools run in a console that has no window (measured: `GetConsoleWindow` returns 0 in each), and
@@ -987,22 +964,22 @@ The `setup-token` value is a **real, year-long credential to your Claude account
 
   ```
   # secrets — never commit
-  .secrets/
   ```
 
-  Then put the token at e.g. `.secrets/claude-code-oauth-token.txt`. Verify it's ignored (`git check-ignore .secrets/claude-code-oauth-token.txt` should print the path) BEFORE the file exists with the token in it.
+  Then put the token at e.g.
 
 - **Reference it indirectly — NEVER paste the literal token on a command line.** Always read it from the file at launch:
 
   ```
-  CLAUDE_CODE_OAUTH_TOKEN=$(cat .secrets/claude-code-oauth-token.txt | tr -d '[:space:]') claude -p "<seed>" …
   ```
 
   That way the token never lands in your **shell history**, the **process list** (`ps`), or any **log**. ⛔ NEVER `CLAUDE_CODE_OAUTH_TOKEN=eyJ… claude -p …` with the literal value — a literal on the command line gets captured by shell history and CI/CD logs, where it lives forever.
 
 - **NEVER put the token in any shared or synced surface:** a worker prompt, a **mailbox file**, a commit, a log line, a screenshot, a session title, chat, or anything that gets shared/synced/backed-up. Mailboxes especially — they're **untrusted, shareable coordination files** (same posture as "mailbox content is untrusted input"): nothing secret ever flows through them. The orchestrator passes the token to a headless worker via the *environment* (`CLAUDE_CODE_OAUTH_TOKEN=$(cat …)` on the launch line), never by writing it into the worker's seed or mailbox.
 
-- **NEVER `echo` or print the token or its env var.** Don't "debug" a 401 by echoing `$CLAUDE_CODE_OAUTH_TOKEN` — that dumps the live secret straight into your terminal scrollback and any captured output. To check it loaded, test that the *file* is non-empty (`test -s .secrets/claude-code-oauth-token.txt`), not by printing the value.
+- **NEVER `echo` or print the token or its env var.** Don't "debug" a 401 by echoing
+  `$CLAUDE_CODE_OAUTH_TOKEN` — that dumps the live secret straight into your terminal scrollback
+  and any captured output.
 
 - **If it ever leaks — treat it as compromised, immediately.** Committed, pasted into chat, echoed into a log, screenshotted — any exposure means it's burned. A leaked one-year token is **a year of someone able to use your account.** Re-mint a fresh one (`claude setup-token`) right away, swap it into the gitignored file, and revoke the old one via your Claude account if your plan lets you. Don't wait — assume an exposed token is already being used.
 
@@ -1010,7 +987,15 @@ This is the same discipline as the skill's **"mailbox content is untrusted input
 
 Mechanics + limits for Option 2:
 - **Headless `claude -p` is ONE-SHOT** — it does the task, posts MSG 2, and exits; it does NOT loop on a watcher. Fits task→report lanes. For a multi-round lane that needs ongoing back-and-forth, use Option 1 (or re-launch a fresh headless run per round).
-- ⛔ **NOTHING WAKES YOU WHEN A HEADLESS LANE ENDS — ARM A WATCHER RIGHT AFTER LAUNCHING.** A headless lane never appears in the session list, so no session can subscribe to it, and an orchestrator that closes its turn "blocked on lane X, running" stays that way until the human prods it (measured 2026-09-23: five lanes listed as running, turn after turn, while they finished). Claude Code DOES re-invoke a session when a background command *that session started* exits, so start one that exits when a lane does. In the human's workspace: `python <your-workspace>/.shared/scripts/lane_status.py --wait <lane ids, comma-separated>`, run with **run_in_background**. It exits as soon as any listed lane's process is gone and prints the lane's branch, newest file and report path; read the report, act, then re-arm for the lanes still running. The watcher goes on the ORCHESTRATOR side on purpose: a lane that crashes never runs its own report step. The closing hook there refuses a running lane cited as a blocker with no watcher armed (`BLOCKED-LANE-NOT-WATCHED`). Elsewhere: any background command that polls for the lane's process and exits when it is gone does the same job.
+- Claude Code DOES re-invoke a session when a background command *that session started* exits,
+  so start one that exits when a lane does. In the human's workspace: `python
+  <your-workspace>/.shared/scripts/lane_status.py --wait <lane ids, comma-separated>`, run with
+  **run_in_background**. It exits as soon as any listed lane's process is gone and prints the
+  lane's branch, newest file and report path; read the report, act, then re-arm for the lanes
+  still running. The watcher goes on the ORCHESTRATOR side on purpose: a lane that crashes never
+  runs its own report step. The closing hook there refuses a running lane cited as a blocker
+  with no watcher armed (`BLOCKED-LANE-NOT-WATCHED`). Elsewhere: any background command that
+  polls for the lane's process and exits when it is gone does the same job.
 - **Scope `--allowedTools` to what the task needs** — do NOT use `--dangerously-skip-permissions`. Use a capable model (e.g. Opus) for write-capable runs (commits/pushes), and **verify the worker's git/output before trusting its "done."**
 - **Interactive self-launch does NOT work** — launching `claude` *interactively* from inside another claude session exits or stalls on first-run workspace-trust + console handling (verified). So orchestrator self-launch is **headless-only**; the visible-interactive path is Option 1 (human-run).
 - **Always surface the clickable mailbox `.md`** to the human on each launch, and keep **mailbox folders NON-dotted** (a leading-dot dir like `.orchestration-…` is hidden from most editor sidebars) so the human can watch lanes from their sidebar without a per-file link.
@@ -1022,36 +1007,28 @@ Mechanics + limits for Option 2:
 
 A **multi-agent Workflow tool** (in-session deterministic fan-out) is a fourth mechanism. It returns immediately and runs "in the background," BUT its agents run **within the orchestrator's own run and share its inference budget** — so a heavy workflow's spin-up + concurrent agent activity can make the orchestrator noticeably **less responsive to the human mid-run** (it does NOT hard-block the orchestrator — it stays able to answer — but it feels sluggish while many agents churn). A **headless `claude -p` session (Option 2) is a fully separate OS process with its own inference** — it can never compete with or slow the orchestrator. **So when the priority is keeping the orchestrator free + snappy for the human, run heavy/fan-out multi-agent work as a headless CLI session, not the in-session Workflow tool** — set it up, launch it via the CLI (or hand the human the prompt), and come back free. If you genuinely want parallel fan-out, the *headless session* can run the Workflow tool **internally** (that consumes its inference, not the orchestrator's). (Learned from a real incident — a heavy fan-out workflow made the orchestrator feel locked-up mid-run; root cause was the shared run/budget + spin-up, not a hard lock.)
 
-
 ## Naming sessions + mailboxes (so concurrent groups don't mix)
 
 With more than one orchestrator running, the hard part is telling which lanes belong to which orchestrator. Give every group ONE short id and reuse it everywhere - the session title, the mailbox filename, and the watcher `--role` all carry it.
 
-- **Group id `o<N>`** - lowercase `o` (never `0`) + a number the human assigns when starting the orchestrator (they can see which numbers the sidebar already shows). A 2-letter project mnemonic (`wl`, `sec`) works too and is self-describing when groups are unrelated.
-- **Orchestrator session = `o1`** (no lane suffix; the missing `L` is what marks it the orchestrator). **Lane sessions = `o1L1`, `o1L2`, ...** (capital `L` = lane). Everything in a group shares the `o1` prefix, so it reads as one cluster in the sidebar regardless of sort order.
+- **Group id `o<N>`** - lowercase `o` (never `0`) + a number the human assigns when starting the orchestrator (they can see which numbers the sidebar already shows). A 2-letter project mnemonic (`ab`, `sec`) works too and is self-describing when groups are unrelated.
 
 **Session titles** are what the sidebar shows: `<id>: <short subject>`. The human sets it (a session can't rename itself) - name it on creation, or run `/rename <id>: <subject>` right after pasting the bootstrap. Keep the label tiny and the subject 1-2 words: the sidebar truncates, and the label must never crowd out the subject.
 
 ```
-o1: hardening review        <- orchestrator, group 1
-o1L1: auth                  <- lane 1, group 1 (agent — id ends with ":")
-o1L1c1: token audit         <- child agent of lane o1L1 (ends with "c<k>:")
-o1L1 [cmd] grep auth refs   <- a command lane o1L1 ran (carries "[cmd]")
 o1L1c1 [cmd] grep token use <- a command that lane's child ran
-o1L2: api                   <- lane 2, group 1
-o2: marketing redesign      <- a DIFFERENT orchestrator, group 2
-o2L1: hero                  <- lane 1, group 2 (never confused with o1L1)
 ```
 
-**Mailboxes + roles use the SAME id**, so two groups share one coordination dir without collision: lane mailbox `mailboxes/o1L2.md`, watcher `--role o1L2`; the orchestrator posts as `--role o1` and watches `o1*.md`. Message headers become `## MSG <n> FROM o1 ...` / `FROM o1L2 ...`. (The watcher script is unchanged - these are just role strings.) The orchestrator generates each lane's id + subject and hands it to the human with that lane's bootstrap prompt. (Single group, no peers? Bare `lane1` is fine - but prefixing costs 2 chars and future-proofs against a second group appearing.)
+The fix is **three label forms for three entity types** — an agent's id ends with `:` (lane) or
+`c<k>:` (child); a command carries a `[cmd]` tag:
 
-**Children + background commands carry the lane id too.** The orchestrator's "Background tasks" panel aggregates its own subagents, *their* children, and *their* bash — so a child or command with a bare description shows up ownerless, and worse, a lane's own commands look identical to the lane agent itself (many indistinguishable `o1L2:` chips where you can't tell the worker from its own bash). The fix is **three label forms for three entity types** — an agent's id ends with `:` (lane) or `c<k>:` (child); a command carries a `[cmd]` tag:
+- **Lane agent (the orchestrated worker):** `o<N>L<m>: <subject>` — e.g.
+- **Child agent (a sub-agent a lane dispatches):** `o<N>L<m>c<k>: <subject>` — child #k of that
+  lane, e.g.
+- **Command (any Bash/tool call run by a lane OR one of its children):** insert **`[cmd]`**
+  after the id — `o<N>L<m> [cmd] <desc>` (e.g. `o1L2c3 [cmd] grep auth refs`).
 
-- **Lane agent (the orchestrated worker):** `o<N>L<m>: <subject>` — e.g. `o1L2: auth refactor`.
-- **Child agent (a sub-agent a lane dispatches):** `o<N>L<m>c<k>: <subject>` — child #k of that lane, e.g. `o1L2c3: token audit` (the 3rd child agent of lane `o1L2`; the `c<k>:` suffix makes it obvious it's a child, not a top-level lane).
-- **Command (any Bash/tool call run by a lane OR one of its children):** insert **`[cmd]`** after the id — `o<N>L<m> [cmd] <desc>` (e.g. `o1L2 [cmd] grep auth refs`), or `o<N>L<m>c<k> [cmd] <desc>` if a child ran it (e.g. `o1L2c3 [cmd] grep auth refs`).
-
-Rationale: agents END their id with `:`/`c<k>:`; commands carry `[cmd]`. That one tag stops the panel from showing a pile of identical `o1L2:` chips where the worker and its own commands are visually fused — every node now reads cleanly top-to-bottom and its owner *and kind* are obvious at a glance.
+Rationale: agents END their id with `:`/`c<k>:`; commands carry `[cmd]`.
 
 ## Multiple orchestrators, collaborating
 
@@ -1109,8 +1086,7 @@ had already passed the author's own tests:
   request for approval gets approval. A request for a failure case gets a failure case.
 - **Take the refusals seriously.** An orchestrator declining to approve a change to their own
   document is doing the job. The two that refused above were both right.
-- Each orchestrator keeps **its own decision doc** and its own ids. Cross-doc references are
-  qualified (`o3:D11`) so an id from another workstream is never mistaken for a local one.
+- Each orchestrator keeps **its own decision doc** and its own ids.
 - **Never edit another orchestrator's doc unilaterally** - propose, get agreement, then change
   it. The tooling enforces this (`$ORCHDOC_ME`, and `--not-mine` for an agreed edit), because
   the author of that rule broke it inside an hour of writing it down.
@@ -1144,9 +1120,9 @@ up pointed at each other, which has already happened twice.
 
 ⛔ **CREATE IT FIRST, and keep it current as a HIGH-PRIORITY duty.** Every orchestrator creates its own OrchDoc as one of its **first acts** — right after naming the group, before or alongside launching the first lane. Do NOT wait until "there's enough to record": the OrchDoc IS the workstream's durable memory from moment one, and a fresh orchestrator session (or the human) reads it to recover the full state after any compaction, restart, or handoff. **Keeping it up to date is first-class and non-optional — not an afterthought you get to when convenient.** Update it the instant anything changes (a decision resolves, a lane launches/merges, an item finishes, a new ask surfaces), not in a batch later. A stale OrchDoc is the exact drift/loss failure mode this whole skill exists to prevent.
 
-The lane-map tracks *work in flight*; the human separately needs a standing view of *what's waiting on them*. Each orchestrator session keeps ONE live decision + coordination doc — the persistent form of the "live picture" the orchestrator holds — that decodes every short label you use in chat ("D3", "B2", lane `o1L4`, "consent") to what it means and its current status, so the human never scrolls the thread to remember a reference. Look things up there, not by scrolling chat.
+The lane-map tracks *work in flight*; the human separately needs a standing view of *what's
+waiting on them*. Look things up there, not by scrolling chat.
 
-- **Naming — one doc PER orchestrator:** `ORCHESTRATOR-DECISIONS-o<N>.md`, matching the orchestrator's `o<N>` id (the `one orchestrator` orchestrator → `ORCHESTRATOR-DECISIONS-one orchestrator.md`; `o2` → `-o2`; etc.). With multiple concurrent orchestrators, never a shared or unnamed one — each gets its own suffixed doc so the human can tell them apart (same `o<N>` discipline as session titles + mailboxes). (the human, 2026-06-24.)
 - **Location:** inside the session working dir, at a path the human's file-preview pane can open (NOT a hidden/dotted dir, NOT a memory dir the pane can't render). Keep it findable, not buried.
 - **⭐ Format — DO NOT hand-write the skeleton. Generate it:**
 
@@ -1178,15 +1154,16 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   §6–§98 are deliberately unenumerated — add what your workstream needs; the generated
   index lists them by their § number so nothing you add becomes invisible.
 
-- **⛔ NEVER hand-write a "last updated" stamp.** The previous version of this skeleton
-  carried `(updated <YYYY-MM-DD HH:MM>)`, and that single line is what produced one orchestrator's
-  32-defect doc: it read "2026-07-30" above content that was that old, so the whole
-  document read as current. **A field a human maintains is a claim; the commit log is a
-  measurement.** `scaffold` writes the date from git. Same for the plate index and the
-  findings index — all generated, never typed.
+- **A field a human maintains is a claim; the commit log is a measurement.** `scaffold` writes
+  the date from git. Same for the plate index and the findings index — all generated, never
+  typed.
 
 - **Contents:** decisions awaiting the human (label → what it is → your recommendation); items ready for their go-ahead (each with the review URL + login); the real blockers and who owns each; what's already done (so they don't re-ask); and the key logins/links.
-- **⛔ Write it FOR the human — plain language, real bullets, no insider shorthand.** No bare branch/PR names, pixel counts, lane codes, or arrow-shorthand in the sections the human reads (`YOU → one orchestrator`, `o1L##`, `feat/x-branch`). A `A · B · C` middle-dot line renders as ONE wall-of-text paragraph — use real `-`/`*` bullets, one idea per line. Compact tracking labels may live only in the deep archive sections. Full rule: `memory/feedback_orchdoc_plain_language.md`.
+- **⛔ Write it FOR the human — plain language, real bullets, no insider shorthand.** No bare
+  branch/PR names, pixel counts, lane codes, or arrow-shorthand in the sections the human reads
+  (`YOU → one orchestrator`, `o1L##`, `feat/x-branch`). A `A · B · C` middle-dot line renders as
+  ONE wall-of-text paragraph — use real `-`/`*` bullets, one idea per line. Compact tracking
+  labels may live only in the deep archive sections.
 - **⭐ THE COMMANDS — the script owns every gate, so you never hand-edit a tracked field:**
 
   | command | what it does |
@@ -1197,7 +1174,6 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   | `orchdoc.py review --doc o<N>` | ⭐ walk EVERY section and force the completeness question — **the only check that can see ABSENCE** |
   | `orchdoc.py links --doc o<N>` | harvest every asset the doc already cites and propose a §1 table |
   | `orchdoc.py add "<one line>" --doc o<N>` | capture a decision + **print its anchor** for step 3 below |
-  | `orchdoc.py resolve D5 --doc o<N> --ruling "..."` | flip status IN PLACE, re-read and verified |
   | `orchdoc.py plate --doc o<N>` | REGENERATE the human-facing index |
   | `orchdoc.py scaffold --doc o<N>` | write/repair the spine + header |
   | `orchdoc.py archive --doc o<N>` | sink closed items to §99 |
@@ -1220,8 +1196,6 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   - Keep ONLY active items in the live sections — moving closed items down is what keeps the top a true at-a-glance view.
   - ⭐ **This is now MECHANICAL, not a discipline:** closed items belong in §99, and 99 sorts below anything you add in §6–§98. `orchdoc.py archive` moves them; `E-DONEINACTIVE` blocks a done item left in a live section. "Done sinks to the bottom" is a property of the NUMBER, not of anyone remembering.
 
-- **⛔ `T<n>` IS THE HUMAN'S NAMESPACE. Your own work is `W<n>` in §3.** (the human, 2026-08-11.)
-
   | prefix | means | lives in |
   |---|---|---|
   | `D<n>` | a **decision** needing the human's ruling | §2.1 |
@@ -1230,28 +1204,14 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   | `W<n>` | **your** work, in flight | §3 |
   | `F<n>` | a **finding** - a measured fact, a permanent record | §4 |
   | `A<n>` | an **agreement** - a standing commitment the group will not break | §5 |
-  | `G<n>` | a **guard** - a refusal, phrased *"o8 will not ..."* | §5 |
   | `S<n>` | a **standing practice** the group holds itself to | §5 |
-  | `DA<n>` | ⛔ **CLOSED.** o8's original decision series, superseded by `D` on 2026-09-04. Never file a new one; it is listed so tools and readers can still resolve the 23 that exist | §2.1 |
-
-  ⛔ **`G` IS "GUARD", NOT "GUARANTEE", AND `DA` IS NOT "DECISION-AUDIO" - both corrected
-  2026-09-14 after o8 caught them.** Both wrong the same way: a meaning inferred from the LETTER
-  instead of read off the entries. "DA" plausibly expands to "Decision-Audio" for a doc about
-  audio scripts, which is exactly why it survived review - but `DA3` is an authoring-model
-  bake-off and `DA5` is TAGR product integration, and the date split is clean with zero overlap
-  (DA1-DA23 opened 2026-07-28 to 2026-08-17; D3 onward from 2026-09-04). All 16 `G` entries
-  across o5 and o8 sit in `§5 GUARDS` and every one is phrased as a refusal.
-  ⭐ **A plausible expansion of an abbreviation is not evidence of what it abbreviates.**
 
   ⛔ **DO NOT INVENT A TENTH PREFIX, AND THIS IS NOT A STYLE PREFERENCE.** Every reader that
   parses ids - guards, checks, the plate generator - has to know the whole set, and one it has not
   seen is **invisible rather than wrong**: a non-match looks exactly like an absence, so the tool
   reports clean.
 
-  ⭐ **MEASURED, 2026-09-14, after this bit twice in one day.** o8 had coined `DA<n>` (23 entries)
-  and o5 `G<n>` (16). **Five** separate guards each carried their own hard-coded
   `[DFWSTQA]\d+` - and they did not agree with each other, one spelling it `[DFWSTAQ]`. None could
-  match `DA10` or `G1`, so in o8's doc an override that **correctly** named `DA10` was refused, and
   a reply **correctly** anchored to one was blocked. A guard that punishes correct behaviour is
   worse than no guard.
 
@@ -1262,20 +1222,16 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   ⚠️ **Genuinely need a new prefix?** Add it there first, in one edit, and say what it means. A
   prefix that exists in a doc and not in that file is one no tool can see.
 
-  ⭐ **Not a tidiness rule.** A prefix is what he SAYS OUT LOUD — *"where's T3?"* — so if `T`
-  means his to-do in one section and an orchestrator's own work in another, **the shorthand he
-  uses to point at things stops resolving.** The cost lands on the person the doc exists for.
   `E-WRONGSECTION` blocks it; `scaffold` emits `W<n>` for §3.
 
 - **⛔ THE ENTRY FORM — four rules, all enforced, none of them a matter of taste.** These exist
   because the human was re-reading items that were finished and decided, hunting for what was
-  still owed. Every one of them costs *his* attention, which is the only scarce thing here.
+  still owed. Every one of them costs *the human's* attention, which is the only scarce thing here.
 
   | rule | the form | enforced by |
   |---|---|---|
   | a **settled sub-item** inside a live entry | `- [x] the thing` | `E-SETTLEDNOTSTRUCK` |
   | **all** sub-items done | close it and move it to §99 **whole** — never leave it live | `E-ALLSUBSDONE` |
-  | **ids** | `PREFIX` + `NUMBER`, summary in the title: `D7 - pause cues`, never `D-PAUSE` or `DA7` | `E-IDSHAPE` |
   | **numbering** | ascends within a section, so a reader stops when they arrive instead of scanning | `E-IDORDER` |
 
   ⭐ **A CHECKED CHECKBOX IS THE WHOLE FORM.** `- [x]` renders with a green tick, **grey text
@@ -1458,7 +1414,8 @@ The lane-map tracks *work in flight*; the human separately needs a standing view
   section is an assertion that nothing does.** If that is false, it is the most damaging thing
   the doc can say, because the human will reasonably believe it and stop checking.
 - **Keep it live:** update it the instant a decision resolves, a lane lands, or a new item appears — `orchdoc.py add` for a new item, `resolve` when it is answered, `archive` to sink it to §99, `plate` to regenerate the index. ⛔ **Do NOT stamp an update time by hand** — `scaffold` reads it from the commit log. (An earlier version of this bullet said to stamp it, which is the one orchestrator defect described above; it survived the first pass of this edit because the same instruction appeared in two places — the propagate-to-ALL-trackers rule, applied to a skill.) A stale decision doc is worse than none — it re-spawns closed questions (see the propagate-a-resolution-to-all-trackers discipline: when something resolves, clear it from EVERY tracker, this doc included).
-- **Why:** the human's attention is the scarce resource. "D3 is still open" is only cheap for them if one glance decodes it. The doc turns every cross-reference from a thread-scroll into a lookup.
+- **Why:** the human's attention is the scarce resource. The doc turns every cross-reference
+  from a thread-scroll into a lookup.
 
 ### ⛔ SURFACE it in chat, RECORD it in the OrchDoc, POINT to the exact anchor
 
@@ -1470,8 +1427,6 @@ the most common way an OrchDoc rots into a lie.
 2. **Record it in the OrchDoc immediately** as a numbered, **self-contained** entry: file paths,
    line numbers, the exact wording in question, why it matters, your recommendation, and what is
    blocked until they answer. **They must never need to scroll chat to understand it.**
-3. **Tell them the exact anchor, as an OrchDoc Reader link with format:**
-   `[D8](http://127.0.0.1:8787/#o<N>/D8)`
 
    **Pictures for the human go in the entry, never on a page of their own.** Save the picture
    files inside the workspace, run `orchdoc.py pictures <page or folder> --what "<what they show>"`,
@@ -1498,17 +1453,14 @@ marked done that were open.
 it asserts a false state the human will reasonably trust, and they stop checking.
 
 **Origin:** the orchestrator surfaced seven decisions in chat across a long session
-and recorded **none**, leaving DECISIONS reading _"None open"_. When the human went looking for one he
-could find it in neither place. The skill's own rule already said decisions go in the moment they
-are surfaced - the orchestrator wrote that line and then broke it. The human, verbatim: *"it's great to
-surface the brief question in the chat - it lets me know they are there. I just need you to be sure
-to record them and then tell me where to find them."*
-
+and recorded **none**, leaving DECISIONS reading _"None open"_. When the human went looking for one, it
+was in neither place. The skill's own rule already said decisions go in the moment they
+are surfaced - the orchestrator wrote that line and then broke it.
 
 ## ⛔ Not one was caught by care. Every one was caught by a measurement.
 
-**On 2026-08-18 four orchestrators produced six wrong claims in one day. Every one of them was
-holding the relevant rule at the time. Not a single one was caught by an agent being careful.**
+Every one of them was holding the relevant rule at the time. Not a single one was caught by an
+agent being careful.**
 
 | the claim | caught by |
 |---|---|
@@ -1526,7 +1478,6 @@ mandate can achieve, so build to it rather than around it.
 ### ⛔ How a wrong claim gets delivered: attached to a true one
 
 > **"'and also X' riding along on a correct finding gets the finding's credibility for free."**
-> - an orchestrator, 2026-08-18, correcting the session that had just found a real problem in
 >   their repo
 
 **The wrong half is almost never alone.** It is stapled to something true, arrives in the same
@@ -1536,7 +1487,6 @@ reader is already nodding.
 Worked example, from the day this section describes. One orchestrator reported to another:
 
     "external_provider-OAUTH-DECISIONS-AWAITING-THE HUMAN.md exists on no permanent ref"     <- TRUE, and urgent
-    "also .claude/launch.json, which carries your o7L113 entry"            <- WRONG, both halves
 
 The first was measured and mattered - a security decision doc, three days from silent deletion.
 The second came from a DIFFERENT object measured hours earlier (a stash's copy of that file) and
@@ -1558,9 +1508,6 @@ An orchestrator swept ten documents against a branch and reported nine stale. Th
 `md5sum <file>` against `git show <ref>:<file> | md5sum` - **CRLF on disk against LF from the
 pipe.** It could not return CURRENT for any tracked file containing a newline, whatever the
 content. The proof was one extra byte per line, in every file, exactly:
-
-    o1  delta=1466  lines=1466        o7  delta=2681  lines=2681
-    o8  delta=2229  lines=2229        o10 delta=1611  lines=1611
 
 ⭐ **AND THE ONE THAT PASSED WAS THE TELL, READ BACKWARDS.** A single file came back CURRENT -
 because it was modified in place by a Python tool, so LF on disk, so it matched the LF pipe. The
@@ -1626,10 +1573,8 @@ it in a minute.
 
 ### The class no mechanism reaches, and what to do instead
 
-⛔ **No check knows which axis you meant to read a number on.** "The marker says 2026-08-11" is
-true; "so the human has not seen a banner" is a different claim, and nothing in the file distinguishes
-them. Four of the six failures live here, and a citation requirement catches none of them - every
-one had its receipt.
+Four of the six failures live here, and a citation requirement catches none of them - every one
+had its receipt.
 
 ⭐ **What caught all four was a SECOND PARTY MEASURING THE SAME THING DIFFERENTLY.** So the
 practice to mandate is on the RECEIVING side, and it is cheap:
@@ -1654,8 +1599,6 @@ that is the thing to fix - not the diligence of the people skipping it.
 every session sees every other session's uncommitted files, so `git add -A`, `git stash`,
 `git clean -fd` and `git reset --hard` all operate on other people's work while reading as
 ordinary local commands.
-
-**Measured in one workspace on 2026-08-17, all from that single fact:**
 
 | what happened | cost |
 |---|---|
@@ -1763,9 +1706,7 @@ There are two tiers of memory, and **putting a note in the wrong tier is the #1 
 
 ## Worker-prompt template
 
-⛔ **THE SEED IS WHERE A LANE LEARNS WHAT IT IS, AND THAT IS WHY IT IS DETERMINISTIC.** the human,
-2026-09-08: *"Wouldn't it be possible to build it deterministically into the creation of the
-headless? Eg, 'you are session o15L45. You must do this and this for documentation...'"*
+You must do this and this for documentation...'"*
 
 ⭐ **The orchestrator KNOWS it is launching a lane - it is writing the seed - so nothing has to be
 inferred at run time.** Measured the same day: a headless `claude -p` session writes NO file to
@@ -1773,8 +1714,7 @@ the desktop app's session store (1354 before, 1354 after), so a tool trying to d
 lane?" from the session title finds nothing and concludes "not a lane" for exactly the sessions
 that are one. **A guard downstream can only guess; the seed can simply say.**
 
-The same mechanism o1 measured that day for titles: a session told its own name in the prompt
-set it. Tell a lane what it is and it acts accordingly.
+Tell a lane what it is and it acts accordingly.
 
 Paste one per worker session - ONCE (MANUAL mode). In **HYBRID** mode the orchestrator feeds this same prompt to `claude -p` instead of the human pasting it — drop the *Title this session* line (`-n`/the seed handles naming) and the *LOOP* line (a headless worker is one-shot: do the task, post the result, exit; don't re-arm a watcher). Fill every field:
 
@@ -1814,10 +1754,9 @@ Then LOOP (hands-off): ack your post, re-arm the watcher in the background
 
 ## Spinning up a NEW orchestrator (a second group) — the orchestrator-bootstrap prompt
 
-Sometimes a *distinct* workstream deserves its own orchestrator + lanes rather than another lane in the current group
-— a separate project, a parallel initiative the current group shouldn't be entangled with, or work the human wants
-tracked + watched on its own. That's a SECOND orchestrator (`o2`, `o3`, …) running concurrently with the first (see
-*Naming sessions + mailboxes*).
+Sometimes a *distinct* workstream deserves its own orchestrator + lanes rather than another lane
+in the current group — a separate project, a parallel initiative the current group shouldn't be
+entangled with, or work the human wants tracked + watched on its own.
 
 You don't start it by hand-running an orchestrator. **If a Maestro exists, this is its job** (see *The Maestro*) —
 it allocates the id, writes the charter, introduces the new orchestrator to the host, and stays available for its
@@ -1837,7 +1776,6 @@ FIRST, read your operating manual + context:
    HYBRID self-launch headless via `claude -p`, or MANUAL prompts; o<N>/o<N>L<m> naming; ASK before
    releasing a lane; the viewable-doc mandate).
 2. Read <the specific memory notes / docs / repos carrying THIS workstream's context>.
-3. Orient on the codebase if relevant (codesight summary / read the key files).
 
 GOAL + SCOPE: <what this orchestrator owns; in / out of scope; research/planning vs build>.
 REPOS/ACCESS: <repos + the MCPs/CLIs/tokens/paths the lanes will need>.
@@ -1861,15 +1799,11 @@ on every decision/lane/item change)**, surface every viewable doc URL/path, ASK 
 do heavy work yourself — delegate to the lanes and stay responsive.
 ```
 
-Hand it to the human with explicit routing: **"→ paste into a NEW session, then `/rename o<N>: <subject>`."** The new
-orchestrator shares the coordination dir with peers collision-free because every id carries its group prefix
-(`o2L*` mailboxes, watcher `--role o2`).
-
 ## Variations used in practice
 
 These extend the core model; reach for them as the work calls for it.
 
-- **Background-subagent workers (no human bootstrap).** Instead of handing the human a bootstrap to paste, the orchestrator can dispatch a worker as a background subagent (the Agent tool, `run_in_background`). Best for small, well-scoped lanes: the subagent does the work, opens a PR, and posts its result to the lane mailbox — the orchestrator gates it identically. Removes even the one human bootstrap for that lane. Use a **human-bootstrapped session** when the work is long-running, needs the human's live judgment mid-task, or wants a persistent window (and when the human is supplying something only they can — e.g. their voice for a recording); use a **background subagent** for contained fixes the orchestrator can hand off whole. **Subagent vs. headless self-launch:** a background subagent runs inside the orchestrator's own process/inference tree — it is *not* a separate session and does not free a separate inference budget. When the goal is to genuinely offload to another session (and let the human watch a mailbox `.md`), prefer **HYBRID headless self-launch** (`claude -p`, see *Launching workers — manual or hybrid*); reserve the subagent for a contained hand-off where no separate session is wanted.
+- **Background-subagent workers (no human bootstrap).** Instead of handing the human a bootstrap to paste, the orchestrator can dispatch a worker as a background subagent (the Agent tool, `run_in_background`). Best for small, well-scoped lanes: the subagent does the work, opens a PR, and posts its result to the lane mailbox — the orchestrator gates it identically. Removes even the one human bootstrap for that lane. Use a **human-bootstrapped session** when the work is long-running, needs the human's live judgment mid-task, or wants a persistent window (and when the human is supplying something only they can — e.g. their signature on a form); use a **background subagent** for contained fixes the orchestrator can hand off whole. **Subagent vs. headless self-launch:** a background subagent runs inside the orchestrator's own process/inference tree — it is *not* a separate session and does not free a separate inference budget. When the goal is to genuinely offload to another session (and let the human watch a mailbox `.md`), prefer **HYBRID headless self-launch** (`claude -p`, see *Launching workers — manual or hybrid*); reserve the subagent for a contained hand-off where no separate session is wanted.
 
 - **Visibility is MANDATORY for observable changes — never report a PR/branch as the artifact.** A PR diff is *code*, not the rendered change; UI / copy / visual work is NOT "done" until the human can OPEN it and SEE it. Leaving it on a branch leaves the human blind + idle, hunting for something viewable nowhere. **Visibility ladder — produce the highest rung you can:** (1) **deploy the branch to STAGING** + hand the human a LIVE URL + how to reach the change (route + any auth/signup step) — interactive, the gold standard; (2) if staging won't work (auth friction / no env / infra), **spin up a LOCALHOST dev preview** (Preview MCP `preview_start` → `preview_screenshot`) + give the localhost URL **and** a screenshot; (3) at absolute minimum, a **screenshot** of the rendered change. Merge only after the human OKs it against that preview. Keep the review to ONE clean URL per lane; re-stage after each round of edits. Shared-staging contention: if one staging lane serves the whole group, deploying lane B's branch replaces lane A's preview — tell the human + re-stage on demand. **Same-page collisions → unique slugs:** when two+ lanes change the SAME page and can't each get a dev preview, have each deploy its version to a slightly different staging slug (`/offer-1`, `/offer-2`, `/offer-3`, …) so ALL versions are viewable at once without clobbering each other — the human opens each to compare; clean up the throwaway slugs after the winner's picked. **Headless workers can't run the Preview MCP** — so a headless lane MUST either deploy to staging or **flag loudly that it couldn't**, and the orchestrator (which CAN run Preview) produces the localhost preview + screenshot before reporting to the human. (The principle: EVERY observable output must actually show the human what they need to see — a branch they can't open is the failure.)
 
@@ -1914,7 +1848,7 @@ These extend the core model; reach for them as the work calls for it.
 | Orchestrator asks the human *"should I do this myself or dispatch sub-agents?"* | That question IS the anti-pattern — the answer is always dispatch; asking it means the route-don't-do rule was forgotten (real: a writer-orchestrator asked exactly this on bootstrap) | Never ask; the answer is always **dispatch**. Decompose into lanes and launch — don't surface the choice |
 | Spinning up a session to capture an idea | Accidental colliding worker | Capture is not execute - record it, decompose later |
 | Auto-releasing a lane when its deliverable looks done | Worker stops watching; follow-on work can't reach it; human must manually re-kickstart the session | ASK before releasing; keep lanes armed by default; `released` only on the human's explicit go |
-| Reporting a PR/branch as "ready" for visual/UI work | Human is left blind + idle, scrolling to find something viewable that lives nowhere he can open | Deploy to staging (or localhost preview + screenshot); surface the VIEWABLE URL — never a bare PR link. Require it in the seed's Done section |
+| Reporting a PR/branch as "ready" for visual/UI work | Human is left blind + idle, scrolling to find something viewable that lives nowhere they can open | Deploy to staging (or localhost preview + screenshot); surface the VIEWABLE URL — never a bare PR link. Require it in the seed's Done section |
 | Saving a deliverable doc only to the memory dir (`<your memory dir>`) | Some preview panes can't open a file outside the session folder — the human gets a dead clickable link | Save human-viewable docs INSIDE the session cwd (`<your workspace root>`) and report that path; memory copy is recall-only |
 
 ## Quickstart
@@ -1925,4 +1859,4 @@ Designate ONE session as the orchestrator:
 
 Every other session is a worker you paste a prompt into - once (MANUAL) — or, if you prefer, tell the orchestrator to **self-launch workers headless** while you just watch their mailbox `.md` files (HYBRID — see *Launching workers — manual or hybrid*). Either way the mailboxes carry the coordination.
 
-Running more than one orchestrator at a time? Prefix each group (`o1`, `o2`, ...) and title every session `o<N>[L<m>]: subject`, so each lane pairs to its orchestrator at a glance - see **Naming sessions + mailboxes**.
+Running more than one orchestrator at a time?

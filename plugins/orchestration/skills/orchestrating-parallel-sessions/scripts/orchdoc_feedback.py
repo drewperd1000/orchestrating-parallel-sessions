@@ -2,11 +2,9 @@
 
 <!-- subject: orchestration -->
 
-WHY BOTHER, when the repo already has issue templates: because the gap between "I should
-report this" and "I have reported this" is where reports die. By the time someone has opened a
-browser, found the repo, chosen a template and re-typed what happened, the moment has passed
-and they have moved on - and the report that would have been most useful is the one from
-someone mid-task who was in a hurry.
+By the time someone has opened a browser, found the repo, chosen a template and re-typed what
+happened, the moment has passed and they have moved on - and the report that would have been
+most useful is the one from someone mid-task who was in a hurry.
 
 ⭐ THE REPORTS THAT MATTER MOST COME FROM PEOPLE WHO ARE BUSY. Nearly every fix in this
 toolchain came from an orchestrator running a check against a real document, finding it

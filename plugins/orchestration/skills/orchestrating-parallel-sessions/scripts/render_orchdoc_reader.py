@@ -10,11 +10,9 @@ CORRECT; the two readers simply disagree about what an anchor is. So this does n
 them. It renders the document somewhere navigation is a real feature instead of a link.
 
 ⚠️ AND THE FAILURE THAT WOULD LOOK LIKE SUCCESS: a reader that silently drops an entry.
-A missing entry is indistinguishable from an entry that does not exist, and the human's whole
-use is "find the thing" - so a quiet omission does not just fail, it TEACHES HIM THE THING
-IS NOT THERE. `test_orchdoc_reader.py` asserts per-doc that the number of entries rendered
-equals the number `orchdoc.parse_entries` returns, with a deliberately-dropped fixture as
-the control proving the assertion can fail.
+`test_orchdoc_reader.py` asserts per-doc that the number of entries rendered equals the number
+`orchdoc.parse_entries` returns, with a deliberately-dropped fixture as the control proving the
+assertion can fail.
 
 ⭐ THE PARSER IS `orchdoc.py`'s, NOT A SECOND COPY. Every question about what an entry is -
 where it begins, what its id and status and owner are, whether it is archived, whether it
@@ -26,19 +24,12 @@ document than the tool validates, which is worse than having no reader.
 CSS class. That is deliberate - it makes it structurally impossible for a filter bug to
 drop an entry, which is the same failure as a parser bug and much harder to notice.
 
-⭐ CROSS-DOC REFERENCES BECOME LINKS - AND ONLY WHEN THEY RESOLVE. These documents
-cite each other constantly (`o10:D14`, `ORCHESTRATOR-DECISIONS-o9.md#W23`, and the same
-filename followed by a bare id), and every one of those was flat text the human had to go
-and find by hand. They are now anchors whose href is `#<doc>/<ID>` - the hash `route()`
-has always understood, the one clicking an entry already writes - so there is no second
-navigation path and no second idea of what an entry id is.
+⭐ CROSS-DOC REFERENCES BECOME LINKS - AND ONLY WHEN THEY RESOLVE. They are now anchors whose
+href is `#<doc>/<ID>` - the hash `route()` has always understood, the one clicking an entry
+already writes - so there is no second navigation path and no second idea of what an entry id
+is.
 
-⛔ A REFERENCE THE INDEX CANNOT RESOLVE DOES NOT BECOME A LINK. A link that silently
-goes nowhere costs more than plain text: the first dead one teaches him to stop
-trusting the live ones. And a doc the parser cannot read is marked DIFFERENTLY from a
-missing entry, because o3's decisions do exist - the parser is what cannot see them,
-and saying "no such entry" about them would be a false statement wearing the
-authority of a generated one.
+⛔ A REFERENCE THE INDEX CANNOT RESOLVE DOES NOT BECOME A LINK.
 
 This module writes NOTHING. It never calls `orchdoc.py plate` (that command REGENERATES the
 index inside the doc); it calls `build_plate_block`, the same builder `plate` writes with,
@@ -79,37 +70,77 @@ import localhost_write_gate as GATE  # noqa: E402
 
 
 def _reader_gate(*args, **kw):
-    """Every write route's gate: the four checks of localhost_write_gate plus `browser_only`
-    (o9:W258, lane o9L1480). The Reader writes notes as the human, so a write must carry the header
-    only a browser sends for a fetch from this page (`Sec-Fetch-Site: same-origin`); a curl or
-    a script on this computer without it is refused. The human's saves from the page send it."""
+    """The Reader writes notes as the human, so a write must carry the header only a browser sends
+    for a fetch from this page (`Sec-Fetch-Site: same-origin`); a curl or a script on this
+    computer without it is refused. The human's saves from the page send it."""
     kw.setdefault("browser_only", True)
     return GATE.check_request(*args, **kw)
 
 
 import orchdoc  # noqa: E402
-import reader_scripts as SCRIPTS  # noqa: E402
-import reader_full_rewrite as FRW  # noqa: E402 - "00 - Full Rewrite Scripts" (o9 W248)
-import script_note_store as SNOTES  # noqa: E402 - o9L1506: notes on a script, kept outside the file
-import reader_library_runner as RUNNER  # noqa: E402
-import reader_compare as COMPARE  # noqa: E402 - the Compare view and the human's why-notes (o8:W72)
+import reader_text as TEXT  # noqa: E402 - search matching and the line diff, needed by every Reader
 import secret_patterns  # noqa: E402
-from script_notes import strike_spans  # noqa: E402 - what counts as struck text (o9 W203)
 try:
-    # The script-rule boxes (HV9, TY7 ...): the #rule view and the links to it (o9L1197).
-    import rule_codes_index as RULECODES  # noqa: E402
-except Exception:  # a partial delivery must not take the reader down
-    RULECODES = None
+    # ⭐ THE SCRIPT FEATURES ARE ONE OPTIONAL GROUP. A setup with no document library does not
+    # carry these files (the published copy does not), and the Reader then starts without the
+    # Scripts view, the Compare view, script notes, the library runner and the rule boxes.
+    # All-or-nothing on purpose: a half-imported group would leave routes that reach a module
+    # that is not there. `HAS_SCRIPTS` is the one switch the rest of this file reads.
+    import reader_scripts as SCRIPTS  # noqa: E402
+    import reader_full_rewrite as FRW
+    import script_note_store as SNOTES
+    import reader_library_runner as RUNNER  # noqa: E402
+    import reader_compare as COMPARE
+    from script_notes import strike_spans
+    HAS_SCRIPTS = True
+except ModuleNotFoundError as _missing:  # the script files are not installed
+    # Only a file of the group being absent counts. Any other failure, in a file that IS here,
+    # still stops the Reader with its own message, as it did before the group was optional.
+    _SCRIPT_GROUP = ("reader_scripts", "reader_full_rewrite", "script_note_store",
+                     "reader_library_runner", "reader_compare", "script_notes", "training_header",
+                     "file_script", "check_script", "script_git_dates", "pause_cues")
+    if (_missing.name or "") not in set(_SCRIPT_GROUP):
+        raise
+    # A tree with none of the group's files is the public copy and starts without the features.
+    # A tree where any of them IS present and another is missing is a broken install: stop.
+    if any(os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), n + ".py"))
+           for n in _SCRIPT_GROUP):
+        raise
+    SCRIPTS = FRW = SNOTES = RUNNER = COMPARE = None
+    HAS_SCRIPTS = False
+
+    def strike_spans(s):
+        """Without script_notes: every `~~text~~` on one line is struck."""
+        return [m.span() for m in re.finditer(r"~~[^~\n]+~~", s)]
+RULECODES = None
+if HAS_SCRIPTS:
+    try:
+        import rule_codes_index as RULECODES  # noqa: E402
+    except Exception as _e:  # a partial delivery must not take the reader down, but must say so
+        RULECODES = None
+        sys.stderr.write("render_orchdoc_reader: rule_codes_index did not load (%s: %s); the "
+                         "Writing Rules button is off\n" % (type(_e).__name__, _e))
+try:
+    import reader_docs as DOCS  # noqa: E402 - the folders the user chose for document review
+except ImportError:  # a partial delivery must not take the reader down: no Review documents link
+    DOCS = None
+
+
+def documents_folders():
+    """The folders named in the `doc_folders` setting, or [] (then no link and no page)."""
+    return DOCS.folders() if DOCS is not None else []
+
+
 try:
     import done_feed as DONE  # noqa: E402  - the /done page; read-only, from git history
 except Exception:  # a partial delivery must not take the reader down; /done says so instead
     DONE = None
 try:
-    import reader_landing as LANDING  # noqa: E402  - o9:W123, lands saves in the background
+    import reader_landing as LANDING
 except Exception:  # a partial delivery must not take the reader down: saves then land inline
     LANDING = None
 try:
-    import reader_restart as RESTART  # noqa: E402  - o9:W195, restarts onto new code when idle
+    import reader_restart as RESTART
 except Exception:  # a partial delivery must not take the reader down: it then never restarts
     RESTART = None
 
@@ -135,39 +166,25 @@ DOC_RE = re.compile(r"^ORCHESTRATOR-DECISIONS-(o\d+)$")
 # something finished when nothing ever started.
 STATUS_CLASS = {
     "OPEN": "open",
-    # \u26d4 BLOCKED AND SEQUENCED ARE NOT "OPEN". The human, 2026-09-22: blocked work "doesn't
-    # hold the same relevance of things that need to get worked on NOW." BLOCKED mapped to
-    # "open" until then, so the one distinction the status exists to draw was erased exactly
-    # where he looks at it - and writing BLOCKED felt like it had done something.
+    # \u26d4 BLOCKED AND SEQUENCED ARE NOT "OPEN".
     #
-    # \u26a0\ufe0f SEQUENCED IS NOT LISTED HERE, AND THAT IS ON PURPOSE. I first wrote it
-    # here as "blocked" and it was a DUPLICATE KEY - silently overridden by "SEQUENCED": "hold"
-    # further down, later key wins, no error. Present in the source, never executed, which is
-    # the exact defect this colour change exists to make visible. Caught only by printing the
-    # resolved value instead of re-reading the line I had just written.
+    # \u26a0\ufe0f SEQUENCED IS NOT LISTED HERE, AND THAT IS ON PURPOSE. Present in the source,
+    # never executed, which is the exact defect this colour change exists to make visible.
     #
     # It stays "hold" on the merits too: its VALID_STATUS comment says it is "not BLOCKED
     # (nothing broke) and not DEFERRED (it will happen)". PAUSED and DEFERRED are amber and
     # also mean live-but-not-now, so SEQUENCED already read distinctly from OPEN's red. BLOCKED
     # was the one wearing OPEN's colour, and BLOCKED is what moved.
     "BLOCKED": "blocked",
-    # \u26d4 ONLY THE NORMALIZED SPELLING BELONGS HERE. VALID_STATUS also accepts
-    # "IN-PROGRESS" and "INPROGRESS", and on 2026-09-22 I added both to this map believing an
-    # entry spelled that way fell through to the default class. It never did: the renderer
-    # computes `status = orchdoc.status_of(e["body"])` and passes THAT here, and status_of
-    # normalizes all three to "IN PROGRESS" first. The two extra keys were unreachable and are
-    # gone.
+    # \u26d4 ONLY THE NORMALIZED SPELLING BELONGS HERE. It never did: the renderer computes
+    # `status = orchdoc.status_of(e["body"])` and passes THAT here, and status_of normalizes all
+    # three to "IN PROGRESS" first. The two extra keys were unreachable and are gone.
     #
-    # \u2b50 I found that gap by calling STATUS_CLASS.get("IN-PROGRESS") directly - reading the
-    # MAP instead of the PATH, which skips the normalization the renderer always applies. The
-    # lookup I measured is one nothing performs. That is why the check below is written against
-    # the NORMALIZED vocabulary: it is the only form status_class is ever given.
+    # That is why the check below is written against the NORMALIZED vocabulary: it is the only
+    # form status_class is ever given.
     #
-    # IN PROGRESS HAS ITS OWN CLASS, "prog" (the human, 2026-10-01 15:17, o9:W122): "I need different
-    # colors for things that are paused/deferred from things that are in progress, etc." It was
-    # "hold", the same amber as PAUSED and DEFERRED, so work being done and work put on hold
-    # looked the same in the pill and in the rail. PAUSED, DEFERRED and SEQUENCED stay "hold".
-    # STATUS_GROUPS (below) names each class for the legend at the top of a doc.
+    # PAUSED, DEFERRED and SEQUENCED stay "hold". STATUS_GROUPS (below) names each class for the
+    # legend at the top of a doc.
     "IN PROGRESS": "prog", "PAUSED": "hold", "DEFERRED": "hold",
     "RESOLVED": "done", "ANSWERED": "done", "DONE": "done",
     "SHIPPED": "done", "SUPERSEDED": "done", "ARCHIVED": "done",
@@ -188,10 +205,8 @@ def _status_class_covers_vocabulary():
     \u2b50 The map is a VIEW of orchdoc's vocabulary, so the only safe hand-kept part is the
     JUDGEMENT of which colour - never the membership. RETRACTED proved that by going missing.
 
-    \u26d4 THIS WAS CALLED FROM NOWHERE until 2026-09-22, while the comment above the map
-    asserted it made drift impossible. A function returning a list is not a check until
-    something reads the list. It now has a test (test_status_vocabulary.py) and is called at
-    render time.
+    A function returning a list is not a check until something reads the list. It now has a
+    test (test_status_vocabulary.py) and is called at render time.
 
     \u26a0\ufe0f IT COMPARES THE NORMALIZED FORM ON PURPOSE. The renderer passes
     `orchdoc.status_of(body)` to status_class, so the normalized spelling is the only one that
@@ -207,10 +222,7 @@ KIND_LABEL = {"D": "Decisions", "Q": "Questions", "T": "To-Dos", "A": "Actions",
 
 
 def discover_docs(workspace):
-    """Every OrchDoc in the workspace, ordered o1, o2, ... o12 - NUMERICALLY.
-
-    Sorted by number, not by name: a lexical sort puts o10 between o1 and o2, and a rail
-    that reads 1, 10, 11, 12, 2, 3 is one the human has to scan rather than point at.
+    """
     """
     out = []
     for p in Path(workspace).glob(DOC_GLOB):
@@ -259,12 +271,9 @@ def kind_of(eid):
 def on_humans_plate(entry):
     """The plate predicate, EXACTLY as `build_plate_block` applies it.
 
-    ⛔ Three conditions, and all three are orchdoc's own functions. Dropping any one of them
-    reproduces a bug orchdoc has already fixed and written down: selecting on status alone
-    put every open finding in front of the human, and testing the owner for a bare `o<N>` leaked
-    every qualified owner string ("o8 supplies the text; o10 executes") onto his plate.
-    `test_orchdoc_reader.py` cross-checks the result against `build_plate_block`'s rendered
-    rows per doc, so this predicate cannot drift from the generator without a test failing.
+    ⛔ Three conditions, and all three are orchdoc's own functions. `test_orchdoc_reader.py`
+    cross-checks the result against `build_plate_block`'s rendered rows per doc, so this
+    predicate cannot drift from the generator without a test failing.
     """
     return (not entry.get("archived")
             and orchdoc.status_of(entry["body"]) in orchdoc.PLATE_STATUS
@@ -278,11 +287,10 @@ def entry_body_markdown(entry):
     `parse_entries` includes the heading in `body` (body = lines[line-1:end]); the reader
     renders the title itself, so repeating it would show every entry's name twice.
 
-    ⛔ AND THE HUMAN'S NOTES COME OUT OF THE PROSE. They live IN the entry - that is what makes
-    them durable and what puts them in front of the orchestrator who owns it - but rendering
-    one inline would drop a blockquote into the middle of that orchestrator's writing, where
-    it reads as part of their argument. `orchdoc.strip_notes` is the one definition of which
-    lines are his, so the reader and the writer cannot disagree about what a note is.
+    ⛔ AND THE HUMAN'S NOTES COME OUT OF THE PROSE. They live IN the entry - that is what
+    makes them durable and what puts them in front of the orchestrator who owns it - but
+    rendering one inline would drop a blockquote into the middle of that orchestrator's
+    writing, where it reads as part of their argument.
     """
     body = entry.get("body") or ""
     nl = body.find("\n")
@@ -294,8 +302,7 @@ def entry_body_markdown(entry):
 #
 # ⛔ EVERY ORCHDOC HAS ONE AND THE READER SHOWED NONE OF THEM. It is not an entry - it has no
 # `### <ID>` heading and no status - so `parse_entries` never yields it, and a reader built
-# entirely from entries dropped the section the human opens a doc to find a URL in. Measured
-# 2026-09-23: 11 of 11 docs carry the heading, and this file had no reference to it at all.
+# entirely from entries dropped the section the human opens a doc to find a URL in.
 #
 # ⭐ IT IS CUT OUT OF THE FILE BY ITS HEADING, NOT PARSED. The section is free-form - tables of
 # URLs, bullets, paths in backticks - and the renderer already handles all of that. What this
@@ -332,11 +339,9 @@ def links_section(lines):
             "md": "\n".join(body).strip("\n"), "line": start + 1}
 
 
-# ⭐ o9:W147 (the human, 2026-10-03): a button in an item's header puts the item on Do today and takes it
-# off. The tag is an ordinary one-off §2.0 item, so the Do-today list, its Done button and its
-# add/stop writes are the ones that already exist. Its text is `Do [W147](<reader link>): <title>`;
-# an item is "on Do today" while a live §2.0 item of the same doc links it. Removing it stops
-# that item (it moves to §99 as Stopped).
+# The tag is an ordinary one-off §2.0 item, so the Do-today list, its Done button and its
+# add/stop writes are the ones that already exist. Removing it stops that item (it moves to §99
+# as Stopped).
 TODAY_TAG_RE = re.compile(r"#([\w-]+/[A-Z]{1,3}\d{1,4}[a-z]?)\)")
 
 
@@ -357,11 +362,15 @@ def _class_of(body):
 
 
 def entry_hash(i):
-    """o9:W164: a short hash of everything the page shows of one modelled entry. `/revs/<doc>`
-    gives one per entry and `/entry/<doc>/<id>` gives that entry's, so the page can tell that an
-    entry it just showed is the one a later `/revs` answer is about (see entryPatch)."""
+    """`/revs/<doc>` gives one per entry and `/entry/<doc>/<id>` gives that entry's, so the page
+    can tell that an entry it just showed is the one a later `/revs` answer is about (see
+    entryPatch).
+
+    The page does not show it, and a save adds lines, so with `line` in the hash every entry
+    below a save had a new hash."""
     import hashlib
-    return hashlib.sha1(json.dumps(i, sort_keys=True, default=str)
+    shown = dict((k, v) for k, v in i.items() if k != "line")
+    return hashlib.sha1(json.dumps(shown, sort_keys=True, default=str)
                         .encode("utf-8")).hexdigest()[:12]
 
 
@@ -372,12 +381,8 @@ def build_doc_model(slug, path):
     lines = text.splitlines()
     entries, sections = orchdoc.parse_entries(lines)
 
-    # ⛔ ASK THE GENERATOR, DO NOT RE-DERIVE. `build_plate_block` emits an explicit
-    # "CANNOT DETERMINE what is open" when a doc's entries are not in a form it can read -
-    # o3 writes its decisions as BULLETS, so it parses to ZERO entries and an empty rail
-    # would tell the human the document is empty when it holds eleven decisions. That distinction
-    # already exists and is already correct; re-deriving it here would be a second copy of a
-    # judgement orchdoc makes well.
+    # ⛔ ASK THE GENERATOR, DO NOT RE-DERIVE. That distinction already exists and is already
+    # correct; re-deriving it here would be a second copy of a judgement orchdoc makes well.
     try:
         block = orchdoc.build_plate_block(entries, lines)
     except Exception:
@@ -395,14 +400,12 @@ def build_doc_model(slug, path):
     try:
         import priority as _prio_mod
         _refcounts = _prio_mod.referrer_counts(_live_bodies)
-        # Same for the declared-dependency tally, which I left per-entry on 2026-09-22 and
-        # which put o9 and o10 back at 11-14s each. See priority.reason.
+        # See priority.reason.
         _blockers = _prio_mod.blocker_counts(_live_bodies)
     except Exception:
         _refcounts = _blockers = None
-    # ⭐ WHICH ENTRIES THE HUMAN MAY DELETE WHOLE, decided here by the function the server runs when
-    # he does (o9's review of W116, 2026-10-01). The page draws "Delete this instruction" from
-    # this flag alone and never re-derives the rule in JavaScript.
+    # The page draws "Delete this instruction" from this flag alone and never re-derives the
+    # rule in JavaScript.
     try:
         _ins = orchdoc.instruction_items(lines, entries)
     except Exception:
@@ -460,12 +463,10 @@ def build_doc_model(slug, path):
             # A live instruction item, and how many INSTRUCTION notes it holds (see `_ins`).
             "ins_item": eid in _ins and not e.get("archived"),
             "ins_count": len(_ins.get(eid) or []),
-            # o9:W147: the human's priority choice and class, and the Do-today item that tags this one.
             "prio_choice": _choice_of(e["body"]) or "",
             "prio_class": _class_of(e["body"]) or "",
             "today_tag": "",
         })
-    # o9:W147: a §2.0 item whose text links entry X is X's Do-today tag (see `today_tag_text`).
     _tagged = {}
     for it in items:
         if it.get("today"):
@@ -490,9 +491,7 @@ def build_doc_model(slug, path):
 
 # ⛔ ONE MODEL PER DOCUMENT, REUSED UNTIL THAT DOCUMENT CHANGES.
 #
-# Measured 2026-09-16: every request re-modelled all eleven OrchDocs. `/health`, which does
-# nothing but COUNT them, took 1.8-3.1 s; `/doc/o2`, a five-entry document, cost the same as
-# o9's 263. The human felt it as "almost all actions taking 5-6 seconds".
+# The human felt it as "almost all actions taking 5-6 seconds".
 #
 # ⭐ THE KEY IS WHAT ACTUALLY MAKES A MODEL STALE - the file's mtime and size. Nothing
 # changed, reuse it; anything changed, re-parse that ONE file. Eleven sessions write these
@@ -525,13 +524,9 @@ SEARCH_MAX_HITS = 200
 SEARCH_MAX_RULES = 60
 SEARCH_MAX_SCRIPTS = 60
 
-#: id(doc model) -> (the model, [(entry text, the same as `SCRIPTS.norm_hay`) per entry]). The
-#: models live in `_MODEL_CACHE` until the file changes, so each entry's text is joined and
-#: lower-cased once and not on every keystroke (the old code re-joined and re-`re.sub`bed every
-#: entry per search). ⛔ KEYED BY MODEL AND PRUNED TO THE MODELS SEARCHED NOW (o9L1441): a save
-#: of a 3.7 MB doc makes a new model, and a cache that kept the old one would hold every
-#: version of that doc since the Reader started. Handler threads share it, so a value is read
-#: into a local once and a key is removed with `pop(k, None)`.
+# : id(doc model) -> (the model, [(entry text, the same as `TEXT.norm_hay`) per entry]). Handler
+# threads share it, so a value is read : into a local once and a key is removed with `pop(k,
+# None)`.
 _HAY = {}
 
 
@@ -543,7 +538,7 @@ def _doc_hays(d):
     for i in d["entries"]:
         notes = " ".join(orchdoc.note_display(n) for n in i.get("notes") or ())
         hay = re.sub(r"\s+", " ", "%s %s %s %s" % (i["id"], i["title"], i["md"], notes))
-        hays.append((hay, SCRIPTS.norm_hay(hay)))
+        hays.append((hay, TEXT.norm_hay(hay)))
     _HAY[id(d)] = (d, hays)
     return hays
 
@@ -551,18 +546,16 @@ def _doc_hays(d):
 def search_index(idx, term):
     """Hits across every doc: id, title, body and notes. -> [dict], best first.
 
-    ⭐ the human, 2026-09-30: "The search all docs function fails to find plain text in the doc.
     It only finds header text." The page only carries ids and titles for every doc, so the
     body search runs here, over the same models the page is rendered from.
 
-    Ranked (`rank` in each hit): 0 the id is exactly the term, 1 the id contains it, 2 the title
-    contains it, 3 only the text does. Within a rank: the whole phrase before all-the-words,
-    then entries on the human's plate, then document order. `-` and `_` count as a space, so
-    `o9 w65` finds `o9-w65`; a several-word term matches an entry holding every word."""
-    t = SCRIPTS.norm_term(term)
-    if len(t) < SCRIPTS.SEARCH_MIN:
+    Ranked (`rank` in each hit): 0 the id is exactly the term, 1 the id contains it, 2 the
+    title contains it, 3 only the text does. Within a rank: the whole phrase before
+    all-the-words, then entries on the human's plate, then document order."""
+    t = TEXT.norm_term(term)
+    if len(t) < TEXT.SEARCH_MIN:
         return []
-    aw = SCRIPTS.and_words(term)
+    aw = TEXT.and_words(term)
     found = []
     n = 0
     live = {id(d) for d in idx}
@@ -571,11 +564,11 @@ def search_index(idx, term):
     for d in idx:
         for i, (hay, lc) in zip(d["entries"], _doc_hays(d)):
             n += 1
-            got = SCRIPTS.find_term(lc, t, aw)
+            got = TEXT.find_term(lc, t, aw)
             if got is None:
                 continue
             at, phrase = got
-            idl, tl = SCRIPTS.norm_hay(i["id"]), SCRIPTS.norm_hay(i["title"])
+            idl, tl = TEXT.norm_hay(i["id"]), TEXT.norm_hay(i["title"])
             if idl == t:
                 rank = 0
             elif t in idl:
@@ -585,7 +578,7 @@ def search_index(idx, term):
             else:
                 rank = 3
             ln = len(t) if phrase else len(aw[0])
-            snip = SCRIPTS.make_snippet(hay, at, ln).strip()
+            snip = TEXT.make_snippet(hay, at, ln).strip()
             found.append(((rank, 0 if phrase else 1, 0 if i["plate"] else 1, n),
                           {"d": d["slug"], "i": i["id"], "t": i["title"], "c": i["sclass"],
                            "p": 1 if i["plate"] else 0, "s": snip, "rank": rank,
@@ -596,33 +589,34 @@ def search_index(idx, term):
 
 def search_rules(term):
     """Rule boxes (`#rule/<CODE>`) whose code, title or full text holds the term, best first."""
-    t = SCRIPTS.norm_term(term)
-    if len(t) < SCRIPTS.SEARCH_MIN:
+    t = TEXT.norm_term(term)
+    if len(t) < TEXT.SEARCH_MIN:
         return []
-    aw = SCRIPTS.and_words(term)
+    aw = TEXT.and_words(term)
     found = []
     for code, b in rule_codes().items():
         text = re.sub(r"\s+", " ", b.get("text") or "")
         hay = "%s %s %s" % (code, b["title"], text)
-        got = SCRIPTS.find_term(SCRIPTS.norm_hay(hay), t, aw)
+        got = TEXT.find_term(TEXT.norm_hay(hay), t, aw)
         if got is None:
             continue
-        cl, tl = SCRIPTS.norm_hay(code), SCRIPTS.norm_hay(b["title"])
+        cl, tl = TEXT.norm_hay(code), TEXT.norm_hay(b["title"])
         rank = 0 if cl == t else 1 if t in cl else 2 if t in tl else 3
         ln = len(t) if got[1] else len(aw[0])
         found.append(((rank, 0 if got[1] else 1, code[:2], int(code[2:] or 0)),
                       {"k": "rule", "c": code, "t": b["title"], "rank": rank,
                        "ex": bool(rank < 3 or got[1]),
-                       "s": SCRIPTS.make_snippet(hay, got[0], ln).strip()}))
+                       "s": TEXT.make_snippet(hay, got[0], ln).strip()}))
     found.sort(key=lambda x: x[0])
     return [h for _, h in found[:SEARCH_MAX_RULES]]
 
 
 def search_all(reader, term):
-    """The `/search` answer: entries (`hits`), script files (`scripts`) and rule boxes (`rules`),
-    each ranked. ⭐ the human, 2026-10-21: a search typed in ANY view finds scripts by id, title and
-    text, and entries and rules by their full text. `loading` is true while the script text is
-    still being read for the first time; the page asks again a moment later."""
+    """`loading` is true while the script text is still being read for the first time; the page
+    asks again a moment later."""
+    if not HAS_SCRIPTS:
+        return {"ok": True, "hits": search_index(reader.index(), term), "scripts": [],
+                "scripts_total": 0, "rules": [], "loading": False}
     scripts, loading = reader.script_text.search(term, SEARCH_MAX_SCRIPTS)
     return {"ok": True, "hits": search_index(reader.index(), term), "scripts": scripts["hits"],
             "scripts_total": scripts["total"], "rules": search_rules(term), "loading": loading}
@@ -664,16 +658,14 @@ def _restore_allowed(s):
 
 
 _LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)")
-# ⛔ MUST BE APPLIED BEFORE `_LINK_RE`, WHICH WOULD OTHERWISE EAT THE `[alt](src)`
-# HALF and leave a stray `!` in front of a link. That is what the reader did with every
-# image in an OrchDoc until 2026-09-19.
+# ⛔ MUST BE APPLIED BEFORE `_LINK_RE`, WHICH WOULD OTHERWISE EAT THE `[alt](src)` HALF and leave
+# a stray `!` in front of a link.
 _IMG_RE = re.compile(r"!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)")
 _BOLD_RE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", re.S)
 _ITAL_RE = re.compile(r"(?<![\w*])\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*(?![\w*])")
 _ITAL2_RE = re.compile(r"(?<![\w_])_(?=[^\s_])([^_\n]+?)(?<=[^\s_])_(?![\w_])")
 # Struck text `~~...~~` is shown with a line through it. WHAT IS A STRIKE is not decided here: script_notes.strike_spans()
 # is the one rule, the same as the app build's strip_strikes() (within one line, spaces inside the tildes allowed, a `~~`
-# inside a {{{ }}} note or {{ }} comment ignored). o9 W203; before it a local pattern disagreed with the build.
 def _strike_html(s):
     spans = strike_spans(s)
     if not spans:
@@ -686,12 +678,8 @@ def _strike_html(s):
     out.append(s[pos:])
     return "".join(out)
 _CODE_RE = re.compile(r"(`+)(.+?)\1", re.S)
-# ⛔ NO `*` IN A BARE URL, AND NO TRAILING PUNCTUATION (2026-09-24). o10's doc wrote
-# `**http://127.0.0.1:8799/**.` and the old pattern took `/**.` into the link. The bold pass
-# then matched across it and put `</strong>` INSIDE the href, where the browser reads it as
-# attribute text. The <strong> never closed, and the browser reopened it at the start of every
-# paragraph after it: 5,993 of 6,145 paragraphs on the o10 page rendered bold, and the human found
-# the page "extremely hard to read quickly". Trailing `.,;:!?` go back outside the link.
+# The bold pass then matched across it and put `</strong>` INSIDE the href, where the browser
+# reads it as attribute text. Trailing `.,;:!?` go back outside the link.
 _AUTOLINK_RE = re.compile(r"(?<![\"'=(\w])(https?://[^\s<>\"')\]*]+)")
 
 
@@ -714,17 +702,11 @@ def _autolink(m):
 #
 # ⛔ FOUR OUTCOMES, FOUR APPEARANCES, AND TWO OF THEM ARE LINKS:
 #   resolved, live                  -> a real <a>
-#   resolved, ARCHIVED              -> a real <a> TOO, marked so he knows before he clicks
 #                                      that the entry is closed rather than live
-#   doc flagged unreadable (o3, o5) -> marked, NOT a link, and NOT called missing - those
 #                                      entries exist; the parser is what cannot see them
 #   no such entry                   -> marked as unresolved
 #
-# ⛔ AN ARCHIVED ENTRY IS A CORRECT DESTINATION, NOT A BROKEN ONE. When an entry is archived
-# its id moves out of the front of the heading into a trailing `_(was D18 - RESOLVED)_`
-# marker, so `o9:D18` is a real citation to a real entry that is simply finished. Rendering
-# it with the unresolved cross is WORSE than leaving it plain text: the first correct
-# reference he sees marked broken teaches him to distrust the ones that are fine.
+# ⛔ AN ARCHIVED ENTRY IS A CORRECT DESTINATION, NOT A BROKEN ONE.
 #
 # ⭐ WHICH IDS ARE ARCHIVED COMES FROM orchdoc, NOT FROM A SECOND MATCHER HERE. `parse_entries`
 # already reads the demoted id with `orchdoc.ARCHIVED_ID_RE` and sets `archived` - and it gets
@@ -741,18 +723,14 @@ _XREF_ID = r"[A-Z]{1,2}[0-9]{1,3}[a-z]?"
 # filename in backticks and the id outside them. All three, and nothing that merely
 # resembles them.
 #
-# ⛔ AND MOST OF THEM ARE INSIDE BACKTICKS - which is why the hole branches below
-# are not an edge case. Every long-form reference in the corpus is written as
-# `ORCHESTRATOR-DECISIONS-o9.md#W23`, and code spans are stashed before this scanner
-# ever runs. A scanner that only saw bare prose would have linked 178 of 181 and
-# reported itself working, while the `Depends:` lines - the references most worth
-# clicking - stayed flat.
+# ⛔ AND MOST OF THEM ARE INSIDE BACKTICKS - which is why the hole branches below are not an edge
+# case. A scanner that only saw bare prose would have linked 178 of 181 and reported itself
+# working, while the `Depends:` lines - the references most worth clicking - stayed flat.
 _XREF_SCAN = re.compile(
     # Consumed WHOLE and handed back untouched. A reference inside a markdown link or a URL
     # is already spoken for; rewriting it would nest an <a> in an <a> or corrupt an href.
     r"(?P<skip>\[[^\]\n]*\]\([^)\s]+(?:\s+&quot;[^&]*&quot;)?\)"
     r"|https?://[^\s<>)\]]+)"
-    # ORCHESTRATOR-DECISIONS-o9.md#W23   and   ORCHESTRATOR-DECISIONS-o1.md T11
     # \x00n\x00 is a stashed code span - the docs write the filename in backticks and the
     # id outside them, so the reference straddles the span and the hole has to be a
     # first-class alternative here rather than an afterthought.
@@ -761,8 +739,7 @@ _XREF_SCAN = re.compile(
     # A code span that is ENTIRELY one reference. Tried after <docref> so the two-part
     # form (filename in backticks, id outside) still wins where it applies.
     r"|(?P<holeref>\x00(?P<href>[0-9]+)\x00)"
-    # o10:D14 - the overwhelming majority. The lookbehind is what stops a path segment
-    # or a longer token from being read as one.
+    # The lookbehind is what stops a path segment or a longer token from being read as one.
     r"|(?P<short>(?<![\w/.:-])(?P<sdoc>o[0-9]+):(?P<sid>" + _XREF_ID + r")(?![\w-]))"
 )
 
@@ -805,10 +782,6 @@ class XrefTargets:
 
     def resolve(self, doc, eid):
         """'ok' | 'archived' | 'blind' | 'dead'.
-
-        ⛔ THE ID IS LOOKED UP FIRST, AND THAT ORDER IS THE POINT. o5 is flagged
-        unreadable AND still yields seven entries - measured, not assumed - so a doc-level
-        verdict applied first would refuse to link references that land perfectly well.
 
         ⛔ AND 'archived' IS A KIND OF RESOLVED, NOT A KIND OF FAILURE. It is returned from
         inside the same branch as 'ok' so the two can never drift apart: any future change
@@ -900,8 +873,6 @@ def _xref_sub(s, targets, holes, consumed=None):
         if doc is None:
             hm = _XREF_HOLE_DOC.match(_hole(holes, m.group("hole")) or "")
             if not hm:
-                # A code span that is not a filename, followed by something id-shaped:
-                # `git log` D1 is not a reference to anything.
                 return m.group(0)
             doc = hm.group(1)
             _took(m.group("hole"))
@@ -910,17 +881,13 @@ def _xref_sub(s, targets, holes, consumed=None):
     return _XREF_SCAN.sub(one, s)
 
 
-# ---- RULE CODES (o9 lane o9L1197): HV9, TY7, UW2 ... link to the #rule view.
 # The data is rule_codes_index.load(), the same parse that writes RULE-CODES-INDEX.md, so a code
 # links only if the generator found its box. A code inside a markdown link, a URL or an HTML tag
 # the xref pass already wrote is consumed whole and left alone.
 #
-# Boundary rule (o9L1205): a code links only when it stands as its own token. It does not link
-# when the character before it is a word character, `.`, `:`, `#` or a backslash (`o9:HV9`,
-# `#rule/HV9`, `C:\x\HV9.md`), or when a file extension follows it (`HV9.md`). A code after `/`
-# or `-` links only when the token before that separator is itself a standalone code, so both
-# sides of a range or pair link (`RC1-RC7`, `AR7/AR9`) and a path segment does not
-# (`foo/HV9`, `rule-HV9.jpg`).
+# A code after `/` or `-` links only when the token before that separator is itself a standalone
+# code, so both sides of a range or pair link (`RC1-RC7`, `AR7/AR9`) and a path segment does not
+# (`foo/AB9`, `rule-AB9.jpg`).
 _RULE_LEAD = r"(?<![\w/.:#\\-])[A-Z]{2}"
 _RULE_SCAN = re.compile(
     r"(?P<skip>\[[^\]\n]*\]\([^)\s]+(?:\s+&quot;[^&]*&quot;)?\)"
@@ -1053,10 +1020,7 @@ def archived_coverage(workspace):
 
     ⛔ THE COVERAGE TEST THIS FILE ALREADY HAD CANNOT SEE THIS. It asserts that the reader
     renders every entry `parse_entries` returns - so when the PARSER loses an entry, the
-    reader faithfully renders the smaller set and every check passes. That is exactly what
-    happened: a stray ``` fence in o9 swallowed 345 lines, six real archived entries
-    (D9, D18, D19, D20, D21, D22) vanished from every tool that reads the doc, and the
-    symptom the human saw was `o9:D18` marked with the unresolved cross.
+    reader faithfully renders the smaller set and every check passes.
 
     ⭐ SO THIS COUNTS THE FILE, NOT THE PARSE. It is deliberately a different oracle: it
     scans raw lines for a heading carrying orchdoc's own archived marker and compares that
@@ -1151,10 +1115,9 @@ def resolve_asset(rel, root=None):
     return p, p.relative_to(root).as_posix(), IMG_TYPES[ext]
 
 
-#: o9L1164: while `Reader.home_page` renders, {image url as written: the path it resolved to, or
-#: None when no file was there}. Thread-local, so a doc page rendered at the same moment on
-#: another thread records nothing here. The home cache re-checks these: whether a picture
-#: exists is the one thing an entry's HTML depends on that is not in the OrchDoc file.
+# Thread-local, so a doc page rendered at the same moment on : another thread records nothing
+# here. The home cache re-checks these: whether a picture : exists is the one thing an entry's
+# HTML depends on that is not in the OrchDoc file.
 _IMG_SEEN = threading.local()
 
 
@@ -1169,11 +1132,10 @@ def _safe_img_src(url):
     return "/img/" + urllib.parse.quote(relp), None
 
 
-# ⭐ PASTED IMAGES (the human, 2026-09-30: "I need to be able to paste images into any of the
-# instructions boxes"). A note is one line of text, so the picture is saved as a file and the
-# text carries `[image: <absolute path>]`. The ABSOLUTE path is deliberate: the orchestrator
-# reading the note may be in a worktree where a workspace-relative path does not exist, and the
-# file is on this same computer either way. The page turns the marker back into the picture.
+# A note is one line of text, so the picture is saved as a file and the text carries `[image:
+# <absolute path>]`. The ABSOLUTE path is deliberate: the orchestrator reading the note may be
+# in a worktree where a workspace-relative path does not exist, and the file is on this same
+# computer either way. The page turns the marker back into the picture.
 PASTE_DIR = "orchdoc-images"
 PASTE_MAX_BYTES = 8 * 1024 * 1024
 PASTE_MAGIC = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"),
@@ -1200,8 +1162,8 @@ def _note_body_html(text, xref=None):
     def lift(m):
         marks.append(m.group(0))
         return "\x00IMG%d\x00" % (len(marks) - 1)
-    # o9L1437: a typed `<br>` (or `<details>`) is copy, not markup. `_inline` would restore
-    # those tags from their escaped form, so every `&lt;` is held back from it and put back after.
+    # `_inline` would restore those tags from their escaped form, so every `&lt;` is held back
+    # from it and put back after.
     esc = html.escape(text or "").replace("&lt;", "\x01LT\x01")
     out = _inline(IMAGE_MARK_RE.sub(lift, esc), xref).replace("\x01LT\x01", "&lt;")
     return re.sub(r"\x00IMG(\d+)\x00",
@@ -1238,18 +1200,15 @@ def _image_marks_html(escaped_text, root=None):
 # scratch, by the ROUTE on the path the browser sends back. The route never trusts that the
 # path came from a link this server made.
 #
-# ⛔ TEXT ONLY, BY EXTENSION, AND NEVER A SECRET. The workspace holds `.shared/secrets/`, and
+# ⛔ TEXT ONLY, BY EXTENSION, AND NEVER A SECRET. The workspace holds `<your-secrets-folder>/`, and
 # 127.0.0.1 is not a boundary against a page the human happens to have open (a cross-origin read is
 # refused by the browser, but a DNS-rebinding page is same-origin by the time it asks). So a
 # `secrets` folder and anything NAMED like a credential is refused whatever its extension, and
 # the route also refuses a request whose Host header is not this server.
 #
-# ⛔ AND A FILE WHOSE CONTENT HOLDS A CREDENTIAL IS REFUSED, WHATEVER IT IS NAMED. Security
-# review, 2026-09-23: `.claude/settings.local.json` (live Slack webhooks, with a copy in every
-# worktree under `.claude/worktrees/`) and two seed scripts (a production database password in
-# a `scheme://user:password@host` URL) were all served. A name rule cannot see the seed
-# scripts, so the route scans the text it read with `secret_patterns` before rendering it,
-# and the refusal names the KIND of credential, never the value.
+# ⛔ AND A FILE WHOSE CONTENT HOLDS A CREDENTIAL IS REFUSED, WHATEVER IT IS NAMED. A name rule
+# cannot see the seed scripts, so the route scans the text it read with `secret_patterns` before
+# rendering it, and the refusal names the KIND of credential, never the value.
 #
 # ⛔ A GET, AND IT MUTATES NOTHING. It reads one file and renders it.
 # ==========================================================================================
@@ -1331,8 +1290,8 @@ class FileLinks:
     def __init__(self, root, base_rel="", doc_slugs=None, href_prefix=""):
         self.root = Path(root).resolve()
         self.base_rel = (base_rel or "").strip("/")
-        # "orchestrator-decisions-o9.md" -> "o9". Casefolded: an absolute path comes back
-        # through normcase, which lowercases it on Windows.
+        # Casefolded: an absolute path comes back through normcase, which lowercases it on
+        # Windows.
         self.doc_slugs = {k.casefold(): v for k, v in (doc_slugs or {}).items()}
         self.href_prefix = href_prefix
 
@@ -1387,10 +1346,8 @@ class FileLinks:
                 _p, _r, why = resolve_viewable(rel, self.root)
                 return ("copy", why)
         # ⭐ AN ABSOLUTE PATH IS A PATH WHETHER OR NOT IT IS HERE, so it stays copyable. A
-        # RELATIVE backticked token that resolves to nothing is usually not a path at all -
-        # `origin/production`, `product-app.com/own-your-sleep` - and a copy button on
-        # every one of those is noise. A markdown LINK target is kept, because dropping it
-        # would hide the one thing the line was pointing at.
+        # markdown LINK target is kept, because dropping it would hide the one thing the line
+        # was pointing at.
         if absolute or is_link:
             return ("copy", "not found in this workspace")
         return None
@@ -1408,16 +1365,13 @@ def _copyable(inner_html, why):
             % (html.escape(why or "", quote=True), inner_html))
 
 
-# ⭐ o9 W126: A COPY BUTTON ON EVERY FENCED BLOCK. The human copies lane prompts and commands out of
-# the OrchDoc (his words, 2026-10-01: "I shouldn't have to follow a URL and try to chase it in
-# order to just copy something"), so the button sits on the block and copying is one click.
 # It reuses the path buttons' `[data-copy]` handler (COPY_JS), which copies the <code>'s own
-# text: that is the block's text exactly, with no line break added or lost, because
-# `md_to_html` escapes the fenced lines joined by "\n" and nothing else.
-# Applied to the OrchDoc's own renders (an entry, the §1 links, a markdown file page), never
-# to the script editor's (`script=True`), whose blocks carry line numbers for the editor.
-# The match cannot end early: inside a block every `<` is escaped, so the first
-# `</code></pre>` after an opening `<pre>` is that block's own end.
+# text: that is the block's text exactly, with no line break added or lost, because `md_to_html`
+# escapes the fenced lines joined by "\n" and nothing else. Applied to the OrchDoc's own renders
+# (an entry, the §1 links, a markdown file page), never to the script editor's (`script=True`),
+# whose blocks carry line numbers for the editor. The match cannot end early: inside a block
+# every `<` is escaped, so the first `</code></pre>` after an opening `<pre>` is that block's
+# own end.
 _FENCED_BLOCK_RE = re.compile(r"<pre(?: [^>]*)?><code>.*?</code></pre>", re.S)
 
 
@@ -1484,7 +1438,7 @@ def _inline(s, xref=None, dd=False):
 
     s = _CODE_RE.sub(stash, s)
     s = _xref_sub(s, xt, holes, consumed)
-    # Bare rule codes (HV9) become links to #rule/HV9. Code spans are already stashed, so a code
+    # Bare rule codes (AB9) become links to #rule/AB9. Code spans are already stashed, so a code
     # inside backticks is never linked; the finished link is held out of reach with `keep`.
     if xt is not None:
         s = _rule_sub(s, keep, getattr(xt, "href_prefix", "") or "")
@@ -1522,10 +1476,9 @@ def _inline(s, xref=None, dd=False):
     def image(m):
         src, why = _safe_img_src(m.group(2))
         if not src:
-            # ⛔ SAY THE PATH AND SAY WHY. A broken-image icon tells the human nothing and an
-            # omitted image tells him less; the markdown, visible, is at least the path he can
-            # go and check. Same direction as the renderer's fall-through for anything it does
-            # not recognise: unrendered markdown is readable, mangled markdown is not.
+            # ⛔ SAY THE PATH AND SAY WHY. Same direction as the renderer's fall-through for
+            # anything it does not recognise: unrendered markdown is readable, mangled markdown
+            # is not.
             return keep('<span class="noimg">%s<span class="noimg-why">%s</span>'
                         '</span>'
                         % (m.group(0), html.escape(why or "not shown")))
@@ -1596,9 +1549,7 @@ def md_to_html(text, xref=None, script=False):
     raw = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
     # Fences first, on the UNESCAPED text, so their contents are escaped wholesale and never
-    # touched by an inline rule. Each block remembers the source line it starts on.
-    # o9 W150: a fence is whatever orchdoc.is_fence_line says (``` only; ~~~ is plain text), and
-    # any fence line closes the open one - the same toggle orchdoc.fence_states uses.
+    # touched by an inline rule.
     blocks, buf, fence, fbuf = [], [], False, []
     start, fstart = 1, 1
     for n, ln in enumerate(raw, 1):
@@ -1685,15 +1636,13 @@ def _dd_paint(s):
 # ==========================================================================================
 # SCRIPT NOTES - `{{{ a note about the process }}}`
 #
-# the human, 2026-10-01: *"I have been putting notes for the process inside triple curly brackets.
 # To make them stand out for me to easier see, make the brackets and everything inside the
 # brackets #FFEBAD"*.
 #
-# ⭐ FOUND ON THE WHOLE PAGE, NOT PER PARAGRAPH. His notes run over several lines, and one ran
-# across a blank line (claude-md-trim, 2026-09-26), so a note can open in one block and close
-# in another. The painter walks the FINISHED html once, pairs the brackets in text only (a
-# `}}}` in an href is not a close), and wraps each piece of text inside a pair in its own span:
-# a span never crosses a tag, so the page's structure is untouched.
+# ⭐ FOUND ON THE WHOLE PAGE, NOT PER PARAGRAPH. The painter walks the FINISHED html once, pairs
+# the brackets in text only (a `}}}` in an href is not a close), and wraps each piece of text
+# inside a pair in its own span: a span never crosses a tag, so the page's structure is
+# untouched.
 #
 # A `{{{` with no `}}}` after it, and a `}}}` with no `{{{` before it, stay plain text - the
 # same pairing as the editor's PN_RE, so the source and the preview agree.
@@ -1737,9 +1686,9 @@ def _pn_paint(h):
 
 
 def script_diff(base, text):
-    """The line diff of two script texts (What changed, the editor's Changes tab) with each
-    side's `{{{ notes }}}` drawn as `pn` spans, as the read view draws them (o9:W120 box 2)."""
-    return SCRIPTS.diff(base, text, paint=_pn_paint)
+    """
+    """
+    return TEXT.diff(base, text, paint=_pn_paint)
 
 
 def _close_to(stack, out, depth):
@@ -1893,21 +1842,13 @@ def _render_md_block(lines, xref=None, line0=None, dd=False):
     return "".join(out)
 
 
-# ⭐ PICTURES SHOWN IN THE ENTRY, FOLDED UNTIL HE OPENS THEM. The human, 2026-09-29, after o10 made a
-# separate HTML page of mock-ups and gave him its path: *"It would make far more sense to put the
-# images into the OrchDoc Reader directly - it's an HTML doc and is also right where I am already
-# looking. the section could simply be collapsed by default until I want to look at it."*
-# The block is one paragraph: a `**Pictures:** <what they show>` line, then one image per line.
 #
 #     **Pictures:** the referral card four ways, at phone width
-#     ![A as built today, light](pwa-orchestration-o10/o10L180-shots/vA-as-built-light.png)
-#     ![A as built today, dark](pwa-orchestration-o10/o10L180-shots/vA-as-built-dark.png)
 #
 # Each image goes through the same `image()` rule as any other, so containment, the raster-only
-# list and the visible reason for a path that does not resolve all still apply. A closed
-# <details> is not rendered, so its lazy images are not fetched until he opens it.
-# `orchdoc.py check` refuses the old way (E-PICTUREPAGE) and names this block as the fix, so
-# the block's shape is defined ONCE, in orchdoc.py, and read by both.
+# list and the visible reason for a path that does not resolve all still apply. `orchdoc.py
+# check` refuses the old way (E-PICTUREPAGE) and names this block as the fix, so the block's
+# shape is defined ONCE, in orchdoc.py, and read by both.
 _PICS_HEAD_RE = orchdoc.PICTURES_HEAD_RE
 _PICS_LINE_RE = orchdoc.PICTURES_LINE_RE
 
@@ -1965,10 +1906,9 @@ SIZE_KEY = "claude-orchdoc-reader-textsize"
 # ==========================================================================================
 # TEXT SIZE
 #
-# ⭐ ONE ROOT SIZE, AND EVERY OTHER SIZE ALREADY POINTED AT IT. The human asked for the default to
-# be two points bigger, headings and body alike. The safe way to do that is NOT to edit every
-# font-size - a pass over forty declarations misses some, and the ones it misses are visible
-# as a heading that did not grow next to body text that did.
+# ⭐ ONE ROOT SIZE, AND EVERY OTHER SIZE ALREADY POINTED AT IT. The safe way to do that is NOT to
+# edit every font-size - a pass over forty declarations misses some, and the ones it misses are
+# visible as a heading that did not grow next to body text that did.
 #
 # It was already nearly free: EVERY font-size in this stylesheet is `rem` or `em` except one.
 # `body` was `font:14px/1.55`, an absolute value that would have sat still while everything
@@ -1985,8 +1925,8 @@ SIZE_KEY = "claude-orchdoc-reader-textsize"
 
 FS_OLD_BODY_PX = 14.0     # what `body` was, and what step -2 still is
 FS_BODY_REM = 0.875       # 14px against the 16px root this stylesheet was written against
-PT_PX = 4.0 / 3.0         # 1pt at 96dpi - the unit the human asked in
-FS_BUMP_PT = 2.0          # the human, 2026-09-16: "2 points larger than it is right now"
+PT_PX = 4.0 / 3.0
+FS_BUMP_PT = 2.0
 FS_STEPS = (-2, -1, 0, 1, 2)   # offsets from the NEW default, which is step 0
 FS_DEFAULT = 0
 
@@ -2076,8 +2016,6 @@ SIZE_WIRE_JS = _pref_wire_js(SIZE_KEY, "data-fs", "data-fs-set",
                              SIZE_VALUES, str(FS_DEFAULT))
 
 # ==========================================================================================
-# THE COLOUR OF {{{ NOTES }}} IN A SCRIPT (o9:W120). The human, 2026-10-01 13:52: "In the reader,
-# give me a box at the top that I can enter a hex code color for changing the color of the
 # {{{...}}} text."
 #
 # The page paints a note with two variables, --pnote (the text colour) and --pnotebg (a
@@ -2112,7 +2050,6 @@ NOTE_BOOT_JS = (
 # Both dark selectors are needed: one alone only works in one direction. DARK_VARS is
 # interpolated into both from a single string, so the copies cannot drift.
 #
-# ⭐ `--prog` AND `--progbg` (o9:W124) ARE IN PROGRESS'S OWN PILL, a teal that no other status
 # uses, so work being done no longer looks like work on hold (PAUSED, DEFERRED: `--hold`).
 # Measured with `wcag_contrast.py`: light #1b6969 on its chip #e2f2f3 is 5.57:1 and on the page
 # 5.79:1; dark #51cdcd on its chip #123f3f is 6.06:1 and on the page 8.47:1. Its hue is 180 in
@@ -2142,60 +2079,35 @@ LIGHT_VARS = """
   --pnote:var(--ink); --pnotebg:#FFEBAD; /* script {{{ notes }}}: the human's #FFEBAD. As text on this background it cannot be read, so here it is the highlight behind ordinary ink */
   --shadow:0 1px 2px rgba(25,22,15,.05),0 8px 22px rgba(25,22,15,.055)"""
 
-# ⛔ THE GROUND IS #2d1c1c BECAUSE THE HUMAN PICKED IT, AND IT IS NOT MINE TO ADJUST. He asked for
-# a deep dark red after a screenshot of the reading pane - *"The contrast on the right is too
-# strong and hard to read. Make the background a deep, dark red."* - and then named the hex
-# himself. A first pass here chose a different red AND dimmed the ink to chase a bigger
-# contrast drop; both were replaced by his number.
 #
-# ⛔ AND THE INK CAME DOWN TOO, BECAUSE HE LOOKED AGAIN AND SAID SO: *"The contrast in the
-# main reading pane is still too much. Soften the font color."* The ground was right and
-# #eae8e4 on it was still 13.26:1. It is now #c2bcb5 - **8.62:1**, a 43% reduction from the
-# 15.04:1 he started with, and still above the 7:1 WCAG AAA line for body text.
+# Soften the font color."* The ground was right and #eae8e4 on it was still 13.26:1.
 #
 # ⭐ THE LADDER, SO THE NEXT ADJUSTMENT IS ONE LINE RATHER THAN A RE-DERIVATION. Measured on
-# #2d1c1c: #eae8e4 13.26 - #d8d4cf 11.00 - #cdc8c2 9.76 - **#c2bcb5 8.62** - #b8b1aa 7.65
-# (still AAA) - #ada6a0 6.75 - #a39c96 5.99. He is judging by eye and has looked twice, so
-# this is deliberately the conservative step: it leaves somewhere to go if he says softer
-# again, and the failure mode below ~6:1 is UNREADABLE rather than harsh - the same complaint
-# inverted, which is the one mistake that costs more than another round trip.
+# #2d1c1c: #eae8e4 13.26 - #d8d4cf 11.00 - #cdc8c2 9.76 - **#c2bcb5 8.62** - #b8b1aa 7.65 (still
+# AAA) - #ada6a0 6.75 - #a39c96 5.99.
 #
-# ⛔⛔ EVERY NUMBER FROM HERE DOWN IS THE PREVIOUS GENERATION. THE HUMAN REPLACED THEM
-# AT `5a496da` (2026-09-16), BY EYE ON THE RUNNING PREVIEW: body `#bbb9b7` = **8.29:1**,
-# bold left at `#c2bcb5` = 8.62. Read 6.28 below as history, not as the page.
+# ⛔⛔ EVERY NUMBER FROM HERE DOWN IS THE PREVIOUS GENERATION. Read 6.28 below as history, not as
+# the page.
 #
-# ⭐ HE OVERRULED THE STEP ARGUMENT DELIBERATELY. The reasoning below says headings
-# must stay 1.37x above body or the pane flattens. At 8.62 over 8.29 that step is 1.04.
-# He was warned that closing the distance would leave WEIGHT as the only distinction
-# between body and bold, and he said weight is enough. *"It is his page and he was
-# looking at it."* `test_dark_red_palette.py` asserts the ordering and the weight rule,
-# and deliberately does NOT assert a visible ratio step - that would overrule him twice.
-#
-# ⭐ WHAT SURVIVED THE CHANGE IS THE MECHANISM, WHICH IS WHY THIS PROSE IS KEPT: the
-# pane uses the rail's VARIABLE rather than a copy of its hex, so his one-line lift moved
-# the pane and the rail together and could not drift them apart.
+# The reasoning below says headings must stay 1.37x above body or the pane flattens. At 8.62
+# over 8.29 that step is 1.04.
 #
 # ⚠️ AND THE LIFT DID NOT REACH BOTH FILES FOR THREE DAYS. `render_daily_dashboard.py`
-# kept `--mut:#a3a19b` until 2026-09-19, so the two surfaces showed different body text
 # for the same variable - the exact drift the shared-colour check exists to catch, and it
 # was saying so while four other checks in that file were red for a superseded reason.
 #
-# ⛔ AND THEN HE GAVE AN EXACT REFERENCE, WHICH BEATS EVERY ESTIMATE ABOVE. A screenshot of
 # the LEFT RAIL: *"Use the same ratios as in this pane - keep the darker background, but aim
 # for the same ratio."* The rail's entry titles are `.etitle` and `.eid`, both `var(--mut)` -
 # **#a3a19b, 6.28:1** on the same ground. So the reading pane's body text is not a nearby hex
 # chosen by arithmetic; it is THAT VARIABLE, used directly.
 #
-# ⭐ THE SAME VARIABLE, NOT THE SAME NUMBER RETYPED. `.md{color:var(--mut)}` makes the pane
-# and the rail incapable of drifting apart, which a second token holding a copy of #a3a19b
-# would not. He asked for the rail's ratio; pointing at the rail's colour delivers it exactly
-# rather than approximately, and takes the judgement out of it entirely.
+# ⭐ THE SAME VARIABLE, NOT THE SAME NUMBER RETYPED. `.md{color:var(--mut)}` makes the pane and
+# the rail incapable of drifting apart, which a second token holding a copy of #a3a19b would
+# not.
 #
 # ⛔ BUT HEADINGS AND BOLD STAY ON `--ink`, OR THE PANE FLATTENS INTO ONE TONE. At 6.28:1
-# everywhere there is no structure left to scan - and structure is what an OrchDoc entry is
-# made of. `--ink` is #c2bcb5 (8.62:1), 1.37x above body: the SMALLEST of the three options
-# measured, because he has said "too bright" twice and #cdc8c2 or #d8d4cf would walk the
-# bold runs - which these documents are full of - back toward what he rejected.
+# everywhere there is no structure left to scan - and structure is what an OrchDoc entry is made
+# of.
 #
 # ⚠️ THE THIRD LEVEL IS A SQUEEZE AND IT IS WORTH SAYING SO. `--faint` must sit BELOW body
 # (6.28) and above the 4.5:1 AA floor, which is a corridor 1.4x wide. #95938d (5.28:1) is the
@@ -2205,14 +2117,11 @@ LIGHT_VARS = """
 #
 # ⛔ ONE RAIL COLOUR DOES MOVE, AND IT IS NAMED RATHER THAN HIDDEN. The rail's SELECTED entry
 # title is `.ebtn.cur .etitle{color:var(--ink)}`, so it follows --ink from 13.26:1 to 8.62:1.
-# The rail's HIERARCHY is what he is pointing at and it is intact - selected brighter than
-# unselected (8.62 > 6.28) brighter than the section headers (5.28) - and every rail RULE is
-# pinned byte-for-byte in `test_orchdoc_reader.py`.
 #
-# ⛔ AND ONE THING GENUINELY BROKE ON HIS GROUND. `--faint` was #7d7b75, already marginal at
-# 4.35:1 on the old page; a lighter background pushed it to 3.83:1, UNDER WCAG AA. #95938d
-# (5.28:1) was chosen over the smallest value that clears - #8d8b85 scrapes over at 4.76:1,
-# which is the same fragile position that put it under in the first place.
+# `--faint` was #7d7b75, already marginal at 4.35:1 on the old page; a lighter background pushed
+# it to 3.83:1, UNDER WCAG AA. #95938d (5.28:1) was chosen over the smallest value that clears -
+# #8d8b85 scrapes over at 4.76:1, which is the same fragile position that put it under in the
+# first place.
 #
 # ⛔ AND THE SURFACES HAD TO MOVE, BECAUSE THE PAGE GOT LIGHTER AND THEY DID NOT. Every one of
 # them was drawn against a near-black. The worst was `--openbg`, which was **#2d1b19 against a
@@ -2220,17 +2129,12 @@ LIGHT_VARS = """
 # all. Chips now lift 1.28-1.39:1 off the page (they lifted 1.12-1.18 on the old ground) and
 # each still carries its own text over AA.
 #
-# ⛔ `--donetext` IS #6B5050 BECAUSE THE HUMAN NAMED IT, AND IT IS DELIBERATELY BELOW AA. He
-# approved the contrast, then said: *"The issue is that completed jobs are no longer
-# differentiated. Make their text 6B5050."* Measured, so it is on the record rather than
-# discovered later: **#6B5050 on #2d1c1c is 2.23:1** - under the 4.5:1 body floor and under
-# the 3:1 large-text floor.
+# ⛔ `--donetext` IS #6B5050 BECAUSE THE HUMAN NAMED IT, AND IT IS DELIBERATELY BELOW AA. Make
+# their text 6B5050."* Measured, so it is on the record rather than discovered later: **#6B5050
+# on #2d1c1c is 2.23:1** - under the 4.5:1 body floor and under the 3:1 large-text floor.
 #
-# ⭐ THAT IS A CHOICE, NOT A DEFECT, AND IT IS HIS TO MAKE. A completed sub-item is history:
-# it stays visible because seeing where the finished work sits is what makes the remaining
-# decision readable (the human's D5 ruling), and it recedes because it is done. Deliberate
-# de-emphasis of finished work on his own document, judged by eye, is exactly the call a
-# contrast floor is not the right instrument for.
+# A completed sub-item is history: it stays visible because seeing where the finished work sits
+# is what makes the remaining decision readable (the rule), and it recedes because it is done.
 #
 # ⛔ SO THE RATIO MUST NOT LEAK ONTO ANYTHING LIVE, AND THAT IS WHAT THE SELECTORS ARE FOR.
 # It reaches `.md li.task.on` and `.md del` - a CHECKED sub-item and struck text - and
@@ -2259,8 +2163,8 @@ DARK_VARS = """
   --prog:#51cdcd; --progbg:#123f3f;
   --err:#e88; --sel:#4e3a22;
   --donetext:#6B5050;
-  --ddmark:#FFD800; --ddopt:#dcd8d3;  /* markers: the human's colour, 2026-09-23 - pink was too hard to see */
-  --pnote:#FFEBAD; --pnotebg:transparent;  /* script {{{ notes }}}: the human's colour, 2026-10-01 */
+  --ddmark:#FFD800; --ddopt:#dcd8d3;  
+  --pnote:#FFEBAD; --pnotebg:transparent;  
   --shadow:0 1px 2px rgba(0,0,0,.45),0 8px 22px rgba(0,0,0,.3)"""
 
 CSS = (
@@ -2387,7 +2291,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .dot.unk{background:var(--faint);opacity:.5}
 .pin{font-size:.62rem;font-weight:800;color:var(--open);letter-spacing:.04em}
 #cross .etitle{display:block;-webkit-line-clamp:unset;overflow:visible}
-/* The line between exact hits and hits that only hold all the words (the human, 2026-10-21). */
+
 #tbox .xdiv,#tbox .xnone,#cross .xdiv,#cross .xnone{font-size:.72rem;color:var(--mut);
   padding:.35rem .45rem;background:var(--wash)}
 #tbox .xdiv,#cross .xdiv{border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:.3rem 0}
@@ -2396,7 +2300,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 #tbox .snip mark,#cross .snip mark{background:var(--gold);color:inherit;border-radius:2px}
 .ebtn.donetoday .etitle,.ebtn.donetoday .eid{color:var(--faint);opacity:.7}
 .today-acts{display:flex;gap:.5rem;margin:.2rem 0 .8rem}
-/* o9:W147: the Do-today strip at the top of every doc's page, and the header controls. */
+
 .today-strip{margin:0 0 1.1rem;padding:.55rem .7rem;border:1px solid var(--gold);
   border-radius:8px;background:var(--panel)}
 .ts-head{font-weight:700;font-size:.82rem;letter-spacing:.03em;margin:0 0 .35rem}
@@ -2430,18 +2334,13 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .today-say{flex-basis:100%;font-size:.8rem;color:var(--mut)}
 .today-say:empty{display:none}
 .snip{display:block;font-size:.74rem;color:var(--faint);margin-top:.1rem}
-/* ⭐ STARS (the human, 2026-09-30): "I need to be able to star specific items so I can find
-   specific items faster." On the right of the row, in line with YOU. Hollow and faint until
-   hovered; gold once starred. Kept in this browser only - a star is his bookmark, not a fact
-   about the entry, so it never goes into an OrchDoc. */
+
 .star{flex:none;align-self:baseline;font-size:.9rem;line-height:1;cursor:pointer;
   color:var(--faint);opacity:0;padding:0 .1rem;user-select:none}
 .ebtn:hover .star,.star:focus-visible{opacity:1}
 .star.on{opacity:1;color:var(--gold)}
 .star:hover{color:var(--gold)}
-/* ⭐ THE DOC-LEVEL INSTRUCTION BAR (the human, 2026-09-30): "I need a way to leave instructions
-   that are not a part of any item. It should remain sticky at the top of frame." One line
-   until he clicks into it, so it does not take the reading pane from him. */
+
 .docins{position:sticky;top:calc(-1 * var(--pane-pt));z-index:7;background:var(--bg);
   margin:0 0 .8rem;padding:.55rem 0;border-bottom:1px solid var(--line)}
 .docins-row{display:flex;gap:.5rem;align-items:flex-start}
@@ -2454,60 +2353,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .docins-say:empty{display:none}
 .docins-say a{color:var(--goldink)}
 
-/* ---- entries: the READING PANE's vertical rhythm ----
-   ⛔ THE HUMAN CALLED THIS A WALL OF TEXT, 2026-09-16: *"It appears as a 'wall of text' in terms of
-   separation. Can you create more empty space between items?"* - one message after asking for
-   the contrast to come down. They are the same complaint from two directions, and THIS is the
-   half that names the cause. An OrchDoc entry is dense markdown - bold runs, checkbox lines,
-   inline code, nested clauses - and it was rendered with a hairline between items: `li` at
-   .16rem (3px), `p` at .5rem. Every line was doing the same amount of visual work, so nothing
-   separated from anything.
 
-   ⭐ RHYTHM IS THE CONTRAST BETWEEN WITHIN-BLOCK AND BETWEEN-BLOCK, NOT MORE SPACE EVERYWHERE.
-   Lines inside a paragraph stay close (line-height 1.6); the gap BETWEEN blocks is roughly a
-   whole line. Loosening both would have produced a longer wall.
-
-   ⛔ EVERY VALUE HERE IS em OR rem, NEVER px - AND THAT IS LOAD-BEARING, NOT TIDINESS. The
-   text-size control ships in this same file and multiplies the root. Spacing pinned in px
-   would sit still while the type grew, so the wall would get WORSE at exactly the steps he
-   reaches for when the page is hard to read. `em` inside `.md` also means the spacing follows
-   the block's own size, so a smaller `.cmt` line is not separated like body text.
-
-   ⛔ A MEASURE, BECAUSE HALF OF "WALL" IS LINE LENGTH. `.entry` allowed 62rem of prose - about
-   135 characters a line at the default size, which is roughly twice what the eye tracks
-   without losing its place. Prose blocks are now capped at --measure (82ch, which IS a
-   font-relative unit, so it holds at every step). ⚠️ TABLES AND FENCES ARE DELIBERATELY
-   EXEMPT: they are not prose, a wrapped command is worse than a wide one, and both already
-   have their own horizontal scroll.
-
-   ⛔ AND NOTHING HERE TOUCHES THE TWO NAV RAILS. They are an INDEX, dense on purpose because
-   he scans them - `.sec`, `.ebtn`, `.eid`, `.etitle`, `.dbtn`, `.railhead`, `.filters` and
-   `.count` are all untouched, and `test_orchdoc_reader.py` pins those rules so a later
-   "tidy the spacing" pass cannot quietly loosen the index too. */
-/* ⛔ `content-visibility` IS WHY TYPING A NOTE DOES NOT FREEZE HIS MACHINE. Measured, not
-   guessed: o9 renders 259 entries into one 471,000px-tall pane, and with every entry laid
-   out at all times a single forced layout of this document costs 143-254ms. A textarea
-   keystroke needs a layout before it can draw the caret, so EVERY keystroke paid that -
-   265-302ms each, measured between `beforeinput` and `input`, where no script of ours runs.
-
-   ⭐ THAT ALSO EXPLAINS THE ASYMMETRY HE REPORTED - opening the box is instant, the FIRST
-   keystroke hangs. Opening inserts a textarea and changes nothing about the document's
-   layout. The first keystroke is where the browser first needs the laid-out box, AND where
-   spellcheck initialises, and spellcheck's init forces that same full-document layout a
-   second time - so the first keystroke paid it twice (302ms) and later ones once (156ms).
-
-   ⭐ SO SPELLCHECK STAYS ON. It looked like the culprit and it is not: turning it off alone
-   moved the first keystroke 302ms -> 167ms, because the per-keystroke layout was untouched.
-   Constraining layout instead moved it to 24ms WITH spellcheck still running, since the
-   layout it forces is now cheap. He writes prose in these boxes; he keeps his spellchecker.
-
-   What this does: the browser skips style, layout and paint for entries scrolled out of
-   view, and does the work when one nears the viewport. Nothing leaves the DOM, so `apply()`
-   filtering, find-in-page, `jump()` anchors and the accessibility tree all still see all
-   259 entries - which is why this is the right shape of fix and a JS-virtualised list is
-   not. `contain-intrinsic-size: auto <x>` gives an unmeasured entry a placeholder height
-   and then REMEMBERS each entry's real height once measured, so the scrollbar settles
-   instead of jumping as he scrolls. */
 /* --docins-h: a jump lands BELOW the sticky instruction bar, not under it (`jump()` reads this). */
 .entry{scroll-margin-top:calc(var(--docins-h,0rem) + 1rem);margin:0 0 2.6rem;padding:0 0 2.2rem;
   border-bottom:1px solid var(--line2);max-width:62rem;
@@ -2529,13 +2375,10 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .tag.blocked{background:var(--blockedbg);color:var(--blocked);border-color:var(--blockedline)}
 .tag.prog{background:var(--progbg);color:var(--prog);border-color:var(--prog)}
 .tag.plate{background:var(--gold);color:#241d0c;border-color:var(--gold)}
-/* the human's own mark reads as HIS - the computed reason is quieter, because it is the tool
-   explaining itself rather than something he decided. */
+
 .tag.pnow{background:var(--gold);color:#241d0c;border-color:var(--gold)}
 .tag.pwhy{opacity:.7;font-weight:400;letter-spacing:0}
-/* The colour key at the top of a doc and of the plate list (o9:W124). Its pills ARE the entries'
-   own `.tag.<class>` pills, so a colour changed in one place changes in both. `cursor:help`
-   because the hover text names the statuses each colour stands for. */
+
 .legend{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:0 0 1.1rem;max-width:62rem}
 .legend .tag{cursor:help}
 .legend .lg-sep{width:1px;align-self:stretch;background:var(--line);margin:0 .15rem}
@@ -2544,9 +2387,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .legend .lg-lab{color:var(--mut);font-size:.75rem;font-weight:600;text-transform:uppercase;
   letter-spacing:.06em;margin-right:.2rem}
 .legend+.grouphead{margin-top:1rem}
-/* ⛔ THE READING PANE'S BODY TEXT IS THE RAIL'S OWN COLOUR. The human pointed at the rail and
-   asked for the same ratio; `var(--mut)` IS what the rail's entry titles use, so this is
-   exact by construction and the two cannot drift. 8.29:1 on #2d1c1c since 5a496da. */
+
 .md{font-size:.9rem;line-height:1.6;color:var(--mut)}
 /* ⛔ AND THE STRUCTURE STAYS ABOVE IT. Body at 8.29 with headings and bold at the same
    value is one flat tone, and an OrchDoc entry is almost entirely structure - bold runs,
@@ -2581,17 +2422,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 /* The check glyph goes with the line it belongs to. Left on `--done` green it becomes the
    loudest thing on a row whose whole point is to be quiet. */
 .md li.task.on .box{color:var(--donetext)}
-/* ⛔ THE WHOLE LINE FADES, NOT JUST ITS PLAIN TEXT - THE HUMAN'S MOCKUP IS THE SPEC.
-   `color` on the `li` alone reaches only the bare text. Every inline rule below it keeps
-   its own colour and wins by specificity: `.md strong,.md b{color:var(--ink)}` at full ink,
-   `a{color:var(--goldink)}` in gold, and a `code` chip drawing a `--line2` border. Those are
-   precisely the loudest parts of a sub-item - the bold clause and the id chips - so the row
-   went on catching his eye while the plain words around it receded.
-   ⭐ HIS WORDS, AND THEY NAME THE FAILURE EXACTLY: "you didn't actually DECREASE the
-   checked off items intensity." The colour HAD been applied. It just did not reach the
-   things that were loud.
-   ⚠️ The list is explicit rather than `*` on purpose - a bare descendant selector
-   would also swallow a nested sub-list that is still OPEN under a finished parent. */
+
 .md li.task.on strong,.md li.task.on b,.md li.task.on em,.md li.task.on i,
 .md li.task.on code,.md li.task.on a,.md li.task.on del,.md li.task.on span{
   color:var(--donetext)}
@@ -2627,8 +2458,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .md .noimg{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;
   color:var(--mut);word-break:break-word}
 .md .noimg-why{color:var(--faint);font-style:italic;margin-left:.45rem}
-/* A **Pictures:** block: folded until he opens it (the human, 2026-09-29). Gold edge so it reads as
-   something to look at, not as the grey attestation fold. */
+
 .md details.pics{border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:0}
 .md details.pics>summary{padding:.55em .8em;font-weight:400;list-style:none;user-select:none}
 .md details.pics>summary::-webkit-details-marker{display:none}
@@ -2644,19 +2474,6 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .md .cmt{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;
   color:var(--faint);opacity:.75;margin:.9em 0;word-break:break-word}
 
-/* ---- THE HUMAN'S NOTES ----
-   ⛔ THE BLOCK HAS TO LOOK LIKE HIS, NOT LIKE THE ENTRY'S. A note lives inside the entry so
-   it is durable and so the owning orchestrator cannot miss it - but rendered as ordinary
-   body text it would read as part of THEIR argument, and the next sweep would tidy it as
-   their own prose. Gold rule, his name, the timestamp: attributed on sight.
-
-   An orchestrator replying to a note writes their own text underneath. They never edit his.
-
-   ⛔ "NOTE FROM" IS IN THE MARKUP, NOT IN A `content:` PSEUDO-ELEMENT. It was a
-   `:before` for one build, and the accessibility tree then read the whole block as just
-   "THE HUMAN" - a screen reader, a find-in-page and the browser tool that verified this page
-   all lost the word that says what it IS. A label that exists only in CSS is a label only
-   sighted users have. */
 .notes{margin:0 0 1.25rem;max-width:var(--measure)}
 /* An entry with no notes yet still needs somewhere for "Add a note" to appear - but only
    once the page knows it can actually save one. */
@@ -2671,12 +2488,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .note-img{display:block;margin:.4em 0}
 .note-img img{max-width:100%;max-height:22rem;border:1px solid var(--line);border-radius:6px}
 .note-acts{display:flex;gap:.35rem;flex-wrap:wrap;margin:.55em 0 0}
-/* o9L1491 (the human, 2026-10-28): "Add a note" and "Instruct <doc>" stay on screen while their entry is
-   on screen, and are pushed up and away only when the entry's end reaches them. A sticky element
-   sticks only inside its parent, and its parent was the short `.notes` section, so the section
-   generates no box of its own (`display:contents`) and the row's parent becomes the entry. The
-   section's width limit moves onto its children. CSS only: the markup, the routes and the
-   write path are untouched, and every `sec.querySelector("[data-note-tools]")` still finds the row. */
+
 .notes.live{display:contents}
 .notes.live>*{max-width:var(--measure)}
 .notes.live>[data-note-tools]{position:sticky;top:var(--docins-h,0rem);z-index:6;background:var(--bg);
@@ -2693,12 +2505,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
   color:var(--ink);resize:vertical}
 .note-edit textarea:focus{outline:2px solid var(--gold);outline-offset:1px}
 .note-hint{color:var(--faint);font-size:.75rem;margin:.4em 0 0}
-/* o9L1005 (the human, 2026-11-03): an open instruction or note box STAYS in view while any part of
-   its entry is on screen, so he can keep typing as he reads down the item. The live .notes
-   section is display:contents, so the box's sticky parent is the entry and it is released
-   when the entry ends. top is the doc-level bar's height (--docins-h, 0 with no bar). Height
-   is capped (the textarea scrolls inside) and the long hint is hidden so it never covers
-   much of the screen; the background is solid so the text under it does not show through. */
+
 .notes.live>.note-edit{position:sticky;top:calc(var(--docins-h,0rem) - var(--pane-pt,0rem));z-index:8;background:var(--bg);
   max-height:min(13rem,36vh);overflow-y:auto;padding-top:.35rem;
   box-shadow:0 4px 10px rgba(0,0,0,.12)}
@@ -2707,13 +2514,11 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 /* Only the editor's own hint (a direct child). The receipt after a send reuses this class and
    its "It is on main" / "being saved to GitHub" lines are .note-hint too; those must show. */
 .notes.live>.note-edit>.note-hint{display:none}
-/* ⛔ A FAILED SAVE MUST BE LOUD AND MUST NOT EAT HIS WORDS. The textarea stays exactly as he
-   typed it and this sits under it, so the worst case is copy-and-paste rather than loss. */
+
 .note-err{margin:.5em 0 0;padding:.55em .75em;border:1px solid var(--open);
   background:var(--openbg);color:var(--open);border-radius:7px;font-size:.8rem}
 .note-ok{margin:.5em 0 0;color:var(--done);font-size:.8rem;font-weight:650}
-/* Text put back from this browser after the page was reset (the human, 2026-09-29). Gold, the
-   colour of his own notes: it is his text, not the document's. */
+
 .note-restored{margin:0 0 .4em;padding:.4em .7em;border-left:3px solid var(--gold);
   background:var(--wash);color:var(--ink);font-size:.78rem;border-radius:0 6px 6px 0}
 .note-edit .ehead{font-size:.72rem;font-weight:800;letter-spacing:.05em;
@@ -2731,8 +2536,6 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 #draft-bar textarea{flex:1 1 100%;min-height:4em;font:inherit;font-size:.8rem;
   border:1px solid var(--line);border-radius:6px;background:var(--wash);color:var(--ink)}
 
-/* Collapsed blocks - the human, 2026-09-22. The summary carries the FACT so folding costs
-   nothing at a glance: the attestation count, and that an instruction was seen. */
 details.attest,details.note-fold{margin:.2rem 0}
 details.attest>summary,details.note-fold>summary{cursor:pointer;font-size:.82rem;
   color:var(--dim);list-style:none;padding:.15rem 0;user-select:none}
@@ -2769,21 +2572,14 @@ details.note-fold>summary.note-h:hover .note-caret{color:var(--fg)}
 .note.instruct{border-left:3px solid var(--open);border:1px solid var(--openline);
   border-left:3px solid var(--open);background:var(--openbg)}
 .note.instruct .note-who{color:var(--open)}
-/* The id reads as a label rather than as part of his sentence: monospace, quieter than
-   the WHO, and it never wraps - a citation people copy has to survive being copied. */
+
 .note-id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  /* 1.64em, twice the .82em it shipped at - the human: "small and hard to read. Make 2x it
-     bigger." It is the thing he TYPES to cite a note, so it has to be legible at a glance
-     rather than merely present. Opacity back to 1 for the same reason: a citation he has to
-     squint at is one he will describe in words instead. */
+  
   font-size:1.64em;font-weight:700;letter-spacing:.02em;opacity:1;
   white-space:nowrap;margin-right:.55em;padding:.05em .4em;border-radius:4px;
   border:1px solid currentColor}
 .note.instruct .note-id{color:var(--open)}
-/* Seen / not seen. Green once an orchestrator has acknowledged it at a turn boundary;
-   muted while it is still only a thing he sent. NOT red when unseen - unseen is the
-   ordinary state for the first minutes, and a page that cries about it teaches him to
-   ignore the one that matters. */
+
 .note-ack{font-weight:700;letter-spacing:0;text-transform:none;font-size:.7rem}
 .note-ack.hit{color:var(--done)}
 .note-ack.wait{color:var(--mut);font-weight:400;font-style:italic}
@@ -2884,8 +2680,7 @@ a.flink code{color:var(--goldink);border-color:var(--gold)}
   padding:.02em .38em;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--mut);cursor:pointer;vertical-align:.08em}
 .cpbtn:hover{border-color:var(--gold);color:var(--ink)}
-/* o9 W126: a fenced block's Copy button sits above the block at its right edge, outside it,
-   so on any screen width it never covers a line of the text it copies. */
+
 .cpw.fcopy{display:block;margin:1.05em 0}
 .cpw.fcopy>.cpbtn{display:block;margin:0 0 .3rem auto}
 .cpw.fcopy>pre{margin:0}
@@ -2903,7 +2698,6 @@ body.filepage .brand{text-decoration:none;color:var(--ink)}
 .fileview{max-width:62rem}
 .fileraw{font-size:.95rem;max-width:100%}
 
-/* ---- SCRIPTS: the folder tree in the rail (o9:W167) ---- */
 .tdir>.tkids{display:none;margin-left:.55rem;border-left:1px solid var(--line)}
 .tdir.open>.tkids{display:block}
 .tsearching .tdir>.tkids{display:block}
@@ -2919,8 +2713,7 @@ body.filepage .brand{text-decoration:none;color:var(--ink)}
 .ndpath{display:block;font-size:.66rem;color:var(--faint);overflow-wrap:anywhere;line-height:1.3}
 .ndempty{padding:.4rem .7rem}
 .tkids .ebtn{padding-left:.6rem}
-/* o9 W248: "00 - Full Rewrite Scripts" rows. The tick box is a big, plain target at the left;
-   a reviewed row gets a green tick and a green edge, a script not filed yet is grey. */
+
 .frrow{display:flex;align-items:center;gap:.25rem;flex-wrap:wrap;border-left:3px solid transparent}
 .frrow:has(.ebtn.hid){display:none}
 .frrow .ebtn{flex:1 1 12rem;width:auto;min-width:0}
@@ -2959,7 +2752,7 @@ body.filepage .brand{text-decoration:none;color:var(--ink)}
 .slink:hover{background:var(--sel)}
 .snone{color:var(--faint);font-style:italic}
 .slogs{color:var(--mut);font-size:.84rem}
-/* o9:W174: a copy with the same text, named on the row it repeats */
+
 .snote{display:block;font-size:.68rem;line-height:1.35;color:var(--faint);font-style:italic;
   overflow-wrap:anywhere;cursor:pointer}
 .snote:hover{color:var(--goldink);text-decoration:underline}
@@ -2995,9 +2788,6 @@ body.filepage .brand{text-decoration:none;color:var(--ink)}
 .se-plus{color:var(--done);font-weight:700}
 .se-minus{color:var(--open);font-weight:700}
 
-/* ---- SCRIPTS: Compare - the draft and the rewrite, change by change, with the human's reasons
-   (reader_compare.py, o8:W72). Stacked rather than side by side: the pane is the narrow third
-   column at laptop width, and two columns of prose there would be a few words wide. */
 td .cv-open{margin:.3rem 0 0}
 .cv-intro{color:var(--mut);font-size:.86rem;line-height:1.55;margin:.4rem 0 .6rem}
 .cv-tools{display:flex;gap:.4rem;flex-wrap:wrap;margin:.3rem 0 1rem}
@@ -3046,10 +2836,7 @@ td .cv-open{margin:.3rem 0 0}
 body.wide .app{grid-template-columns:minmax(0,1fr)}
 body.wide .rail{display:none}
 .se{display:flex;flex-direction:column;gap:.7rem}
-/* ⛔ top IS MINUS THE PANE'S TOP PADDING, NOT 0. Chrome insets a sticky element by its scroll
-   container's padding, so at top:0 the bar parked 1.1rem below the pane's edge and the script
-   scrolled through the gap above it. Measured in the browser 2026-09-23: bar at 85px, pane at
-   64px. The shared variable keeps the two values from drifting apart. */
+
 .se-bar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;justify-content:space-between;
   position:sticky;top:calc(-1 * var(--pane-pt));z-index:6;background:var(--bg);
   padding:.6rem 0 .6rem;
@@ -3063,7 +2850,7 @@ body.wide .rail{display:none}
 .se-banner .nbtn{margin:0 0 0 .4rem}
 .kb.k-approved{color:var(--done);border-color:var(--done);background:var(--wash);
   font-size:.74rem;padding:.2rem .5rem}
-/* o9L1294: Final is gold, filled, with a double border, so it never reads as a second Approved */
+
 .kb.k-final{color:var(--goldink);border:3px double var(--gold);background:var(--sel);
   font-size:.74rem;padding:.12rem .5rem;text-transform:uppercase;letter-spacing:.08em}
 .ap-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;
@@ -3112,13 +2899,7 @@ body.wide .rail{display:none}
 /* {{{ Notes }}}, brackets included. After the dropdown rules so a dropdown inside a note
    takes the note's colour. */
 .pn{color:var(--pnote);background:var(--pnotebg)}
-/* ⭐ THE NOTE COLOUR HE TYPES INTO THE BOX AT THE TOP OF THE SCRIPTS (the human, 2026-10-01, o9:W120).
-   `data-pn` and `--pn-user` are put on <html> by NOTE_BOOT_JS and only when he has chosen a
-   colour other than the default, so with nothing chosen NONE of these three rules matches and
-   the palette above is what applies. They make the palette's own two-sided switch with his
-   colour in it: ordinary ink on a highlight of his colour on the light theme, his colour AS the
-   text on the dark ground. Three rules for the reason the palette is written three ways: dark
-   by the OS, dark by the toggle, and light by the toggle on a dark OS. */
+
 :root[data-pn]{--pnote:var(--ink);--pnotebg:var(--pn-user)}
 @media(prefers-color-scheme:dark){:root[data-pn]:not([data-theme="light"]){--pnote:var(--pn-user);--pnotebg:transparent}}
 :root[data-pn][data-theme="dark"]{--pnote:var(--pn-user);--pnotebg:transparent}
@@ -3230,8 +3011,7 @@ def _esc(s):
 
 
 def render_notes_html(it, xref=None):
-    """the human's notes on ONE entry, above the body and unmistakably his.
-
+    """
     ⛔ THE SECTION IS RENDERED EVEN WHEN IT IS EMPTY, and that is not a stray div. It is the
     element the write UI attaches to, so an entry with no notes yet still has somewhere for
     "Add a note" to appear. It carries the doc and the entry id because those are what the
@@ -3244,11 +3024,8 @@ def render_notes_html(it, xref=None):
         # today may hold an instruction written by a session that no longer exists; the label
         # has to be a fact about the document rather than a memory of the request.
         instruct = (n.get("kind") or "NOTE").upper() == "INSTRUCTION"
-        # ⭐ WHETHER IT HAS BEEN SEEN IS THE ANSWER TO THE QUESTION THAT STARTED THIS.
-        # the human asked "is the Orch notified in any way?" - and the honest answer is not a
-        # promise made when he clicks Send, it is whether that session has since said it read
-        # this. The ack is written by the orchestrator at its own turn boundary, so this line
-        # is evidence rather than a claim about what should have happened.
+        # The ack is written by the orchestrator at its own turn boundary, so this line is
+        # evidence rather than a claim about what should have happened.
         seen = ""
         if instruct:
             seen = ('<span class="note-ack hit">%s</span>' % _esc(n["ack"])
@@ -3257,29 +3034,22 @@ def render_notes_html(it, xref=None):
                     if n.get("ack") else
                     '<span class="note-ack wait">not acknowledged yet</span>')
         # \u26d4 A SEEN INSTRUCTION IS FINISHED BUSINESS AND COLLAPSES; AN UNSEEN ONE IS THE
-        # ONLY THING ON THE PAGE STILL WANTING SOMETHING, SO IT STAYS OPEN. The human, 2026-09-22.
-        # The test is the ACK written by the orchestrator at its own turn boundary - evidence
-        # that a session read it, not a promise made when he pressed Send.
+        # ONLY THING ON THE PAGE STILL WANTING SOMETHING, SO IT STAYS OPEN.
         _fold = instruct and bool(n.get("ack"))
-        # \u2b50 THE ID IS ON SCREEN, NOT ONLY IN `data-nid`. The human asked for it after sending a
-        # screenshot of a note he had no way to cite: it was addressable to the machine and
-        # anonymous to the reader. Same gap as an anchor that cannot be clicked.
+        # \u2b50 THE ID IS ON SCREEN, NOT ONLY IN `data-nid`. Same gap as an anchor that cannot
+        # be clicked.
         head = ('<span class="note-id">%s</span><span class="note-who">%s</span>'
                 '<span class="note-when">%s</span>%s'
                 % (_esc(n["nid"]),
                    ("Instruction to %s from %s" % (_esc(it["doc"]), _esc(n["who"])))
                    if instruct else ("Note from %s" % _esc(n["who"])),
                    _esc(n["when"]), seen))
-        # data-raw: what Edit puts back in the box, since a pasted picture has no textContent.
-        # o9L1437: the REAL text, with its line breaks and typed list markers (an `ESC` note
-        # is stored escaped on one file line). `.note-b` is white-space:pre-wrap, so the
-        # breaks and indentation draw as typed, and the Edit box gets the same text back.
+        # `.note-b` is white-space:pre-wrap, so the breaks and indentation draw as typed, and
+        # the Edit box gets the same text back.
         _real = orchdoc.note_display(n)
         body = '<div class="note-b" data-raw="%s">%s</div>' % (
             _esc(_real), _note_body_html(_real, xref))
-        # \u26d4 A SEEN NOTE IS ONE LINE. The human, 2026-09-23, marking up a screenshot: the separate
-        # "seen - show it" row and the Edit/Delete row struck out, and an arrow to a caret at
-        # the right end of the header. So the HEADER is the toggle, and the body and the
+        # \u26d4 A SEEN NOTE IS ONE LINE. So the HEADER is the toggle, and the body and the
         # Edit/Delete row (added by noteWire) live inside what it opens.
         inner = (('<details class="note-fold"><summary class="note-h">%s'
                   '<span class="note-caret" aria-hidden="true">\u25b8</span></summary>%s'
@@ -3294,14 +3064,9 @@ def render_notes_html(it, xref=None):
                "".join(rows)))
 
 
-# \u2b50 THE HUMAN ASKED FOR BOTH OF THESE BY NAME, 2026-09-22: collapse the attestation block on
-# every entry, collapse instructions he has already SEEN, and leave UNSEEN ones showing. They
-# are one request - the page should spend its vertical space on what he has not dealt with.
 #
 # An attestation stack is a record written for the NEXT AGENT: who reviewed this, when, and on
-# what evidence. It is not what he opened the entry to read, and on a long-lived entry it is
-# most of the screen - one entry on the o9 doc carries seventeen of them above its first line
-# of prose.
+# what evidence.
 #
 # \u26a0\ufe0f THE COUNT STAYS VISIBLE IN THE SUMMARY, so collapsing hides the TEXT and not
 # the FACT. "17 attestations" still says the entry has been reviewed seventeen times, which is
@@ -3338,9 +3103,8 @@ def plain_title(t):
 
 
 def render_header_controls(it):
-    """o9:W147: in an item's header, the Do-today button and the priority menu (the human,
-    2026-10-03). Neither is drawn on an archived item; the Do-today button is not drawn on a
-    §2.0 item, which is the list itself."""
+    """Neither is drawn on an archived item; the Do-today button is not drawn on a §2.0 item, which
+    is the list itself."""
     if it.get("archived") or it.get("today"):
         return ""
     import priority as _p
@@ -3365,7 +3129,6 @@ def render_header_controls(it):
            "".join('<option value="%s"%s>%s (%s)</option>'
                    % (_esc(c), " selected" if it.get("prio_choice") == c else "", _esc(c),
                       _p.CHOICE_CLASS[c]) for c in _p.CHOICES)))
-    # o9L1328: the human's Done / Superseded buttons, on every open D, Q, T and W entry.
     import reader_status as _rs
     if _rs.offer(it):
         for ch in ("done", "superseded"):
@@ -3482,8 +3245,7 @@ def render_links_block(model, xref=None):
 
 
 def render_status_legend():
-    """The colour key, as one line of pills (o9:W124).
-
+    """
     One pill per row of STATUS_GROUPS, drawn with the same `.tag.<class>` rule an entry's own
     status pill uses, preceded by the gold ON YOUR PLATE pill (the "waiting on the human" mark,
     which is not a status). The hover text on a pill is the group's meaning plus the Status
@@ -3529,12 +3291,8 @@ def render_doc_view(model, xref=None):
                     % _esc(os.path.basename(model["path"])))
         return "".join(nav), "".join(body)
 
-    # The colour key goes first, above §1: a doc with no entries has nothing to key, so the
-    # early return above leaves it out (o9:W124).
     body.insert(0, render_status_legend())
 
-    # ⭐ §2.0 IS ALWAYS SHOWN, between §1 and §2.1 (the human, 2026-09-30), with its add form -
-    # even in a doc that has no §2.0 in the file yet (the first item creates it).
     has_today = any(it.get("today") for it in model["entries"])
     form = render_today_form(None, fixed=model["slug"])
     if not has_today:
@@ -3675,10 +3433,8 @@ def render_today_form(slugs, fixed=None):
 
 
 def render_today_strip(index):
-    """⭐ o9:W147 (the human, 2026-10-03): "I want to see ALL Do today tasks at the top of the pane
-    regardless of what OrchDoc I'm looking at." Every doc's live §2.0 items, due first (overdue
-    at the top), then done today, then coming up. One compact row each, with the same Done / Undo
-    / Stop buttons the Do-today view has. Drawn at the top of a doc's page and of the plate."""
+    """One compact row each, with the same Done / Undo / Stop buttons the Do-today view has. Drawn
+    at the top of a doc's page and of the plate."""
     rows = [i for d in index for i in d["entries"] if i.get("today")]
     due = [i for i in rows if i["today"]["due"] and not i["today"]["done_today"]]
     done = [i for i in rows if i["today"]["done_today"]]
@@ -3705,8 +3461,8 @@ def render_today_strip(index):
 
 
 def render_today_view(index, xref=None):
-    """⭐ §2.0 DO TODAY, ACROSS EVERY DOC (the human, 2026-09-30). Due first (overdue at the top),
-    then what was done today, then the routines that come up later - and a form to add one."""
+    """Due first (overdue at the top), then what was done today, then the routines that come up
+    later - and a form to add one."""
     nav, body = [], []
     rows = [i for d in index for i in d["entries"] if i.get("today")]
     due = [i for i in rows if i["today"]["due"] and not i["today"]["done_today"]]
@@ -3738,13 +3494,11 @@ def doc_badge(d):
     return ("zero" if not n else ""), str(n), "%d waiting on you" % n
 
 
-# ⛔ THE LIST'S COUNTS ARE WRITTEN ONCE, INTO THE PAGE, AND NOTHING UPDATED THEM (o9:W150
-# Task D, 2026-10-03). o5's document was rewritten on disk so that it parses, and an open page
-# went on showing "?" for o5. The server was right: its model cache follows each file's mtime
-# and size, and the next GET / showed the new count. But opening a document repaints only the
-# entry list, and a link or hash change is not a page load, so the document list kept the
-# counts of whenever the page was loaded. GET /doc-counts gives the page every badge again,
-# and DOC_COUNTS_JS asks for them; both use `doc_badge`, so they cannot disagree with GET /.
+# The server was right: its model cache follows each file's mtime and size, and the next GET /
+# showed the new count. But opening a document repaints only the entry list, and a link or hash
+# change is not a page load, so the document list kept the counts of whenever the page was
+# loaded. GET /doc-counts gives the page every badge again, and DOC_COUNTS_JS asks for them;
+# both use `doc_badge`, so they cannot disagree with GET /.
 def rail_counts(index):
     """Every badge in the document list: {"docs": {slug: [class, text, hover text]},
     "plate": the Everything-waiting total, "today": the Do-today count}."""
@@ -3756,7 +3510,6 @@ def rail_counts(index):
 def render_doc_rail(index, active, scripts=None):
     """`scripts` is the number of script folders, or None to leave the Scripts entry out -
     which is what a caller with no corpus (a test fixture, `--once`) gets."""
-    # o9L1222: no "Waiting on you" / "Done" labels (the human 2026-10-10); a small gap (.rgap)
     # keeps the groups reading as groups.
     out = ['<button type="button" class="dbtn" data-doc="__plate__" aria-current="%s">'
            '<span class="nm">Everything waiting</span>'
@@ -3771,11 +3524,18 @@ def render_doc_rail(index, active, scripts=None):
               "zero" if not today_count(index) else "", today_count(index)),
            # A plain link, not a data-doc button: /done is its own page, not a view of a doc.
            '<a class="dbtn rgap" href="/done" title="What the orchestrators finished, newest first">'
-           '<span class="nm">Completed work</span></a>'
+           '<span class="nm">Completed work</span></a>',
+           # The folders the user named in the `doc_folders` setting, listed for review. Absent
+           # until they name one.
+           ('<a class="dbtn" href="/documents" title="The Markdown and text files in the folders '
+            'you chose">'
+            '<span class="nm">Review documents</span></a>' if documents_folders() else ""),
+           # (the two pieces above and below were one string before; the HTML is the same)
            # The #rule view: a data-doc button so it highlights like the others.
-           '<button type="button" class="dbtn" data-doc="rule" aria-current="%s" '
-           'title="The script rule codes (HV9, TY7 ...) in full">'
-           '<span class="nm">Writing Rules</span></button>' % ("true" if active == "rule" else "false"),
+           ('<button type="button" class="dbtn" data-doc="rule" aria-current="%s" '
+            'title="The script rule codes (AB9, CD7 ...) in full">'
+            '<span class="nm">Writing Rules</span></button>'
+            % ("true" if active == "rule" else "false") if RULECODES is not None else ""),
            '<div class="railhead">Documents</div>']
     for d in index:
         cls, label, title = doc_badge(d)
@@ -3810,16 +3570,15 @@ _KB = {"draft": ("D", "agent draft"), "rewrite": ("R", "the human rewrite"),
 
 
 def _srel_key(relroot):
-    """o9L1248: ` data-snk=".." data-srest=".."` (reader_scripts.rename_key of the file name),
-    which openScriptPath uses when a link's exact path is gone; "" for a name outside the
-    library shape."""
+    """
+    """
     k = SCRIPTS.rename_key(relroot or "")
     return ' data-snk="%s" data-srest="%s"' % (_esc(k[0]), _esc(k[1])) if k else ""
 
 
 def _same_text_badge(f):
-    """o9:W197: `same text as <version>` on a row whose text another version of the script
-    repeats at higher precedence; the hover title names that file. Every name is escaped."""
+    """Every name is escaped.
+    """
     st = f.get("same_text")
     if not st:
         return ""
@@ -3830,8 +3589,8 @@ def _same_text_badge(f):
 
 
 def _sid_span(f):
-    """The script's SC/AT id, small and grey, on its row, so a row that matched a search by id
-    shows what matched (the human, 2026-10-21). Omitted when the file name already starts with it."""
+    """Omitted when the file name already starts with it.
+    """
     sid = SCRIPTS.script_id_of(f.get("name"), f.get("folder"))
     if not sid or sid.lower() in (f.get("name") or "").lower():
         return ""
@@ -3844,10 +3603,7 @@ def _script_btn(f, sub=False):
     return ('<button type="button" class="ebtn%s" data-script="%s" data-hay="%s" data-srel="%s"%s '
             'title="%s - %s"><span class="kb k-%s">%s</span>'
             '<span class="sp-col"><span class="etitle">%s</span>%s%s%s%s</span></button>'
-            # o9:W167: the folder path is searched too, so a search by the slug in the
             # script's folder name finds every file of it. The names of the copies folded into
-            # this row are searched as well (o9:W174).
-            # o9L1243: data-srel is the file's path under the corpus root, which a
             # `#scripts/p/<path>` link names; the page maps it to this row's id.
             # (after data-hay: test_reader_rewrite_drive reads `data-script=.. data-hay=..`)
             % (" sub" if sub else "", _esc(f["id"]),
@@ -3855,16 +3611,14 @@ def _script_btn(f, sub=False):
                              + [s["label"] for s in same]).lower()),
                _esc(f.get("relroot") or ""), _srel_key(f.get("relroot")),
                _esc(label), _esc(f["name"]), f["kind"], k, _esc(f["name"][:-3]),
-               # o9:W199: the `older draft` badge stays two words; its reason, which can be long,
-               # is only the hover title
                "".join(('<span class="sbadge sb-older" title="%s">%s</span>'
                         % (_esc("Older draft: " + f["older_draft"]), _esc(b))
                         if b == "older draft" and f.get("older_draft")
                         else '<span class="sbadge">%s</span>' % _esc(b))
                        for b in f.get("badges") or []) + _same_text_badge(f),
                render_prov_chip(f.get("prov")), _sid_span(f),
-               # o9:W174: each distinct text once. A copy with the same text is a note on the
-               # row it repeats; the note opens the copy (any [data-script] opens its file).
+               # A copy with the same text is a note on the row it repeats; the note opens the
+               # copy (any [data-script] opens its file).
                "".join('<span class="snote" data-script="%s" data-srel="%s"%s '
                        'title="Open this copy">%s</span>'
                        % (_esc(s["id"]), _esc(s.get("relroot") or ""),
@@ -3894,7 +3648,7 @@ def _prov_part(fld, cls):
 
 
 def render_prov_chip(prov):
-    """`2026-09-03 · Opus 5` under a script's name in the list. '' for a process log."""
+    """"""
     if not prov:
         return ""
     return ('<span class="sp-chip">%s<span class="sp-dot"> &middot; </span>%s</span>'
@@ -3903,8 +3657,8 @@ def render_prov_chip(prov):
 
 
 def render_prov_line(prov):
-    """`Authored 2026-09-03 (first committed) - Model: Opus 5 (from the header prose) - Last
-    changed 2026-09-22`, for a script's read view and its editor. '' for a process log."""
+    """'' for a process log.
+    """
     if not prov:
         return ""
     a, m, c = (prov.get(k) or {} for k in ("authored", "model", "changed"))
@@ -3920,7 +3674,7 @@ def render_prov_line(prov):
         parts.append('%s: <span class="sp-by" title="from the file\'s own provenance line">'
                      "%s</span>" % ("Rewrite By" if prov.get("rewrite") else "By",
                                     _esc(prov["by"])))
-    # The time after the date: the human, 2026-10-01. Local time, as the date is.
+    # Local time, as the date is.
     when = (' <span class="sp-time" title="%s">%s</span>'
             % (_esc(c.get("title") or ""), _esc(c["time"]))
             if c.get("value") and c.get("time") else "")
@@ -3935,7 +3689,6 @@ def render_scripts_view(listing, fr_marks=None, workspace=None):
     before anything is opened."""
     nav, body = [], []
     tree = {"html": "", "kids": {}}
-    # o10:W235: a script's flat versions/ folder is one list with the script, newest first
     folders = SCRIPTS.display_folders(listing["folders"])
     nfiles = sum(len(fo["files"]) + len(fo.get("folded") or []) for fo in folders)
     if not listing["exists"]:
@@ -3987,8 +3740,6 @@ def render_scripts_view(listing, fr_marks=None, workspace=None):
                 if not newstyle:
                     nav.append(_script_btn(r, sub=True))
                 paired.add(r["id"])
-            # Compare (o8:W72): only for the draft's ONE main rewrite, which is what
-            # reader_compare.Compare.resolve_pair accepts.
             cmp_btn = ('<button type="button" class="nbtn cv-open" data-script-cmp="%s" '
                        'title="The draft and your rewrite, change by change, with a box for '
                        'why you made each change">Compare</button>' % _esc(d["id"])
@@ -4043,8 +3794,8 @@ def _new_draft_btn(d):
 
 
 def _add_new_drafts(tree, listing):
-    """o9L1285 (W205): put the "0 - New Drafts" filter first in the Scripts tree. Nothing
-    moves on disk; see reader_scripts.new_drafts for which scripts it lists."""
+    """Nothing moves on disk; see reader_scripts.new_drafts for which scripts it lists.
+    """
     items = SCRIPTS.new_drafts(listing["folders"])
     node = {"html": "".join(_new_draft_btn(d) for d in items)
             or '<div class="snone ndempty">No new drafts waiting for you.</div>',
@@ -4089,8 +3840,8 @@ def _fr_row(r):
 
 
 def _add_full_rewrite(tree, listing, marks, workspace):
-    """o9 W248: put "00 - Full Rewrite Scripts" first in the Scripts tree. Nothing moves on
-    disk. One sub-folder per source (FRW.SOURCES); a source with nothing yet is a note."""
+    """Nothing moves on disk. One sub-folder per source (FRW.SOURCES); a source with nothing yet is
+    a note."""
     secs = FRW.build(listing, workspace, marks.load())
     kids, html_top, nr, nt = {}, [], 0, 0
     for sc in secs:
@@ -4111,9 +3862,8 @@ def _add_full_rewrite(tree, listing, marks, workspace):
 
 
 def render_scripts_tree(tree):
-    """The Scripts rail: a folder tree of any depth, every folder a button that collapses it
-    (o9:W167). All folders render closed; the page script opens the ones remembered in this
-    browser, and the first time opens the top level."""
+    """All folders render closed; the page script opens the ones remembered in this browser, and
+    the first time opens the top level."""
     def walk(name, node, path, depth):
         kids = "".join(walk(k, v, path + "/" + k, depth + 1)
                        for k, v in node["kids"].items())
@@ -4129,11 +3879,50 @@ def render_scripts_tree(tree):
         walk(k, v, k, 0) for k, v in tree["kids"].items())
 
 
-def render_file_page(relposix, text, kind, ctx=None):
-    """A standalone, read-only page for one workspace file, opened in its own tab from §1.
+FILE_NOTE_JS = r"""
+(function(){
+var bar=document.getElementById("fnote"); if(!bar){return;}
+var btn=bar.querySelector("button.fn-open"), box=bar.querySelector(".fn-box");
+var ta=bar.querySelector("textarea"), send=bar.querySelector("button.fn-send");
+var out=bar.querySelector(".fn-out");
+btn.addEventListener("click",function(){ box.hidden=!box.hidden; if(!box.hidden){ta.focus();} });
+send.addEventListener("click",function(){
+  var t=ta.value.trim(); if(!t){out.textContent="Write something first.";return;}
+  send.disabled=true; out.textContent="Sending...";
+  fetch("/file-note",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({token:bar.getAttribute("data-token"),file:bar.getAttribute("data-file"),text:t})})
+  .then(function(r){return r.json();}).then(function(j){
+    send.disabled=false;
+    if(j&&j.ok){ ta.value=""; out.textContent="Sent to "+(j.role||"the orchestrator")+
+      (j.id?" as "+j.id:"")+". It will see this note."; }
+    else{ out.textContent="Not sent: "+((j&&j.error)||"the reader refused it")+" Your text is kept."; }
+  }).catch(function(e){ send.disabled=false; out.textContent="Not sent: "+e+" Your text is kept."; });
+});
+})();
+"""
 
-    Same stylesheet, same theme and text-size boot, so it looks like part of the reader and
-    honours his dark-red choice. It carries NO write token and no write UI at all."""
+FILE_NOTE_CSS = r"""
+#fnote{margin:1.2rem 1.6rem 4rem;max-width:62rem}
+#fnote .fn-box{margin-top:.5rem}
+#fnote textarea{width:100%;min-height:6rem;font:inherit}
+#fnote .fn-out{margin-left:.6rem;color:var(--mut);font-size:.85rem}
+"""
+
+
+def render_file_page(relposix, text, kind, ctx=None, token=None):
+    """A standalone page for one workspace file, opened in its own tab from §1.
+
+    The file is read-only. With a `token` it also carries one small box, "Leave a note on
+    this file", which posts to /file-note (see _file_note_post): the note goes into an
+    OrchDoc entry that links the file, never into the file."""
+    note = ""
+    if token:
+        note = ('<section id="fnote" data-token="%s" data-file="%s">'
+                '<button type="button" class="fn-open">Leave a note on this file</button>'
+                '<span class="fn-out"></span>'
+                '<div class="fn-box" hidden><textarea aria-label="Your note on this file"></textarea>'
+                '<button type="button" class="fn-send">Send note</button></div></section>'
+                % (_esc(token), _esc(relposix)))
     if kind == "markdown":
         content = '<div class="md fileview">%s</div>' % copy_fenced_blocks(md_to_html(text, ctx))
     else:
@@ -4148,10 +3937,71 @@ def render_file_page(relposix, text, kind, ctx=None):
         '<div class="fpath"><span class="cpw"><code>%s</code><button type="button" '
         'class="cpbtn" data-copy title="Copy this path">copy</button></span></div>'
         '<span class="tag">read-only</span></header>'
-        '<main class="pane filepane">%s</main>'
-        "<script>%s</script><script>%s</script><script>%s</script></body></html>"
-        % (_esc(relposix.rsplit("/", 1)[-1]), CSS, THEME_BOOT_JS + SIZE_BOOT_JS,
-           _esc(relposix), content, COPY_JS, THEME_WIRE_JS, SIZE_WIRE_JS))
+        '<main class="pane filepane">%s</main>%s'
+        "<script>%s</script><script>%s</script><script>%s</script><script>%s</script></body></html>"
+        % (_esc(relposix.rsplit("/", 1)[-1]), CSS + FILE_NOTE_CSS, THEME_BOOT_JS + SIZE_BOOT_JS,
+           _esc(relposix), content, note, COPY_JS, THEME_WIRE_JS, SIZE_WIRE_JS, FILE_NOTE_JS))
+
+
+DOCUMENTS_CSS = r"""
+body.docspage{display:block}
+body.docspage .brand{text-decoration:none;color:var(--ink)}
+.docspane{padding:1rem 1.4rem 5rem;overflow:visible;max-width:60rem}
+.docspane h2{font-size:1.05rem;margin:1.4rem 0 .3rem}
+.docspane ul{list-style:none;padding:0;margin:.2rem 0}
+.docspane li{padding:.28rem 0;border-bottom:1px solid var(--line,rgba(128,128,128,.25));
+  display:flex;gap:.8rem;align-items:baseline}
+.docspane li a{flex:1}
+.docspane .dsub,.docspane .dwhen,.docspane .dnote{color:var(--mut);font-size:.8rem}
+"""
+
+
+def render_documents_page(workspace):
+    """The /documents page: the files in the folders the user named, each linking to the
+    read-only file page. ⛔ READ-ONLY, NO TOKEN, NO WRITE UI: the notes box writes into an
+    OrchDoc entry, and a document in a folder has none (see reader_docs.py)."""
+    names = documents_folders()
+
+    def _ok(rel):
+        p, _r, _k = resolve_viewable(rel, workspace)
+        return p is not None
+    got = DOCS.listing(workspace, names, accept=_ok) if (DOCS is not None and names) else \
+        {"folders": []}
+    parts = []
+    if not names:
+        parts.append(
+            '<p class="dnote">No folders are chosen yet. Choose them with '
+            '<code>python orchdoc_config.py set doc_folders proposals,reports</code> '
+            "(folders inside your workspace, separated by commas), then reload this page.</p>")
+    for f in got["folders"]:
+        parts.append("<h2>%s</h2>" % _esc(f["name"]))
+        if not f["ok"]:
+            parts.append('<p class="dnote">Not listed: %s.</p>' % _esc(f["why"]))
+            continue
+        if not f["files"]:
+            parts.append('<p class="dnote">No Markdown or text files in this folder.</p>')
+            continue
+        rows = []
+        for r in f["files"]:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["mtime"]))
+            sub = "" if r["dir"] in ("", ".") else '<span class="dsub">%s/</span>' % _esc(r["dir"])
+            rows.append('<li><a href="%s" target="_blank" rel="noopener">%s</a>%s'
+                        '<span class="dwhen">%s</span></li>'
+                        % (_esc(file_href(r["rel"])), _esc(r["name"]), sub, _esc(when)))
+        parts.append("<ul>%s</ul>" % "".join(rows))
+        if f["more"]:
+            parts.append('<p class="dnote">%d older file(s) are not listed.</p>' % f["more"])
+    return (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>Review documents</title><style>%s%s</style></head><body class=\"docspage\">"
+        "<script>%s</script>"
+        '<header class="top"><a class="brand" href="/" title="Back to the OrchDoc reader">'
+        'Orch<b>Docs</b></a><span class="tag">review documents - read-only</span></header>'
+        '<main class="pane docspane">%s</main>'
+        "<script>%s</script><script>%s</script></body></html>"
+        % (CSS, DOCUMENTS_CSS, THEME_BOOT_JS + SIZE_BOOT_JS, "".join(parts), THEME_WIRE_JS,
+           SIZE_WIRE_JS))
 
 
 # ==========================================================================================
@@ -4200,7 +4050,6 @@ body.donepage .brand{text-decoration:none;color:var(--ink)}
 """
 
 # ==========================================================================================
-# ⛔ A REQUEST THE SERVER NEVER FINISHES STILL ENDS (o9:W150 box 13, lane o9L1039).
 #
 # fetch() has no time limit of its own. A request the server accepts and never answers stays
 # open for as long as the page is, and code that waits for that answer before it asks again,
@@ -4214,7 +4063,6 @@ body.donepage .brand{text-decoration:none;color:var(--ink)}
 # The limits, each well past the slowest answer measured or allowed for:
 #   FETCH_POLL_MS   10 s  a status question asked every 1.5 to 5 s while a save is on its way
 #                         (GET /landing, /landing?cid=, /script-landing/<job>). reader.log,
-#                         2026-10-03: 2,669 GET /landing, median 1 ms, slowest 169 ms.
 #   FETCH_LOAD_MS   60 s  a document, a script or the /done list. Slowest GET /doc/<slug> in
 #                         the same log: 4.4 s.
 #   FETCH_SAVE_MS   45 s  a save that carries an id: the server answers {"pending": true}
@@ -4243,8 +4091,7 @@ function fetchWithin(href,opt,ms,read){
 DONE_JS = FETCH_WITHIN_JS + r"""
 (function(){
 var WINS=["6h","24h","48h","7d"], KINDS=["ticked","resolved","done","new"];
-/* ⭐ "new" IS OFF BY DEFAULT. The human asked for what got DONE; a newly opened entry is not done.
-   It stays one click away, and a kind named in the hash (k=... or k=all) wins over this. */
+
 var DEFAULT_K=["ticked","resolved","done"];
 var st=readHash(), data=null, busy=false, retry=null;
 var listEl=document.getElementById("dn-list"), orchEl=document.getElementById("dn-orch"),
@@ -4344,8 +4191,7 @@ function load(){
   var w=st.w;
   if(retry){clearTimeout(retry); retry=null;}
   if(!data){statEl.className="dn-stat"; statEl.textContent="Loading the last "+w+" ...";}
-  /* o9:W150 box 13: `busy` clears at the time limit too, so a request that is never answered
-     does not stop the refresh every 60 seconds or a click on another window. */
+  
   fetchWithin("/done/data?w="+encodeURIComponent(w),{cache:"no-store"},FETCH_LOAD_MS)
     .then(function(d){
       busy=false;
@@ -4459,8 +4305,7 @@ function mark(dom){
     if(br.top<rr.top+30||br.bottom>rr.bottom-10){
       b.scrollIntoView({block:"center"});}
   }
-  /* ⛔ THE HASH IS THE RECORD OF WHERE HE IS. Without this the URL says "#o9" while he
-     reads W33, and any reload drops him at the top of o9 - the exact symptom. */
+  
   var e=document.getElementById(dom);
   if(e){ var d=e.getAttribute("data-doc"), i=e.getAttribute("data-id");
     history.replaceState(null,"","#"+d+"/"+i); spyHash=location.hash; savePlace(); }
@@ -4489,24 +4334,13 @@ function noteWire(root){
     add.type="button"; add.className="nbtn"; add.setAttribute("data-note-add","1");
     add.textContent=sec.querySelector(".note")?"Add another note":"Add a note";
     row.appendChild(add);
-    /* ⛔ THE SECOND BUTTON SAYS WHAT IT DOES IN THE LABEL, AND THE LABEL HAS TO BE TRUE.
-       It read "(wakes their session)" while this also wrote to a mailbox - and even then it
-       was a promise about a watcher that was not running. It does not wake anything. What it
-       does is oblige that orchestrator to acknowledge it before they can end a round, which
-       is both the strongest honest claim and the one that tells him why it is not a note. */
+    
     var ins=document.createElement("button");
     ins.type="button"; ins.className="nbtn act"; ins.setAttribute("data-instruct-add","1");
-    /* the human, 2026-09-30: remove "(must be acknowledged)". The name of the doc is the label. */
+    
     ins.textContent="Instruct "+sec.getAttribute("data-notes-doc");
     row.appendChild(ins);
-    /* ⭐ A DOC-LEVEL INSTRUCTION'S ITEM GETS ITS OWN DELETE, IN SIGHT. Once the orchestrator
-       has seen the instruction it folds, and its Delete folds with it - so there was no
-       visible way to remove it (the human, 2026-09-30). This deletes it the same way: kept for the
-       record, marked, and moved to §99.
-       ⭐ ON EVERY ONE, WITH ITS INSTRUCTION NOTE OR WITHOUT IT. The human, 2026-10-01: "For any
-       "the human's Instruction" item, I need to be able to delete the entire message." W114's
-       instruction note had been deleted, so this found no note to name and showed no button at
-       all. With no note it names none, and the server deletes the item itself. */
+    
     var ent=sec.closest(".entry");
     if(docInsItem(ent)){
       var live=sec.querySelector('.note[data-kind="instruction"]');
@@ -4528,28 +4362,18 @@ function noteActs(n){
     '<button type="button" class="nbtn danger" data-note-del>Delete</button>';
   // A seen note is collapsed to its header; its Edit/Delete belong inside the fold.
   (n.querySelector("details.note-fold")||n).appendChild(a);
-  /* ⭐ REMOVE ONE IMAGE, KEEP THE NOTE (the human, 2026-09-30): so a picture can be replaced
-     without deleting the instruction or sending its item to §99. */
+  
   n.querySelectorAll(".note-img").forEach(function(im){
     var x=document.createElement("button"); x.type="button";
     x.className="nbtn danger"; x.setAttribute("data-img-del","1");
     x.textContent="Remove image"; im.insertAdjacentElement("afterend",x);
   });
 }
-/* Whether `ent` is a LIVE "the human's instruction" item, the kind `orchdoc.py instruct` makes.
-   ⛔ THE SERVER DECIDES, ONCE (o9's review of W116, 2026-10-01). The page model marks such an
-   entry with data-ins-item, from the same function the delete runs (`instruction_items`), and
-   this only reads the mark. It used to re-derive the rule here from the RENDERED text, where a
-   wrapped line is joined with a space, so it showed the button on o9's own W116, which only
-   quotes the line, and the server then refused the click. */
+
 function docInsItem(ent){
   return !!ent&&ent.getAttribute("data-ins-item")==="1";
 }
-/* ⛔ ONE CONFIRM FOR BOTH WAYS AN INSTRUCTION ITEM IS DELETED, and it has to be true of each:
-   with its instruction note still on it, and with none left. It used to say "stops being
-   shown it", which is false once the note has been seen and meaningless when there is none.
-   ⭐ IT SAYS HOW MANY GO: every instruction on the item is marked deleted, not only the one
-   whose button was pressed (o9's review of W116, 2026-10-01). */
+
 function docInsConfirm(doc,n){
   if(n>1){
     return "Delete this instruction item and all "+n+" instructions on it? They are kept for "+
@@ -4562,23 +4386,13 @@ function docInsConfirm(doc,n){
     " has already been shown it, they may be acting on it now - deleting it does not tell "+
     "them to stop.";
 }
-/* ⛔ NO COMMAND-LINE WORDS ON THIS PAGE (o9's review of W116, 2026-10-01). The server gives its
-   reason in plain words; one that still names a flag is not something the human can act on here. */
+
 function docInsWhy(why){
   return /(^|[\s(`])--[a-z]/.test(why||"")
     ? "the server would not delete this item as it now stands. Reload the page to see it as it is"
     : why;
 }
 
-/* ---- WHAT HE TYPES OUTLIVES THE PAGE ----
-   ⛔ the human, 2026-09-29: "several times I have been writing instructions and the page gets reset
-   by the Orch updating the OrchDoc. When that happens, I lose everything I've been typing."
-   The boxes lived only in the DOM, and the DOM is replaced by a reload, by another session
-   navigating this pane, by a hash route to another doc, and by the re-fetch after any save.
-   ⭐ So every keystroke in a note or instruction box is copied to localStorage, keyed by the
-   entry and by the note being edited, and every paint puts each stored draft back into its
-   box. A draft is deleted only when its save or send succeeds, or when he cancels it and
-   confirms. A draft whose entry is not on screen is listed in a bar at the bottom right. */
 var DK="claude-orchdoc-reader-draft|", orphans={};
 function draftKey(kind,forId,nid){ return DK+kind+"|"+forId+"|"+(nid||""); }
 function boxKind(b){ return b.classList.contains("instruct")?"instruct":"note"; }
@@ -4616,8 +4430,7 @@ function draftPut(box,pending){
   try{
     if(!unsaved(box)){ window.localStorage.removeItem(k); }
     else{ m.text=ta.value; m.initial=init; m.t=Date.now(); m.pending=!!pending;
-          /* o9:W123: the save's id goes with the draft, so sending it again after a page
-             reset is recognised as the same save. */
+          
           m.cid=box._cid||""; m.cidText=box._cidText==null?"":box._cidText;
           window.localStorage.setItem(k,JSON.stringify(m)); }
   }catch(e){ ok=false; }
@@ -4643,8 +4456,7 @@ function secFor(root,forId){
     if(all[i].getAttribute("data-notes-for")===forId){ return all[i]; } }
   return null;
 }
-/* A receipt holds no text, so opening an editor may clear it. A box with a textarea is never
-   removed by opening another one: that was the second way his typing was lost. */
+
 function dropReceipts(sec){
   sec.querySelectorAll(".note-edit").forEach(function(b){
     if(!b.querySelector("textarea")){ b.parentNode.removeChild(b); } });
@@ -4673,7 +4485,7 @@ function draftRestore(root){
     if(!r){ r=document.createElement("div"); r.className="note-restored";
             box.insertBefore(r,ta); }
     r.textContent=msg;
-    /* o9:W123: it carries the id it was sent with, so the server can say whether it arrived. */
+    
     if(d.pending&&d.cid&&!(d.nid&&!sec.querySelector('.note[data-nid="'+d.nid+'"]'))){
       r.textContent="Restored from this browser. The page was reset while this was being "+act+
         "; checking whether it arrived...";
@@ -4765,9 +4577,7 @@ function noteEditor(sec,nid,initial,quiet){
   if(!quiet){ ta.focus(); ta.setSelectionRange(ta.value.length,ta.value.length); }
   return box;
 }
-/* ⛔ A SEPARATE BOX, NOT A CHECKBOX ON THE NOTE BOX. The human asked for the separate box in
-   exactly those words, and it is the right shape: the two controls do different amounts of
-   damage if used by accident, so they should not be one control with a modifier. */
+
 function instructEditor(sec,quiet){
   var had=findBox(sec,"instruct","");
   if(had){ if(!quiet){ had.querySelector("textarea").focus(); } return had; }
@@ -4791,15 +4601,7 @@ function instructEditor(sec,quiet){
   if(!quiet){ ta.focus(); }
   return box;
 }
-/* ⛔ THE VERDICT IS SHOWN AND HELD, NOT FLASHED. The question the human asked was whether the
-   orchestrator is notified at all, so the answer has to stay on screen until he dismisses it
-   rather than vanishing in the reload that follows a save.
 
-   ⛔ AND IT CLAIMS ONLY WHAT JUST HAPPENED. What happened is a line was written to a file.
-   Nothing was sent, nothing was woken, and a panel saying "delivered" would be the receipt-for-
-   an-unread-channel this feature was rebuilt to stop making. It reports the write, says plainly
-   that nobody has acknowledged it yet, and says where the acknowledgement will appear - which
-   is the only part he can actually check later. */
 function instructDone(box,j){
   var who=esc(j.role||"that orchestrator");
   var h='<div class="note-done">';
@@ -4841,16 +4643,7 @@ function noteSay(box,cls,msg){
   var d=document.createElement("div"); d.className=cls; d.textContent=msg;
   box.appendChild(d); return d;
 }
-/* ⛔ SAVED IS NOT LANDED, AND THE PAGE HAS TO SAY WHICH. `orchdoc.py note --json` reports
-   `landed` and `land_detail`, and this page used to ignore both: on 2026-09-24 one doc refused
-   every note for hours ("would REMOVE N line(s)") while each save looked fine here, so the human had
-   no way to know that sessions working from main could not see what he wrote. When a save or
-   delete did not reach main, this puts the reason next to the note, after the reload, so it
-   is on screen.
 
-   ⛔ AND OTHER NOTES THAT ARE STILL STUCK ARE SHOWN EVEN WHEN THIS ONE LANDED. The reply's
-   `stuck` lists notes on this computer that the landing could not put on main, each with the
-   reason. A save that landed says nothing about them, so without this they stay invisible. */
 function noteLandingWarnings(forId,nid,j,verb){
   if(!j){return;}
   var stuck=j.stuck||[];
@@ -4876,9 +4669,7 @@ function noteLandingWarnings(forId,nid,j,verb){
     place(s);
   }
 }
-/* o9:W123: every save to these routes carries an id (`cid`; see the block after noteReload).
-   A slow writer ({"pending": true}) or a lost answer is followed up with GET /landing?cid=
-   instead of being reported as a failure; `onWait` is told when that happens. */
+
 function notePost(body,onOk,onErr,path,onWait){
   var p=path||"/note", cid=null, settled=false;
   if(CID_ROUTES[p]){ body=Object.assign({},body); if(!body.cid){ body.cid=newCid(); }
@@ -4889,8 +4680,7 @@ function notePost(body,onOk,onErr,path,onWait){
     if(j&&j.queued&&window.landingPoke){window.landingPoke();}
     onOk(j); }
   function err(why){ if(settled){return;} settled=true; onErr(why); }
-  /* o9:W150 box 13: within a time limit, so the box this save disabled is given back. A save
-     with an id that is cut off is asked about (sentWait), like a lost answer. */
+  
   fetchWithin(p,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify(body)},cid?FETCH_SAVE_MS:FETCH_WRITE_MS,
     function(r){return r.json().then(function(j){return {s:r.status,j:j};});})
@@ -4905,8 +4695,7 @@ function notePost(body,onOk,onErr,path,onWait){
         sentWait(cid,ok,err,"could not reach the reader's server: "+e); }
       else{ err("could not reach the reader's server: "+e); } });
 }
-/* ⛔ RELOAD THE DOC FROM DISK, then land back on the entry he was reading. Losing his place
-   as the price of saving a note would be its own small defeat. */
+
 /* ⛔ THE RECEIPT NEEDS A HOME IN THE REFRESHED SECTION. The old panel lived inside the
    editor box, which the reload destroys - so after a reload there is nothing to write into.
    This makes an empty one in the same place the editor was. */
@@ -4927,24 +4716,6 @@ function noteReload(dom,then){
   load(v,function(){ if(dom){jump(dom,off);} if(then){then();} },true);
 }
 
-/* ---- THE OUTBOX: A SAVE NEVER HOLDS THE PAGE (o9cL1) ----
-   the human, 2026-10-08: "The OrchDoc, when saving to GH, tends to freeze up for several seconds,
-   even up to 30 seconds. We need a way for the OrchDoc to temporarily capture the edits being
-   saved in a way that doesn't interfere with the use of the OrchDoc ... and immediately (or
-   very quickly) allows me to continue to use the OrchDoc."
-   ⭐ SAVE PUTS THE CHANGE IN THIS BROWSER'S OUTBOX (localStorage, one key per save, and a copy
-   in memory for a browser that refuses storage), closes the editor at once and shows the
-   change in its entry, tagged "sending". Nothing is made read-only and nothing waits. The POST
-   goes in the background with "bg": the server answers at once, and the page asks
-   GET /landing?cid= until the write is on disk ("saved"), then GitHub ("landed").
-   ⭐ ONLY THAT ENTRY IS DRAWN AGAIN, from GET /entry/<doc>/<id>. The whole view (o9's is 3.6 MB,
-   painted in one task) is read again only when the entry is on the page and could not be
-   replaced; an entry that is not on screen needs nothing, and the views read before the save
-   are read again when he next opens them.
-   ⭐ A SAVE THAT DID NOT GET THROUGH IS SENT AGAIN from the outbox by itself, and after a reload
-   of the page. Its id (cid) makes a resend that did arrive write nothing.
-   ⛔ A SAVE THE WRITER REFUSED IS NOT RETRIED. His text goes back into an editor in its entry,
-   with the reason - or, with the entry not on screen, into the drafts bar - never lost. */
 var OB="claude-orchdoc-reader-outbox|", OBM={}, OBBUSY={}, STALE={};
 var OB_TITLE="On its way to the OrchDoc on this computer. You can keep working: this tag "+
   "reads saved once it is written there, and landed once it is on GitHub.";
@@ -5037,8 +4808,7 @@ function obSend(r){
         return; }
       obDel(r.cid); obRefused(r,why); },r.path);
 }
-/* Every view read before a write is out of date. The one on screen is mended in place; it is
-   read again only once he has left it and comes back (see load()). */
+
 function obStale(){
   Object.keys(cache).forEach(function(k){ if(k===view){ STALE[k]=1; } else { forget(k); } });
 }
@@ -5052,8 +4822,7 @@ function afterWrite(slug,id,forId,then){
 }
 function obDone(r,j){
   if(r.path==="/today"&&(r.act==="status"||r.act==="unstatus")){
-    /* o9L1328: Done / Superseded and its Undo. The entry is drawn again, and the Undo is kept
-       until the page is reloaded (it is in memory only). */
+    
     var mk=r.doc+"|"+r.id;
     if(r.act==="status"){ MARKED[mk]={label:r.choice,undo:(j&&j.undo)||null}; }
     else { delete MARKED[mk]; }
@@ -5063,9 +4832,7 @@ function obDone(r,j){
     return; }
   if(r.path==="/today"){
     obStale();
-    /* o9:W147: the Do-today strip at the top of a doc's page lists every doc's items, and a Don't
-       do item has moved to §99, so those re-read the view; a tag button also adds or stops the
-       item's §2.0 partner. */
+    
     if(view===TODAY||r.act==="add"||r.tgt||(r.choice&&/^Don/.test(r.choice))||
        (r.act!=="priority"&&pane.querySelector(".today-strip"))||!pane.querySelector(obEntrySel(r.doc,r.id))){
       todayRefresh(); return; }
@@ -5081,7 +4848,7 @@ function obDone(r,j){
     if(s2&&view===r.doc){ s2.innerHTML='Sent to '+esc(r.doc)+' as <a href="#'+esc(r.doc)+'/'+
       esc(id)+'">'+esc(id)+'</a>.'+esc(where);
       pane.style.setProperty("--docins-h",document.getElementById("docins").offsetHeight+"px"); }
-    /* o9:W164: the new W item is in the list now, not after a click or a reload. */
+    
     entryInsert(r.doc,id);
     return; }
   afterWrite(r.doc,r.id,r.forId,function(){
@@ -5140,34 +4907,23 @@ function obRefused(r,why){
   /* An edit already showed its new text in the note: the entry is drawn again first. */
   if(r.nid){ entryPatch(r.doc,r.id,reopen); } else { reopen(); }
 }
-/* ONE ENTRY, replaced by the server's drawing of it now. cb(true) once done; cb(false) when it
-   is not on the page or could not be fetched. An entry with an editor open in it keeps the
-   editor: only its notes are replaced, so what he is typing stays where it is. */
-function entryPatch(slug,id,cb){
+
+function entryPatch(slug,id,cb0){
+  
+  var called=false;
+  function cb(ok,partial,h){ if(called){ return; } called=true; cb0(ok,partial,h); }
   if(!pane.querySelector(obEntrySel(slug,id))){ cb(false); return; }
   fetchWithin("/entry/"+encodeURIComponent(slug)+"/"+encodeURIComponent(id)+
     (view===slug?"":"?show_doc=1"),{cache:"no-store"},FETCH_LOAD_MS)
-  .then(function(j){
+  .then(function(j){ try{ (function(){
     var old=pane.querySelector(obEntrySel(slug,id));
     if(!old||!j||!j.ok||!j.html){ cb(false); return; }
     var t=document.createElement("template"); t.innerHTML=String(j.html).trim();
     var fresh=t.content.querySelector("article.entry");
     if(!fresh){ cb(false); return; }
-    /* o9:W147 / W164: one save made two draws of the same entry, one from its own answer
-       (afterWrite) and one from the /revs check that sees the file change. Whichever came second
-       replaced the notes again, which a test (and the human, mid-read) sees as the page redrawing.
-       The server says what the entry looks like by a hash (`h`, the one /revs gives); an entry
-       already drawn from that same hash, with no unsent note of this page inside it, is current.
-       With a box open only the notes are drawn (below), so that marks the NOTES current
-       (`data-ehn`), not the entry: once the box is closed the next call for that hash draws the
-       header too (a priority set while a reply box was open; o9L1133 review). */
+    
     var boxOpen=!!old.querySelector(".note-edit textarea");
-    /* A "sending" placeholder whose save has its answer (no longer in the outbox) is left over
-       from a /revs draw that came before that answer (obShowAll put it back next to the saved
-       note). Drawn from this same hash, the saved note is already here: the placeholder is
-       taken out, and the entry is not drawn again (o9L1133 review: that second draw was what
-       still made test_reader_background_landing fail under load). A note with an id that is
-       marked unsent is an edit on screen, and is always drawn again. */
+    
     var unsent=[].slice.call(old.querySelectorAll(".note[data-ob]")), pend={};
     obAll().forEach(function(r){ pend[r.cid]=1; });
     var stale=unsent.filter(function(n){
@@ -5176,7 +4932,7 @@ function entryPatch(slug,id,cb){
        (boxOpen&&old.getAttribute("data-ehn")===j.h))){
       stale.forEach(function(n){ var s=n.parentNode; s.removeChild(n);
         s.classList.toggle("empty",!s.querySelector(".note")); });
-      apply(); obShowAll(); nsPaint(); cb(true); return; }
+      entrySettled(old); cb(true,old.getAttribute("data-eh")!==j.h,j.h); return; }
     if(j.h){ fresh.setAttribute("data-eh",j.h); }
     var pr=pane.getBoundingClientRect(), r0=old.getBoundingClientRect(), h0=old.offsetHeight;
     var oa=pane.style.overflowAnchor; pane.style.overflowAnchor="none";
@@ -5198,23 +4954,24 @@ function entryPatch(slug,id,cb){
       noteWire(fresh); draftRestore(fresh);
       if(cur===fresh.id){ cur=null; mark(fresh.id); }
     }
-    /* Taller or shorter above where he is reading: the text he reads does not move. */
+    
     if(r0.bottom<=pr.top){ pane.scrollTop+=(pane.querySelector(obEntrySel(slug,id)).offsetHeight-h0); }
     pane.style.overflowAnchor=oa;
-    apply(); obShowAll(); nsPaint(); cb(true);
-  },function(){ cb(false); });
+    entrySettled(boxOpen?old:fresh); cb(true,boxOpen,j.h);
+  })(); }catch(e){ if(called){ throw e; } cb(false); } },function(){ cb(false); });
 }
-/* o9:W164: an entry this page does not have yet (the W item an instruction for the whole doc
-   became), drawn and put after the entry before it, with its button in the rail. Nothing else on
-   the page is re-read. A no-op if it is already there, or he has left the doc. */
-function entryInsert(slug,id){
-  if(!slug||!id||view!==slug||pane.querySelector(obEntrySel(slug,id))){ return; }
+
+function entryInsert(slug,id,cb0){
+  var cb=cb0||function(){};
+  function there(){ return !!pane.querySelector(obEntrySel(slug,id)); }
+  if(!slug||!id||view!==slug||there()){ cb(view===slug&&there()); return; }
   fetchWithin("/entry/"+encodeURIComponent(slug)+"/"+encodeURIComponent(id),{cache:"no-store"},
     FETCH_LOAD_MS).then(function(j){
-    if(!j||!j.ok||!j.html||view!==slug||pane.querySelector(obEntrySel(slug,id))){ return; }
+    if(view!==slug||there()){ cb(view===slug); return; }
+    if(!j||!j.ok||!j.html){ cb(false); return; }
     var t=document.createElement("template"); t.innerHTML=String(j.html).trim();
     var fresh=t.content.querySelector("article.entry");
-    if(!fresh){ return; }
+    if(!fresh){ cb(false); return; }
     var prev=j.after?pane.querySelector(obEntrySel(slug,j.after)):null;
     if(!prev){ var all=pane.querySelectorAll("article.entry"); prev=all.length?all[all.length-1]:null; }
     if(prev){ prev.parentNode.insertBefore(fresh,prev.nextSibling); } else { pane.appendChild(fresh); }
@@ -5226,7 +4983,8 @@ function entryInsert(slug,id){
     }
     if(obs){ try{ obs.observe(fresh); }catch(e){} }
     noteWire(fresh); draftRestore(fresh); apply(); obShowAll(); nsPaint();
-  },function(){});
+    cb(true);
+  },function(){ cb(false); });
 }
 /* A landing put a note under another id: the note says so, without re-reading the view. False
    when that is not enough (a new entry renamed), and the view is read again. */
@@ -5241,22 +4999,6 @@ function nsRenumber(n,d){
   return true;
 }
 
-/* ---- ONE SAVE IS ONE NOTE, AND THE NOTE SAYS WHERE IT IS (o9:W123) ----
-   the human, 2026-10-01 17:08: "the instruction never registers as sent and eventually shows a
-   timeout message. I end up resending the message trying to get it to register ... If the
-   background process properly captures the note, there MUST be a confirmation in the live doc
-   as I'm looking at it."
-   ⭐ EVERY SAVE CARRIES AN ID, `cid`. The writer writes a save whose id and text it has already
-   written only once, so sending again after a failure that was not one adds nothing. A box
-   keeps its id while its text is unchanged, and the id is kept with the draft, so a resend
-   after a page reset is recognised too.
-   ⭐ A SLOW OR LOST ANSWER IS NOT A FAILURE. When the server says the writer is still running
-   ({"pending": true}), or the answer never arrived, the page asks GET /landing?cid= once a
-   second until the save is on disk, then goes on exactly as if the answer had come.
-   ⭐ EACH NOTE SAYS WHERE IT IS, IN ITS HEADER: "sending" while it is on its way to this
-   computer's disk, "saved" once it is written there, "landed" once the background worker has
-   pushed it to main, or why it has not landed yet and that it is tried again. The status poll
-   (GET /landing, see LANDING_JS) changes only those tags, never the rest of the page. */
 var CID_ROUTES={"/note":1,"/instruct":1,"/instruct-doc":1,"/today":1};
 var NS={last:null,mine:{},landed:{},refused:{},renumbered:{},checking:{},reload:null};
 function newCid(){
@@ -5275,8 +5017,7 @@ function boxCid(box,txt){
 function sentWait(cid,ok,err,why){
   var miss=0, gone=0;
   function step(){
-    /* o9:W150 box 13: an unanswered question ends at its limit and counts as one that failed,
-       so the next is asked; it used to end the asking, and the save showed "sending" for good. */
+    
     fetchWithin("/landing?cid="+encodeURIComponent(cid),{cache:"no-store"},FETCH_POLL_MS)
       .then(function(s){
         var c=(s&&s.cids&&s.cids[cid])||{state:"unknown"};
@@ -5340,8 +5081,7 @@ function nsSending(box,msg){
   d.insertBefore(document.createTextNode(" "),d.firstChild); d.insertBefore(t,d.firstChild);
   return d;
 }
-/* Re-read the view from disk, once he is not typing in it: a landing renumbered a note on this
-   page, or main refused a change and this computer's copy was put back. */
+
 function nsReload(){
   var a=document.activeElement;
   if(!NS.reload||(a&&a.tagName==="TEXTAREA"&&pane.contains(a))){return;}
@@ -5425,11 +5165,7 @@ function nsPaint(){
 }
 window.noteStatesApply=function(s){ if(s&&s.ok===true){ NS.last=s; revCheck(s.revs); revDrop(s.revs); }
   nsPaint(); };
-/* o9:W46 (framework review 6): a view held in `cache` for a doc that is NOT on screen was never
-   read again, so going back to it showed the doc as it was when first opened. /landing says each
-   doc's file time and size; `CREV` is what it said before this view was fetched. When it says
-   something else now, the view is dropped, and the next visit reads the file again. A view first
-   fetched before any answer (`CREV` unset) is dropped on the first answer: a read too many. */
+
 var CREV={};
 function revDrop(revs){
   if(!revs){ return; }
@@ -5441,27 +5177,86 @@ function revDrop(revs){
      the held view, so on leaving it the view is dropped and read again. */
   Object.keys(revs).forEach(function(k){ if(!cache[k]){ CREV[k]=revs[k]; } });
 }
-/* o9:W164: a save by another session (or by hand) changed the doc on screen. /landing says each
-   doc's file time and size; when the open doc's differs from the last one seen, /revs/<doc> says
-   which entries differ from the last answer, and only those are drawn again (or inserted, if
-   new). The first answer for a doc is the baseline and changes nothing. */
-var REVS={}, REVH={}, REVBUSY=false;
+
+var REVS={}, REVH={}, REVN={}, REVBUSY=false, REVPEND={}, REV_TRIES=5;
+function revRetry(slug){
+  var p=REVPEND[slug];
+  return !!p&&Object.keys(p).some(function(id){
+    if(p[id]>=REV_TRIES){ return false; }
+    var e=pane.querySelector(obEntrySel(slug,id));
+    return !!e&&!e.querySelector(".note-edit textarea"); });
+}
 function revCheck(revs){
   var slug=view;
-  if(!revs||!slug||!revs[slug]||REVBUSY||REVS[slug]===revs[slug]){ return; }
+  if(!revs||!slug||!revs[slug]||REVBUSY||REVRUN){ return; }
+  var same=REVS[slug]===revs[slug];
+  if(same&&!revRetry(slug)){ return; }
   REVBUSY=true;
   fetchWithin("/revs/"+encodeURIComponent(slug),{cache:"no-store"},FETCH_LOAD_MS)
   .then(function(j){
     REVBUSY=false;
-    if(!j||!j.ok){ return; }
-    var old=REVH[slug]; REVH[slug]=j.ids; REVS[slug]=j.rev;
-    if(!old||view!==slug){ return; }
+    if(!j||!j.ok||view!==slug){ return; }
+    var old=REVH[slug], moved=REVS[slug]!==j.rev; REVS[slug]=j.rev;
+    if(!old){ REVH[slug]=j.ids; REVN[slug]=j.ids; return; }
+    var next={}, changed=[], owed=[], added=[], p=REVPEND[slug];
+    /* A new change on disk gives a failed entry its tries back. */
+    if(p&&moved){ Object.keys(p).forEach(function(id){ p[id]=0; }); }
+    if(p){ Object.keys(p).forEach(function(id){ if(j.ids[id]===undefined){ delete p[id]; } }); }
     Object.keys(j.ids).forEach(function(id){
-      if(old[id]===undefined){ entryInsert(slug,id); }
-      else if(old[id]!==j.ids[id]){ entryPatch(slug,id,function(){}); }
+      if(old[id]===undefined){ added.push(id); }
+      else if(p&&p[id]!==undefined){ next[id]=old[id]; owed.push(id); }
+      else if(old[id]!==j.ids[id]){ next[id]=old[id]; changed.push(id); }
+      else { next[id]=old[id]; }
     });
+    REVH[slug]=next; REVN[slug]=j.ids;
+    added.forEach(function(id){ entryInsert(slug,id,function(ok){
+      if(ok&&REVH[slug]){ REVH[slug][id]=j.ids[id]; } }); });
+    revQueue(slug,changed.concat(owed));
   },function(){ REVBUSY=false; });
 }
+/* One entry's draw is over. Only a full draw records its hash. */
+function revDone(slug,id,ok,partial,h){
+  var cur=REVH[slug]; if(!cur){ return; }
+  var p=REVPEND[slug]||(REVPEND[slug]={});
+  if(ok&&!partial){ if(h){ cur[id]=h; } else if(REVN[slug]&&REVN[slug][id]!==undefined){
+      cur[id]=REVN[slug][id]; }
+    delete p[id]; return; }
+  if(view===slug&&!pane.querySelector(obEntrySel(slug,id))){
+    /* Not on the page any more (removed): nothing to draw. */
+    if(REVN[slug]&&REVN[slug][id]!==undefined){ cur[id]=REVN[slug][id]; }
+    delete p[id]; return; }
+  p[id]=(p[id]||0)+(ok?0:1);
+}
+
+var REVQ=[], REVQS={}, REVRUN=false, REVSLUG="", REVWALK=false;
+function revQueue(slug,ids){
+  if(REVSLUG!==slug){ REVQ=[]; REVQS={}; REVSLUG=slug; }
+  ids.forEach(function(id){ if(!REVQS[id]){ REVQS[id]=1; REVQ.push(id); } });
+  if(!REVRUN&&REVQ.length){ REVRUN=true; revNext(); }
+}
+function revNext(){
+  if(!REVQ.length||view!==REVSLUG){
+    
+    if(REVQ.length){ var lp=REVPEND[REVSLUG]||(REVPEND[REVSLUG]={});
+      REVQ.forEach(function(q){ lp[q]=lp[q]||0; }); }
+    REVQ=[]; REVQS={}; REVRUN=false;
+    
+    if(REVWALK){ REVWALK=false; apply(); obShowAll(); nsPaint(); }
+    return; }
+  var id=REVQ.shift(), slug=REVSLUG, went=false;
+  delete REVQS[id];
+  /* The timer is for an answer that never comes; a draw that throws is answered cb(false). */
+  function go(ok,partial,h){ if(went){ return; } went=true; revDone(slug,id,ok,partial,h);
+    setTimeout(revNext,0); }
+  setTimeout(go,FETCH_LOAD_MS+1000);
+  entryPatch(slug,id,go);
+}
+
+function entrySettled(el){
+  if(REVRUN&&REVQ.length){ REVWALK=true;
+    if(el&&el.isConnected){ el.classList.toggle("hid",!applyTest(el)); }
+    obShowAll(); nsPaint(); return; }
+  REVWALK=false; apply(); obShowAll(); nsPaint(); }
 /* A draft put back by a page reset while it was being sent: ask whether it arrived. */
 function nsCheckRestored(d){
   if(NS.checking[d.cid]){return;}
@@ -5492,10 +5287,6 @@ function nsCheckRestored(d){
   });
 }
 
-/* ---- STARS: his own bookmarks, kept in this browser ----
-   ⛔ A SPAN, NOT A BUTTON: the row is already a <button>, and a button inside a button is
-   invalid HTML that browsers repair by splitting the row. The click is taken in the capture
-   phase so it stars the item without also jumping to it. */
 var STARK="claude-orchdoc-reader-stars";
 function starSet(){ try{ return JSON.parse(window.localStorage.getItem(STARK)||"[]")||[]; }
   catch(e){ return []; } }
@@ -5593,12 +5384,6 @@ function crossStarred(){
   starPaint(crossBox);
 }
 
-/* ---- AN INSTRUCTION FOR THE WHOLE DOC ----
-   ⭐ the human, 2026-09-30: instructions "that are not a part of any item", sticky at the top. It
-   is written as a new §3 W item in the OrchDoc carrying his words as an INSTRUCTION, so the
-   orchestrator finds it where it already looks - its §3 and its unacknowledged instructions -
-   and makes the §2 items from it. Not on the plate or scripts views: those are not one doc.
-   His draft is kept in this browser until it is sent, like every other box on this page. */
 var DIK="claude-orchdoc-reader-docins|";
 function docInsWire(){
   var old=document.getElementById("docins"); if(old){old.remove();}
@@ -5611,8 +5396,7 @@ function docInsWire(){
     '<div class="docins-say" aria-live="polite"></div>';
   pane.insertBefore(w,pane.firstChild);
   pane.style.setProperty("--docins-h",w.offsetHeight+"px");
-  /* o9L1005: the bar grows when it opens and was measured once, so a stale 0px left the pinned
-     entry box under it. Keep the published height true. */
+  
   if(window.ResizeObserver){ try{ new ResizeObserver(function(){
     if(w.isConnected&&w.offsetHeight){ pane.style.setProperty("--docins-h",w.offsetHeight+"px"); }
   }).observe(w); }catch(e){} }
@@ -5628,8 +5412,7 @@ function docInsWire(){
   btn.addEventListener("click",function(){
     var txt=ta.value.trim();
     if(!txt){ say.textContent="Type the instruction first."; ta.focus(); return; }
-    /* o9:W123: the same text sent again carries the same id, even after a page reset, so a
-       resend is answered from the first save instead of writing a second W item. */
+    
     var dk=DIK+d+"|cid", dm=null, dcid;
     try{ dm=JSON.parse(window.localStorage.getItem(dk)||"null"); }catch(e){ dm=null; }
     if(dm&&dm.cid&&dm.text===txt){ dcid=dm.cid; }
@@ -5643,10 +5426,6 @@ function docInsWire(){
   });
 }
 
-/* ---- PASTING AN IMAGE into any note or instruction box ----
-   ⭐ the human, 2026-09-30. The picture is saved by the server as a file, and the box gets an
-   `[image: <path>]` marker at the cursor - a note is one line of text, and the orchestrator
-   opens the file at that path. Plain-text pastes are left to the browser. */
 function boxDoc(ta){
   var sec=ta.closest(".notes"); if(sec){ return sec.getAttribute("data-notes-doc"); }
   return ta.closest("#docins")?view:null;
@@ -5676,9 +5455,6 @@ document.addEventListener("paste",function(ev){
   rd.readAsDataURL(file);
 });
 
-/* ⭐ SEARCH READS THE WHOLE ENTRY, not only its id and title (the human, 2026-09-30: search
-   "only finds header text"). A rail row reads the text of the entry it points at. Cached per
-   paint, since the pane is replaced on every load. */
 var bodyCache={};
 function bodyHay(n){
   var dom=n.classList.contains("entry")?n.id:n.getAttribute("data-goto");
@@ -5714,8 +5490,7 @@ document.addEventListener("click",function(ev){
   var tr={cid:newCid(),path:"/today",doc:td,id:ti,act:act,t:Date.now()};
   obPut(tr); obShow(tr); obSend(tr);
 });
-/* o9:W147: the Do-today button in an item's header (adds or stops the item's own §2.0 partner),
-   and the priority menu. Both go through the outbox like every Do-today change. */
+
 document.addEventListener("click",function(ev){
   var b=ev.target.closest&&ev.target.closest("[data-dotag]");
   if(!b){return;}
@@ -5757,11 +5532,6 @@ document.addEventListener("submit",function(ev){
   obSend(ar);
 });
 
-/* ---- DONE / SUPERSEDED (o9L1328) ----
-   the human, 2026-10-15: mark an item Done or Superseded straight from the Reader, with no session
-   (and so no tokens). A click opens a small confirm in the entry (a reason is optional); Confirm
-   sends it through the outbox like every other change: `orchdoc.py resolve` writes it, the
-   landing worker lands it. Undo is kept in memory until the page is reloaded. */
 var MARKED={};
 function mkWord(c){ return c==="done"?"Done":"Superseded"; }
 function mkClose(e){ var f=e&&e.querySelector(".mk-confirm"); if(f){ f.parentNode.removeChild(f); } }
@@ -5835,12 +5605,11 @@ function markPaint(){
 }
 
 /* ---- filters HIDE. Nothing is ever removed from the DOM. ---- */
-function apply(){
-  var term=(q.value||"").trim().toLowerCase();
-  var own=ownerSel.value;
-  var all=scopeAll.getAttribute("aria-pressed")==="true";
-  var shown=0,total=0;
-  function test(n){
+/* Whether one entry (or rail button) passes the filters now. */
+function applyTest(n,term,own){
+  if(term===undefined){ term=(q.value||"").trim().toLowerCase(); }
+  if(own===undefined){ own=ownerSel.value; }
+  {
     /* A script file is not an entry: it has no status, owner or plate, so only the search
        term applies to it. Without this, "Open" or "On your plate" hid the whole list. */
     if(n.hasAttribute("data-script")||n.hasAttribute("data-rule")){
@@ -5859,6 +5628,13 @@ function apply(){
       return false;}
     return true;
   }
+}
+function apply(){
+  var term=(q.value||"").trim().toLowerCase();
+  var own=ownerSel.value;
+  var all=scopeAll.getAttribute("aria-pressed")==="true";
+  var shown=0,total=0;
+  function test(n){ return applyTest(n,term,own); }
   railE.querySelectorAll(".ebtn").forEach(function(n){
     total++; var ok=test(n); n.classList.toggle("hid",!ok); if(ok){shown++;}});
   pane.querySelectorAll(".entry").forEach(function(n){
@@ -5897,13 +5673,6 @@ function apply(){
   textSearch(term,all);
 }
 
-/* ---- ⭐ SEARCH FINDS SCRIPTS AND RULES FROM ANY VIEW (the human, 2026-10-21) ----
-   He typed a script's id (SC-Sl-N-02-005) in an OrchDoc and nothing came up: scripts were only
-   searchable inside the Scripts view, by file name. Now every view, with Search all docs on or
-   off, asks the server (the same /search) and shows the script files and rule boxes that hold
-   the term in their id, title or text, under the rail's own results. In the Scripts and Rules
-   views, where there is no entry list to filter, entries are listed too. A click on a script
-   opens it through its #scripts/p/ link, a rule through #rule/<CODE>. */
 var tBox=null, tSeq=0, tTimer=null;
 function hideT(){ tSeq++; if(tTimer){clearTimeout(tTimer);tTimer=null;} if(tBox){tBox.classList.add("hid");} }
 function textSearch(term,all){
@@ -5984,20 +5753,7 @@ function crossSearch(term){
   starPaint(crossBox);
 }
 
-/* ⛔ ALWAYS INSTANT, NEVER SMOOTH. A smooth scroll across a 289-entry pane animates through
-   everything between here and there, which reads as the page running away from him. The
-   jump should LAND. Nothing here asks for a smooth behaviour, and the CSS sets none. */
-/* ⛔ A JUMP MUST STAY LANDED WHILE THE PAGE SETTLES (the human, 2026-09-24). Entries use
-   content-visibility:auto with a 1200px placeholder (see the .entry rule), so the entries just
-   above the target are laid out only AFTER the jump brings them near the viewport. When their
-   real height is not 1200px everything below them moves: the target slid below the fold, the
-   scrollspy saw the entry above it, and the hash was rewritten to that one. The human clicked
-   #o9/W69 and got the middle of W68 with #o9/W68 in the address bar.
-   ⭐ So the target is PINNED - re-landed on any frame it has drifted - for 6 seconds, or until
-   he scrolls, clicks or presses a key himself. Not "until the layout holds still": a lazy image
-   or a late font can move it after a quiet second. While it is pinned the scrollspy does not
-   touch the hash. `off` lands that many pixels INTO the entry,
-   which is how a reload puts him back where he was reading rather than at the heading. */
+
 var pin=null;
 function unpin(){ if(pin){ pin=null; pane.style.overflowAnchor=""; } }
 ["wheel","touchstart","pointerdown","keydown"].forEach(function(ev){
@@ -6029,24 +5785,16 @@ function jump(dom,off){
     var now=performance.now(), d=drift(el,off);
     if(Math.abs(d)>1){ nudge(d); }
     if(now-p.t0>6000){ pin=null; pane.style.overflowAnchor=""; savePlace(); return; }
-    window.setTimeout(tick,60);   /* a timer, not requestAnimationFrame: a tab opened behind
-                                     the current one runs no animation frames, and the drift
-                                     starts before he switches to it */
+    window.setTimeout(tick,60);   
   })();
   mark(dom); setCol("read"); savePlace(); return true;
 }
-/* How far he has scrolled into the entry he is reading, for savePlace. */
+
 function offIn(dom){
   var e=dom&&document.getElementById(dom);
   return e?Math.max(0,Math.round(-drift(e,0))):0;
 }
 
-/* ⛔ WHERE HE IS MUST SURVIVE A RELOAD, WHATEVER CAUSED IT.
-   This reader never reloads itself - measured, not assumed: no polling, no EventSource, and
-   a network trace showing zero background requests. But it is served into a browser pane
-   that OTHER sessions can navigate, and a navigation puts him wherever the URL says. So the
-   URL has to always say where he is, and sessionStorage is the backstop for when it cannot
-   (a bare "/" with no hash). */
 var SS="claude-orchdoc-reader-place";
 function savePlace(){
   try{window.sessionStorage.setItem(SS,JSON.stringify(
@@ -6061,16 +5809,6 @@ function readPlace(){
   catch(e){return null;}
 }
 
-/* ⛔ ONE CLICK, ONE REQUEST (o9:W150 box 10). A click on the list sets `location.hash` and
-   calls load(); the hash change then fires `hashchange`, whose route() calls load() for the
-   same view while its answer is still on the way. With nothing cached yet, that second call
-   sent a second GET /doc/<slug>: two builds of o9's 3.6 MB view, and a second paint that sent
-   the pane back to the top a second later. `asking[view]` is the request in flight for that
-   view: a second load() of it waits for that answer instead of sending another.
-   ⛔ AND A LATE ANSWER DOES NOT PAINT OVER THE VIEW HE MOVED TO. Opening one document and then
-   another before the first arrived painted the first over the second when its answer came
-   last. Every answer is kept in the cache; only the newest load() paints, and only if its view
-   is still the one shown (`loads` counts the load() calls that changed the view). */
 var asking={}, loads=0;
 /* Drops a view so the next load() reads it again: after a save, the request already on its way
    may hold the view from before the save, so it is dropped too, and its answer is not kept. */
@@ -6089,7 +5827,7 @@ function load(doc,then,restore){
     if(window.scriptHash){ history.replaceState(null,"",window.scriptHash()); }
     return; }
   if(window.scriptClosed){ window.scriptClosed(); }
-  /* o9cL1: a view mended in place after a save is read again once he comes back to it. */
+  
   if(view!==doc&&STALE[view]){ forget(view); delete STALE[view]; }
   view=doc; var mine=++loads;
   railD.querySelectorAll(".dbtn").forEach(function(b){
@@ -6098,16 +5836,14 @@ function load(doc,then,restore){
     railE.innerHTML=d.nav; pane.innerHTML=d.body; cur=null;
     bodyCache={}; starPaint(railE); apply(); spy(); noteWire(pane); draftRestore(pane); docInsWire();
     obShowAll(); nsPaint();
-    /* ⛔ NOT ON A RESTORE. Resetting to the top unconditionally is what threw away his
-       position every time the page came back. */
+    
     if(!restore){pane.scrollTop=0;}
     if(then){then();}
   }
   if(cache[doc]){paint(cache[doc]);return;}
   railE.innerHTML='<div class="count">loading...</div>';
   if(!asking[doc]){
-    /* o9:W150 box 13: `asking[doc]` is let go at the time limit too. A request that was never
-       answered kept it for good, and every later click on that document waited on it. */
+    
     /* revDrop keeps CREV[doc] at the answer from before this read, which is what the view is
        judged against later. */
     var req=fetchWithin("/doc/"+encodeURIComponent(doc),null,FETCH_LOAD_MS)
@@ -6124,15 +5860,6 @@ function load(doc,then,restore){
       railE.innerHTML='<div class="count">failed: '+e+'</div>'; } });
 }
 
-/* ⛔ THE PLATE VIEW NEEDS A HASH OF ITS OWN, and giving it the EMPTY one was the bug.
-   The human, 2026-09-21: *"If I click anything else - eg, the o1 doc, then try to click
-   'Everything waiting', it doesn't allow me to see the full Everything - it bounces
-   straight back to o1."* Clicking it set `location.hash=""`, `hashchange` fired, and
-   `route()` read an empty hash as *no hash*, which means "restore where he was" - and
-   where he was, in sessionStorage, was o1. The view loaded and was immediately navigated
-   away from by its own click.
-   ⭐ An empty hash cannot be both "the plate" and "wherever you left off". `#plate` is the
-   plate - which is what the human tried, and it 404'd, because `/doc/plate` is not a document. */
 var PLATE="__plate__", SCRIPTS="__scripts__", TODAY="__today__";
 function docOf(seg){
   if(!seg||seg==="plate"||seg===PLATE){return PLATE;}
@@ -6142,11 +5869,6 @@ function docOf(seg){
   return seg;
 }
 
-/* o9:W260 - THE TAB TITLE NAMES WHAT THE PAGE SHOWS, so several Reader tabs can be told apart:
-   `#o9/W259` -> "o9 W259 · OrchDoc", `#o9` -> "o9 · OrchDoc", no hash -> "OrchDoc reader". The id
-   comes first so a truncated tab still tells them apart. It is set from the hash itself, and
-   history.replaceState / pushState are wrapped because they change the hash WITHOUT a
-   `hashchange` (the scrollspy, the scripts view and the Cancel path all use them). */
 function tabTitle(){
   var h=(location.hash||"").replace(/^#/,"");
   document.title=h?h.split("/").slice(0,2).join(" ")+" · OrchDoc":"OrchDoc reader";
@@ -6161,7 +5883,7 @@ tabTitle();
 function route(first){
   var h=(location.hash||"").replace(/^#/,"");
   if(!h){
-    /* No hash: fall back to where he was, and only then to the landing view. */
+    
     var pl=readPlace();
     if(pl&&pl.doc){
       load(pl.doc,function(){
@@ -6175,19 +5897,14 @@ function route(first){
   var p=h.split("/");
   if(docOf(p[0])===SCRIPTS){
     load(SCRIPTS,function(){
-      /* `#scripts/<id>/compare` is the Compare view of that pair (o8:W72). */
-      /* `#scripts/p/<path under the corpus root>` is the stable link (o9L1243). */
+      
       if(p[1]==="p"&&window.openScriptPath){ window.openScriptPath(p.slice(2)); }
       else if(p[1]&&p[2]==="compare"&&window.openCompare){ window.openCompare(p[1]); }
       else if(p[1]&&window.openScript){ window.openScript(p[1]); } },true);
     return;
   }
   if(p.length===2){
-    /* ⛔ A RELOAD KEEPS HIS PLACE INSIDE THE ENTRY. The hash names only the entry, so a
-       reload used to land on its heading - in a long entry that is losing his place. Only when
-       the browser says this load IS a reload (or back/forward), and only when the saved place is
-       this same entry. A link he clicks, even one to the entry he was reading, lands on the
-       heading, which is what a link means. */
+    
     var dom0="entry-"+p[0]+"-"+p[1], pl0=(first&&isReload())?readPlace():null;
     var off0=(pl0&&pl0.entry===dom0)?pl0.off:0;
     load(docOf(p[0]),function(){ jump(dom0,off0); },true);
@@ -6231,10 +5948,7 @@ document.addEventListener("click",function(ev){
     var ita=ibox.querySelector("textarea"), itxt=ita.value;
     if(!itxt.trim()){ noteSay(ibox,"note-err",
       "Nothing to send \u2014 the instruction is empty."); return; }
-    /* o9cL1: into the outbox; the box closes now and the instruction shows "sending" in
-       the entry. Once it is on disk the entry is drawn again and the receipt goes where the
-       box was. ⛔ The receipt is still drawn whether or not he stays on the entry: the
-       instruction itself, with its acknowledged state, is the persistent memo. */
+    
     obSave(ibox,isec,"/instruct",itxt);
     return; }
   var ne=ev.target.closest&&ev.target.closest("[data-note-edit]");
@@ -6258,9 +5972,7 @@ document.addEventListener("click",function(ev){
     /* With its instruction note still on it, this is that note's own Delete, as before. */
     var tn=wnid&&wsec.querySelector('.note[data-nid="'+CSS.escape(wnid)+'"] [data-note-del]');
     if(tn){ tn.click(); return; }
-    /* ⭐ NO INSTRUCTION NOTE LEFT ON IT (W114): the ITEM is deleted. {id, del} with no note id
-       is what `orchdoc.py note --id W<N> --delete` reads as "this whole instruction item", and
-       the doc is then re-fetched, never patched: what he sees is what the server read off disk. */
+    
     if(!window.confirm(docInsConfirm(wsec.getAttribute("data-notes-doc"),
         +(wsec.closest(".entry").getAttribute("data-ins-count")||0)))){return;}
     wdel.disabled=true;
@@ -6294,14 +6006,12 @@ document.addEventListener("click",function(ev){
     return; }
   var nd=ev.target.closest&&ev.target.closest("[data-note-del]");
   if(nd){
-    /* ⛔ DELETING NEEDS A CONFIRM. Editing his own note is his business; removing one is the
-       only action here that can lose something he wrote. */
+    
     var nn=nd.closest(".note"), sec=noteSection(nd);
     /* ⛔ DELETING AN INSTRUCTION DOES NOT UNSAY IT. That session may already have been
        shown it at a turn boundary and already be acting on it, so the confirm says what
        deleting does and does not undo rather than implying a recall. */
-    /* ⭐ A DOC-LEVEL INSTRUCTION (its own W item) is not erased: the server keeps it, marked
-       deleted, with a note saying so, and moves the item to §99 (the human, 2026-09-30). */
+    
     var docLevel=nn.getAttribute("data-kind")==="instruction"&&docInsItem(nd.closest(".entry"));
     var msg=docLevel
       ? docInsConfirm(sec.getAttribute("data-notes-doc"),
@@ -6364,11 +6074,7 @@ window.addEventListener("beforeunload",function(e){
   if(lost){ e.preventDefault(); e.returnValue=""; }
 });
 window.addEventListener("hashchange",function(ev){
-  /* o9:W131 - the scrollspy's mark() can write its own hash between a click's navigation and
-     this handler, so location.hash is then the scrollspy's, not the one asked for. The event
-     still carries the hash asked for (newURL): when the current hash is the scrollspy's and
-     differs from it, put the asked-for hash back (replaceState fires no hashchange). Only that
-     case: re-applying it every time would change the Cancel path for unsaved edits. */
+  
   try{
     var asked=new URL(ev.newURL).hash;
     if(asked&&spyHash&&location.hash===spyHash&&asked!==location.hash){
@@ -6385,7 +6091,7 @@ pane.addEventListener("scroll",function(){
   if(_st){return;}
   _st=setTimeout(function(){_st=null;savePlace();},250);
 });
-// Search is BACKSLASH, never "/" - the human, 2026-09-23: "I use the forward slash often in regular
+
 // typing". The old handler also fired INSIDE the note boxes and the script editor, so a "/" typed
 // there was eaten and the cursor jumped away. Now it never fires while any text field has focus.
 function typingInField(el){
@@ -6407,7 +6113,6 @@ obAll().forEach(function(r){ obSend(r); });
 
 
 # ==========================================================================================
-# ⭐ THE LANDING INDICATOR (o9:W123). A save now returns as soon as the change is on disk, and
 # a background worker puts it on main afterwards (`reader_landing.py`). So the page has to say
 # where that stands, and a failure has to stay on screen until it is fixed, never only in a
 # log. It polls GET /landing: every 1.5 s while a save is on its way, every 5 s while one is
@@ -6439,7 +6144,7 @@ LANDING_CSS = r"""
 #landing-ind.li-fail .li-head{color:var(--open)}
 #landing-ind.li-off{border-left-color:var(--mut)}
 #landing-ind.li-off .li-head{color:var(--mut)}
-/* o9:W123: each saved note's own state, on its header line, changed in place. */
+
 .note-state{display:inline-block;margin:0 .45rem 0 0;padding:0 .4rem;border:1px solid;
   border-radius:999px;font-size:.7rem;font-weight:700;letter-spacing:0;text-transform:none;
   line-height:1.5;vertical-align:baseline;white-space:nowrap}
@@ -6450,7 +6155,7 @@ LANDING_CSS = r"""
   white-space:normal;overflow-wrap:anywhere;max-width:100%;border-radius:.5rem}
 .note-state[data-state="off"]{color:var(--mut)}
 .et .note-state{margin:0 0 0 .5rem;font-size:.68rem;vertical-align:middle}
-/* o9:W123 (a): a doc on this computer that has stopped following main, said at the top. */
+
 #copy-banner{flex:0 0 auto;padding:.45rem .9rem;background:var(--openbg);color:var(--ink);
   border-bottom:1px solid var(--openline);border-left:4px solid var(--open);font-size:.85rem;
   line-height:1.45;overflow-wrap:anywhere}
@@ -6486,9 +6191,7 @@ function times(n){ return n+" time"+(n===1?"":"s"); }
 head.addEventListener("click",function(){
   more.hidden=!more.hidden; head.setAttribute("aria-expanded",more.hidden?"false":"true");
 });
-/* o9:W123 (a): a doc on this computer that has stopped following main, said in plain words at
-   the top of the page with the doc and the time. From the same answer (`s.copies`), which the
-   server's copy watcher keeps (reader_landing.CopyWatch). */
+
 var cb=document.createElement("div");
 cb.id="copy-banner"; cb.hidden=true; cb.setAttribute("role","status");
 var hdr=document.querySelector("header.top");
@@ -6576,7 +6279,7 @@ function copyBanner(list){
 var COPY_CLOSED_KEY="orchdoc.copyBanner.closed";
 function show(s){
   var state="", text="", lines=[];
-  /* o9:W123: the same answer marks each note on the page with its own state, in place. */
+  
   if(window.noteStatesApply){ try{ window.noteStatesApply(s); }catch(e){
     if(window.console){ console.error(e); } } }
   if(s&&s.ok===true){ copyBanner(s.copies); }
@@ -6621,8 +6324,7 @@ function show(s){
         lines.push((x.nid||"?")+" in "+x.doc+" (\""+clip(x.text,80)+"\"): "+x.why);
       });
     }
-    /* A delete that main refused, where this computer's copy was put back (o9:W116). It is
-       final, not retried, so it leads for five minutes and the entry says it too. */
+    
     var rf=(s.done||[]).filter(function(x){ return x.restored&&x.ago<300; });
     if(rf.length){
       if(!state||state==="ok"||state==="busy"){
@@ -6649,11 +6351,7 @@ function show(s){
          document.hidden?60000:15000;
   timer=setTimeout(poll,ms);
 }
-/* ⛔ A STATUS REQUEST THAT NEVER SETTLES DOES NOT STOP THE INDICATOR (o9:W150 box 13).
-   `inflight` was cleared only by an answer or an error, and only an answer or an error set the
-   next look, so a request the server never finished left the indicator as it was until a
-   reload. At FETCH_POLL_MS the request is abandoned: `inflight` clears, the indicator says the
-   server did not answer, and the next look follows 5 seconds later. */
+
 function poll(){
   if(inflight){ return; }
   inflight=true;
@@ -6672,19 +6370,15 @@ poll();
 CSS = CSS + LANDING_CSS
 JS = FETCH_WITHIN_JS + JS + LANDING_JS
 
-# o9:W150 Task D: the document list's counts follow the files while the page stays open. See
-# `rail_counts` for why. Asked when the page becomes visible again, when its window gets
+# See `rail_counts` for why. Asked when the page becomes visible again, when its window gets
 # focus, and once a minute while it is visible; a hidden page asks nothing. Each answer is
-# written into the badges' class, text and hover text only, so a click handler, the
-# highlighted document and anything else in the list are left as they are.
+# written into the badges' class, text and hover text only, so a click handler, the highlighted
+# document and anything else in the list are left as they are.
 DOC_COUNTS_JS = r"""
 (function(){
 var railD=document.getElementById("rail-docs"), inflight=false, asked=0;
 if(!railD){ return; }
-/* ⛔ A REQUEST THAT NEVER SETTLES DOES NOT STOP THE REFRESH (o9:W150 box 12). `inflight` was
-   cleared only by an answer or an error, so a request the server never finished left it set,
-   and no refresh ran again until a reload. After COUNTS_LIMIT_MS the request is abandoned,
-   `inflight` clears, and the next refresh (focus, visible again, or the minute) is sent. */
+
 var COUNTS_LIMIT_MS=15000;
 function setBadge(b,cls,label,title){
   if(!b){ return; }
@@ -6692,10 +6386,7 @@ function setBadge(b,cls,label,title){
   b.textContent=label;
   if(title!==undefined){ b.setAttribute("title",title); }
 }
-/* ⛔ A NEW OR REMOVED ORCHDOC SHOWS WITHOUT A RELOAD (o9:W150 box 12). The answer names every
-   document, in the list's order. A button is made for a new one, in its place, and the button
-   of one that is gone is removed; the others are left as they are. A click on a new one works
-   at once: the click handler is on the document, not on each button. */
+
 function syncDocs(docs){
   var want=Object.keys(docs), byName={}, cur=(location.hash||"").replace(/^#/,"").split("/")[0];
   var btns=[].slice.call(railD.querySelectorAll(".dbtn[data-doc]")).filter(function(b){
@@ -6795,7 +6486,6 @@ document.addEventListener("click",function(ev){
 # ⛔ THE PAGE NAMES A SCRIPT BY THE ID THE SERVER ISSUED AND NOTHING ELSE. It never sends a
 # path, a file name or a destination; where a save goes is decided on the server.
 #
-# ⛔ A FAILED SAVE KEEPS HIS TEXT. The editor is not cleared and not closed, the error says
 # NOT SAVED in words, and the text is also kept in this browser's storage between keystrokes,
 # so a crash, a reload or a closed tab offers it back the next time that editor opens.
 # ==========================================================================================
@@ -6806,9 +6496,7 @@ var SV={cur:null, ed:null, seq:0, cmp:null};
 var LS="claude-orchdoc-reader-script-unsaved:";
 function esc(t){ var d=document.createElement("div"); d.textContent=t==null?"":String(t);
   return d.innerHTML; }
-/* o9:W150 box 13: every request here ends within a time limit (fetchWithin): `opt.limit` ms
-   when given (a status poll), else FETCH_WRITE_MS for a POST and FETCH_LOAD_MS for a read. A
-   save that was never answered kept `ed.busy` and the Save button off until a reload. */
+
 function call(u,opt,ok,bad){
   var o=Object.assign({},opt||{}), ms=o.limit||(o.method==="POST"?FETCH_WRITE_MS:FETCH_LOAD_MS);
   delete o.limit;
@@ -6819,11 +6507,7 @@ function call(u,opt,ok,bad){
       else{bad((x.j&&x.j.error)||("the server refused it ("+x.s+")"),x.s);} })
     .catch(function(e){bad("could not reach the reader's server: "+e,0);});
 }
-/* o9L1264 (o9:W200): each Reader run mints a new write token, so a page opened before a restart
-   is refused "bad or missing token" on its first save. On THAT refusal only, the page asks the
-   Reader it came from (same origin, no CORS: the same request a reload makes) for the page again,
-   reads the token out of it, and sends the save ONCE more. A second refusal, or any other
-   refusal, is handed back as before. The text is never lost: the caller's `bad` runs. */
+
 function tokenFromHtml(h){
   var m=/var NOTE_TOKEN=("(?:[^"\\]|\\.)*");/.exec(h||"");
   if(!m){ return ""; }
@@ -6853,7 +6537,6 @@ function lsGet(k){ try{var v=window.localStorage.getItem(LS+k); return v?JSON.pa
 function lsSet(k,v){ try{window.localStorage.setItem(LS+k,JSON.stringify(v));}catch(e){} }
 function lsDel(k){ try{window.localStorage.removeItem(LS+k);}catch(e){} }
 
-/* o9L1506 (review fix 3): words typed in a script's note box count as unsaved work */
 function noteDirty(){ var t=document.querySelector("[data-script-note-text]"); return !!(t&&t.value.trim()); }
 function dirty(){ return !!(SV.ed&&SV.ed.ta.value!==SV.ed.saved)||cvDirty()||noteDirty(); }
 window.scriptDirty=dirty;
@@ -6864,9 +6547,6 @@ window.scriptClosed=function(){ SV.ed=null; SV.cur=null; SV.cmp=null;
 window.addEventListener("beforeunload",function(e){
   if(dirty()){ e.preventDefault(); e.returnValue=""; return ""; } });
 
-/* ---- the folder tree: open/closed state kept in this browser (o9:W167) ----
-   Every read and write of storage is in try/catch, so a browser that blocks storage still gets
-   a working tree (the open set then lives in memory for the page's life). */
 var TKEY="claude-orchdoc-reader-scripts-open", tMem=null;
 function tRead(){ try{ var v=window.localStorage.getItem(TKEY); if(v===null){return null;}
   var a=JSON.parse(v); return Array.isArray(a)?a:null; }catch(e){ return null; } }
@@ -6891,10 +6571,7 @@ railE.addEventListener("click",function(e){
   var d=t.parentNode; tSetOpen(d,!d.classList.contains("open")); tSave(); });
 try{ new MutationObserver(tInit).observe(railE,{childList:true}); }catch(e){}
 tInit();
-/* o9 W248: "00 - Full Rewrite Scripts". One click on a row's tick box sets or clears the human's
-   reviewed mark; the server keeps it in a file. The box changes at once, and goes back with the
-   reason in its hover text if the server does not accept it. The "N of M reviewed" counts in the
-   folder names are recounted from the boxes. */
+
 function frCount(){
   railE.querySelectorAll(".tdir[data-fr]").forEach(function(d){
     var all=d.querySelectorAll(".frchk:not([disabled])").length,
@@ -6926,11 +6603,10 @@ function frToggle(b){
 }
 function markNav(id){
   railE.querySelectorAll(".ebtn.cur").forEach(function(b){b.classList.remove("cur");});
-  /* o9L1288 (W205): a script listed in "0 - New Drafts" has two rows. Both are marked, but
-     the folders opened are those of its REAL row, so the human sees where the script lives. */
+  
   var all=railE.querySelectorAll('[data-script="'+CSS.escape(id)+'"]'), real=null, first=null;
   Array.prototype.forEach.call(all,function(b){
-    /* o9:W174: a copy folded into another row is opened from its note; mark that row */
+    
     if(!b.classList.contains("ebtn")&&b.closest){ b=b.closest(".ebtn")||b; }
     b.classList.add("cur"); if(!first){ first=b; }
     if(!real&&!b.hasAttribute("data-nd")){ real=b; } });
@@ -6954,12 +6630,7 @@ function openScript(id){
   });
 }
 window.openScript=openScript;
-/* o9L1243: `#scripts/p/<seg>/<seg>/...` - a script named by its path under the corpus root,
-   the link `reader_scripts.py link <path>` prints. ⛔ THE PATH NEVER LEAVES THIS PAGE. It is
-   matched against the `data-srel` of the rows the server already listed (discovery confined
-   every one of them to the corpus), and the matching row's id is opened exactly as a click
-   opens it. A segment that is empty, `.`, `..` or holds a slash after decoding is refused
-   before any lookup. */
+
 function openScriptPath(segs,again){
   var parts=[], bad=!segs||!segs.length;
   (segs||[]).forEach(function(s){ var d;
@@ -6967,7 +6638,7 @@ function openScriptPath(segs,again){
     if(!d||d==="."||d===".."||/[\\/]/.test(d)){ bad=true; }
     parts.push(d); });
   if(bad){ pane.innerHTML='<div class="note"><b>Could not open that script.</b> That link '+
-      "does not name a file inside the script library.</div>"; return; }
+      "does not name a file inside the document library.</div>"; return; }
   var rel=parts.join("/"), hit=null, fold=null;
   railE.querySelectorAll("[data-srel]").forEach(function(el){
     var r=el.getAttribute("data-srel");
@@ -6985,17 +6656,12 @@ function openScriptPath(segs,again){
     }).catch(function(){ openScriptPath(segs,true); });
     return; }
   if(!hit){ pane.innerHTML='<div class="note"><b>Could not open that script.</b> No file at <code>'+
-      esc(rel)+"</code> is in the script library right now - it may have been renamed or "+
+      esc(rel)+"</code> is in the document library right now - it may have been renamed or "+
       "moved. Reload, or find it in the list.</div>"; return; }
   openScript(hit.getAttribute("data-script"));
 }
 window.openScriptPath=openScriptPath;
-/* o9L1248 (o10:W242, review o10L433 F4): the link names a file since renamed in its title words
-   only. A row in the SAME folder whose name the server's parser read as `data-snk` (name key)
-   and `data-srest` (` v<N> <AUTHOR>` and its endings) matches when the link's file name is
-   `<snk>[ <one title token>]<srest>`, the title ignored. Exactly one such file opens; none or
-   several fall through to the "no file" message. String comparison only: no parsing here, and
-   nothing is sent. */
+
 function renamedRow(parts){
   var dir=parts.slice(0,-1).join("/"), nm=parts[parts.length-1], seen={}, hits=[];
   railE.querySelectorAll("[data-srel][data-snk]").forEach(function(el){
@@ -7011,7 +6677,7 @@ function renamedRow(parts){
 
 function saveSays(j){
   var e=j.edit;
-  /* o9L1267: an `(in app)` file is never written either; it is not always a draft */
+  
   var kept=/ \(in app\)\.md$/i.test(j.name||"")?"This is the text in the app; it is never "+
     "changed here.":"This draft is never changed.";
   if(e.mode==="update-self"){ return "Saving updates this rewrite. What it says now is kept "+
@@ -7020,8 +6686,7 @@ function saveSays(j){
     "rewrite of it, "+e.target_name+", and keeps what that says now as a snapshot first."; }
   return kept+" Saving creates your rewrite of it: "+e.target_name+".";
 }
-/* o9L1506: the human's notes on this script (kept by the Reader outside the file). The box is part of
-   the page the script already opened with; saving posts one note and redraws only this block. */
+
 function notesInner(notes){
   return (notes||[]).map(function(n){
     return '<div class="sv-note" data-script-note-row>'+esc(n.text)+'<span class="sv-nwhen">'+
@@ -7055,7 +6720,7 @@ function noteSave(){
 function paintRead(j){
   var e=j.edit, h='<div class="sv">';
   h+='<div class="sv-crumb">'+esc(j.folder)+'</div>';
-  /* o9L1294: kind_label is "" for an approved or final agent draft, which then shows no label */
+  
   h+='<h2 class="sv-title">'+esc(j.name.replace(/\.md$/i,""))+(j.kind_label?' <span class="kb k-'+
      j.kind+'">'+esc(j.kind_label)+'</span>':'')+'</h2>';
   h+='<div class="sv-rel"><span class="cpw"><code>'+esc(j.rel)+'</code><button type="button" '+
@@ -7063,7 +6728,7 @@ function paintRead(j){
   /* Provenance line: built AND escaped on the server (render_prov_line), inserted as is. */
   h+=j.prov_html||"";
   if(j.same_text){
-    /* o9L1271: esc() is innerHTML, which leaves '"' as is; the title is an attribute */
+    
     var stf=j.same_text.file||j.same_text.name;
     h+='<p class="sv-pair"><span class="sbadge sb-same" title="'+
        esc("Same text as "+stf).replace(/"/g,"&quot;")+
@@ -7085,7 +6750,7 @@ function paintRead(j){
   else {
     if(e.editable){
       h+='<button type="button" class="nbtn primary" data-script-edit>Edit</button>'; }
-    /* o9 W192: Approve (opens the confirmation pop-up) or, once approved, the badge. */
+    
     if(j.approve&&j.approve.show){
       h+='<button type="button" class="nbtn" data-script-approve>Approve as Final</button>'+
          '<button type="button" class="nbtn" data-script-review>Approve &amp; Review</button>'; }
@@ -7095,7 +6760,7 @@ function paintRead(j){
       h+='<span class="sv-hint" data-approve-why>Approve: '+esc(j.approve.why)+'</span>'; } }
   if(j.approve&&j.approve.approved){
     h+='<span class="kb k-approved" data-approved-badge>Approved</span>'; }
-  /* o9 W204: final = the human's Approved-By line or a final training-version status (training_header.is_final). */
+  
   if(j.approve&&j.approve.final){
     h+='<span class="kb k-final" data-final-badge>Final</span>'; }
   h+='</div>'+notesHtml(j)+((NOTE_TOKEN&&j.approve&&j.approve.show)?
@@ -7103,10 +6768,7 @@ function paintRead(j){
      '<div class="sv-compare"></div><div class="md sv-body">'+j.html+'</div></div>';
   pane.innerHTML=h; pane.scrollTop=0;
 }
-/* ---- Approve (o9 W192) ----
-   Click -> the server runs `file_script.py approve --dry-run` -> an in-page pop-up says what
-   approving would do -> Approve runs it for real and lands it like a save. The page sends the
-   script's id and nothing else. Escape, Cancel and a click outside cancel. */
+
 var AP=null;
 function apClose(){
   if(!AP){return;}
@@ -7158,9 +6820,7 @@ function apOpen(){
     apPaint("Approving is not possible",'<p class="ap-no" data-ap-reason>'+esc(why)+'</p>',
       '<button type="button" class="nbtn primary" data-ap-close>Close</button>'); });
 }
-/* o9L1310: Approve & Review. Does not approve and does not change the script: it asks the Reader
-   to write a request file for the owning orchestrator (AT -> o3, SC -> o5) and shows the answer
-   in a short note under the buttons. No pop-up, nothing to wait for. */
+
 function rvRequest(){
   var j=SV.cur; if(!j||!j.approve||!j.approve.show||!NOTE_TOKEN){return;}
   var id=j.id, btn=document.querySelector("[data-script-review]");
@@ -7196,9 +6856,7 @@ function apConfirm(){
       '</p><p>Nothing was written.</p>','<button type="button" class="nbtn primary" '+
       'data-ap-close>Close</button>'); });
 }
-/* o9 W202: after the approval lands, the server starts the library runner. Show whether it
-   started, then (about a minute) the runner's status line and the app PR link once a run that
-   includes this approval reports them. A missing status file says so plainly; never an error. */
+
 function runnerPoll(jid,my,L){
   var n=0;
   function put(h){ var el=AP===my?my.box.querySelector("[data-ap-runner]"):null; if(el){ el.innerHTML=h; } }
@@ -7321,11 +6979,6 @@ function openEditor(){
   refresh(); toTop(ed);
 }
 
-/* ⛔ THE EDITOR OPENS AT THE TOP OF THE SCRIPT, AND SO DOES ANY TEXT SWAPPED INTO IT.
-   Assigning a textarea's value puts the caret at the END, and focusing it then scrolls the
-   caret into view - which opened every script at its last line (the human, 2026-09-23). So the
-   caret goes to the start BEFORE focus, focus does not scroll, and both panes and the page
-   are put at 0 explicitly rather than trusted to be there. */
 function toTop(ed){
   var ta=ed.ta;
   ta.setSelectionRange(0,0);
@@ -7601,14 +7254,7 @@ function refreshNav(){
     if(on&&d&&d.nav){ railE.innerHTML=d.nav; if(SV.cur){ markNav(SV.cur.id); } }
   }).catch(function(){});
 }
-/* ⛔ WHAT THE SERVER WROTE GOES INTO THE OPEN EDITOR WITHOUT MOVING THE HUMAN. A save stamps the
-   provenance line, so the text that comes back is not the text that was sent. Assigning a
-   textarea's value fires no input event and puts the caret at the end: the preview and the
-   layer behind the box (what he reads - the box's own text is transparent) kept the OLD line
-   until the editor was closed, and the caret jumped to the last line (o9, W66 review). So the
-   caret and the scroll are put back, shifted by however much the text before them grew or
-   shrank, and the layer is repainted here; the caller redraws the preview. False when the text
-   is already what was written. */
+
 function takeSaved(ed,t){
   var ta=ed.ta, old=ta.value; if(t===old){ return false; }
   var a=ta.selectionStart, b=ta.selectionEnd, dir=ta.selectionDirection||"none",
@@ -7636,14 +7282,7 @@ function provBar(ed,j){
       el.parentNode.replaceChild(box.firstElementChild,el); }
   },function(){});
 }
-/* o9L1267 (o9:W200): script ids are minted per Reader run too (Corpus.key), so after a restart
-   the token retry in `post` gets the save as far as "no script with that id". The page then
-   finds the same file again by its path under the library root (`j.srel`, the row's
-   `data-srel`) in a fresh `/doc/__scripts__` list, asks the server to describe that id, and
-   resends ONCE - only when the server, from its own state, plans the SAME target file the
-   editor was showing. The resend carries the page's own `expect` (the hash it opened or last
-   saved), never the server's current one, so a file changed on disk in between is still
-   refused 409. The path is only matched in the page; no request names a path. */
+
 function idForSrel(nav,srel){
   if(typeof nav!=="string"||typeof srel!=="string"||!srel){ return ""; }
   var want=srel.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
@@ -7682,21 +7321,14 @@ function save(){
       if(SV.ed!==ed){return;}
       if(r.changed){
         lsDel(ed.key);
-        /* The server stamps the human's FM4 provenance line into what it writes. Show what was
-           written - unless he typed while the save was in flight.
-           ⛔ "SAVED" IS WHAT IS ON DISK, NOT WHAT IS IN THE BOX. Typing during the save is not
-           in the file, so it stays unsaved: the editor stays dirty, closing it warns, a copy is
-           kept in this browser, and the next Ctrl+S sends it. It used to be marked saved, so
-           the next Ctrl+S said "Nothing to save" and closing the editor lost it. */
+        
         var disk=typeof r.saved_text==="string"?r.saved_text:sent;
         var took=ed.ta.value===sent&&takeSaved(ed,disk);
         ed.saved=disk; ed.expect=r.target_sha;
         j.edit.target_exists=true; j.edit.target_sha=r.target_sha;
         j.edit.target_text=disk;
         ed.key=j.id+":"+r.target_sha;
-        /* o9L1324 (o9:W212): a save from a draft writes another file (the human's rewrite). When the
-           editor closes, the read view opens THAT file, so what he sees, and what Approve as
-           Final and Approve & Review act on (SV.cur.id), is the version he just saved. */
+        
         if(r.target_id&&r.target_id!==j.id){ ed.after=r.target_id; }
         /* After ed.saved is set, so the redraw stores no "unsaved" copy of what is on disk. */
         if(took){ if(ed.t){ clearTimeout(ed.t); ed.t=null; } refresh(); }
@@ -7774,10 +7406,6 @@ document.addEventListener("change",function(ev){
     SV.ed.base=parseInt(el.value,10)||0; refresh(); }
 });
 
-/* ---- Compare: the draft and the human's rewrite, change by change, with his reason for each
-   (reader_compare.py, o8:W72). The markup comes from the server, escaped there.
-   ⛔ ONE NOTE PER SAVE. Each box posts only its own key and its own text; the server re-reads
-   the notes file and sets that one entry, so a second tab cannot erase notes typed here. */
 function cvDirty(){
   if(!SV.cmp){ return false; }
   var d=false;
@@ -7888,7 +7516,6 @@ document.addEventListener("keydown",function(ev){
 """
 
 # ==========================================================================================
-# THE NOTE-COLOUR BOX (o9:W120). One row at the top of the pane on every Scripts view - the
 # list, a file being read, and the editor - holding a hex-code field, Apply and Reset.
 #
 # ⭐ IT IS MOUNTED BY ITS OWN OBSERVER, NOT BY THE FUNCTIONS THAT PAINT THOSE VIEWS. Each of
@@ -8019,9 +7646,7 @@ def render_page(index, boot_nav, boot_body, active="__plate__", token="", script
         '<button type="button" class="tbtn" data-theme-set="%s" aria-pressed="false">%s'
         "</button>" % (v, lab)
         for v, lab in (("auto", "Auto"), ("light", "Light"), ("dark", "Dark")))
-    # Five steps, each one point apart, with the new default in the middle. The smallest is
-    # exactly the size the reader used before this control existed, so "put it back" is a
-    # click rather than a thing he has to ask for.
+    # Five steps, each one point apart, with the new default in the middle.
     sizer = "".join(
         '<button type="button" class="tbtn szbtn z%d" data-fs-set="%d" aria-pressed="false"'
         ' aria-label="Text size %s" title="Text size %s - body text %s">A</button>'
@@ -8071,7 +7696,6 @@ def render_page(index, boot_nav, boot_body, active="__plate__", token="", script
         "</body></html>"
         # ⛔ ALL THREE BOOT SNIPPETS RUN IN THE SAME PLACE, BEFORE THE HEADER. Text size has the
         # same problem theme does and a worse symptom: read it after the page has painted
-        # and every load visibly reflows as the type jumps a step. The note colour (o9:W120)
         # is the third: read late, every script would open in the default colour and then
         # change it.
         % (CSS, THEME_BOOT_JS + SIZE_BOOT_JS + NOTE_BOOT_JS, sizer, themer, mob,
@@ -8100,18 +7724,12 @@ NOTE_MAX_CHARS = orchdoc.NOTE_TEXT_LIMIT
 
 # ⛔ AN INSTRUCTION IS NOT DELIVERED ANYWHERE, AND THAT IS THE HUMAN'S RULING, NOT AN OMISSION.
 # The first build of this also appended to `orch-mailboxes/o<N>.md`, on the theory that a
-# watcher would wake the session. He struck it out, 2026-09-16:
+# watcher would wake the session.
 #
-#   *"that is why I had to vocally tell everyone to stop using the mailboxes. Sessions were
-#   getting misled by stale notes about the mailbox system. It was ONLY there while the
-#   send_message tool was broken by Anthropic."*
-#   *"What I don't want are perpetual watchers firing for every session all the time. That
-#   creates its own problems that I don't want."*
+#   Sessions were getting misled by stale notes about the mailbox system.
 #
-# ⭐ AND THE MEASUREMENT AGREED WITH HIM BEFORE HE SAID IT: zero watcher processes were
-# running on this machine while the mailbox version was being built, so that write reached
-# nobody. It would have been a delivery receipt for a channel with no listener - the exact
-# shape of failure this file exists to refuse.
+# It would have been a delivery receipt for a channel with no listener - the exact shape of
+# failure this file exists to refuse.
 #
 # ⛔ SO THE SERVER CLAIMS NOTHING ABOUT NOTIFICATION. It writes the instruction into the
 # document and stops. `orchdoc_stop_check.py` - a Stop hook that already runs at every turn
@@ -8136,33 +7754,30 @@ _PATH_KEYS = {"path", "paths", "file", "files", "filename", "filepath", "file_pa
               "destination", "target", "target_path", "dir", "directory", "folder", "rel",
               "relpath", "abs", "abspath", "doc_path", "to", "src", "source", "out", "output",
               "name", "root", "snapshot"}
+#: Every route that belongs to the script features. Without them the Reader answers 404 here.
+SCRIPT_ROUTES = ("/script", "/library-sync-status", "/full-rewrite")
 _SCRIPT_KEYS = {"/script/preview": {"token", "text", "base"},
                 "/script/save": {"token", "id", "text", "expect"},
                 # ONE note: the pair's id, the change's key (or "overall"), and its text.
                 "/script/why": {"token", "id", "k", "text"},
-                # o9L1506: one note on a script, kept in script_note_store, never in the file.
                 "/script/note": {"token", "id", "text"},
-                # o9 W192: Approve. The id and nothing else; /script/approve-plan writes nothing
-                # (the command's --dry-run), /script/approve runs it and lands the result.
+                # The id and nothing else; /script/approve-plan writes nothing (the command's
+                # --dry-run), /script/approve runs it and lands the result.
                 "/script/approve-plan": {"token", "id"},
                 "/script/approve": {"token", "id"}}
 
 
-#: `Reader(landing=INLINE_LANDING)`: each save lands before the page gets its answer, the way
-#: every save did before o9:W123. Used only when `reader_landing.py` could not be imported.
+# Used only when `reader_landing.py` could not be imported.
 INLINE_LANDING = "inline"
 LANDING_OFF_TEXT = "landing off (--no-land)"
 
-#: o9:W123. A save the page sent with an id waits this long for `orchdoc.py`; a writer still
-#: running then is NOT reported as failed. The page is told {"pending": true} and asks
-#: GET /landing?cid= until the writer answers. Measured 2026-10-01 with the processor busy 100%
-#: of the time: two deletes ran past the Reader's old 60 s limit, the Reader stopped them, the
-#: page said they had failed, and both had been written and landed.
+# A save the page sent with an id waits this long for `orchdoc.py`; a writer still : running
+# then is NOT reported as failed. The page is told {"pending": true} and asks : GET
+# /landing?cid= until the writer answers.
 WRITER_ANSWER_WAIT = 20.0
-#: o9cL1: a save the page sends from its outbox carries `"bg": 1` and is answered at once
-#: ({"pending": true}) while the writer runs; the page follows it with GET /landing?cid= and the human
-#: is never kept waiting. The human, 2026-10-08: saving "tends to freeze up for several seconds, even
-#: up to 30 seconds".
+# : o9cL1: a save the page sends from its outbox carries `"bg": 1` and is answered at once :
+# ({"pending": true}) while the writer runs; the page follows it with GET /landing?cid= and the
+# human : is never kept waiting.
 WRITER_BG_WAIT = 0.0
 #: ...and a writer is stopped only after this long. It runs no git push any more, so this is a
 #: guard against a hung process, not a deadline a busy machine can reach.
@@ -8174,26 +7789,13 @@ CID_REFUSAL = "bad request shape: cid is 8 to 64 letters, digits, - or _"
 
 
 # ==========================================================================================
-# ⭐ ONE TIMING LINE PER REQUEST (o9:W150, lane o9L1034).
 #
-# the human, 2026-10-03: the Reader was unusable for 10 to 30 seconds after each instruction he
-# sent. Two lanes could not reproduce it, and the Reader recorded nothing about how long any
-# request took, so the only evidence of the freeze was his memory of it. Each request now
-# writes one line when its answer has gone:
+# Each request now writes one line when its answer has gone:
 #
-#   req 2026-10-03T18:52:01.123 GET /doc/o9 200 total=973ms lock=0ms build=312ms render=640ms
 #       write=0ms send=21ms bytes=3610664 landing=running waiting=1   (one line in the file)
 #
-#   The date and time are this computer's local clock, as ONE token, so the fields after it
-#   keep their places (o9:W150 box 12 added the date: reader.old.log can hold another day's
-#   lines). test_reader_request_log.py's LINE_RE is the one reader of this shape. `log_time`
-#   makes the token, for every line in the file.
+#   `log_time` makes the token, for every line in the file.
 #
-#   The landing worker's own lines carry the same token in the same place, after the line's
-#   first word (o9:W150 box 13: they had none, so a landing could not be put beside the
-#   requests around it). reader_landing.py writes them without it; `StampedLog` adds it:
-#
-#   landing: 2026-10-03T18:52:03.480 landed 01791...-ab12cd (note on o9 D23)
 #   landing: 2026-10-03T18:53:10.002 NOT landed 01791...-ef34ab (transient, retry in 4s): ...
 #   copies: 2026-10-03T18:53:12.917 the watcher hit OSError: ...
 #
@@ -8251,7 +7853,6 @@ def reader_log_path(workspace):
     A folder that is not one (a user of the skill copy, whose folder holds only their OrchDocs)
     must not gain a `.shared` folder from starting the Reader, so its log goes to this computer's
     state folder instead (`shared_state.home_state_dir()`, `~/.claude/state`), in a subfolder
-    named from the workspace path so two such folders keep separate logs (o9:W109).
     """
     ws = Path(workspace)
     if (ws / ".shared" / "scripts").is_dir():
@@ -8271,11 +7872,8 @@ def log_time(at=None):
 
 
 class StampedLog:
-    """Writes each line to `log` with `log_time()` after its first word, where the request
-    line has it (o9:W150 box 13): `landing: landed ...` becomes
-    `landing: 2026-10-03T18:52:03.480 landed ...`. For the landing worker and its copy watcher,
-    which write their lines without a time. Never raises: the line goes as it came if it
-    cannot be stamped."""
+    """For the landing worker and its copy watcher, which write their lines without a time. Never
+    raises: the line goes as it came if it cannot be stamped."""
 
     def __init__(self, log):
         self.log = log
@@ -8307,7 +7905,6 @@ class ReaderLog:
         self.echo = echo
         self.own_dir = own_dir
         self._mx = threading.Lock()
-        # The echo's own thread and queue (o9:W150 box 12): see `_echo`.
         self._echo_q = queue.Queue(maxsize=READER_LOG_ECHO_BACKLOG) if echo else None
         self._echo_mx = threading.Lock()
         self._echo_thread = None
@@ -8331,9 +7928,9 @@ class ReaderLog:
                 except OSError:
                     full = False
                 if full:
-                    # ⛔ A REFUSED RENAME DOES NOT COST THE LINE (o9:W150 box 12). On Windows the
-                    # rename fails while another program holds the file open, and the line used
-                    # to be dropped with it. It is appended anyway; the next line tries again.
+                    # On Windows the rename fails while another program holds the file open, and
+                    # the line used to be dropped with it. It is appended anyway; the next line
+                    # tries again.
                     try:
                         os.replace(str(self.path), str(self.old))
                     except OSError:
@@ -8349,11 +7946,10 @@ class ReaderLog:
     def _echo(self, line):
         """Hand the line to the echo's thread and return at once.
 
-        ⛔ NO CALLER EVER WAITS ON STDOUT (o9:W150 box 12). `print` blocks when stdout is a pipe
-        nobody reads; done here, under the writer's lock, every request would have waited
-        behind it. The thread prints in order. If it falls READER_LOG_ECHO_BACKLOG lines
-        behind, the newer lines are not echoed (`echo_dropped` counts them); the file has
-        every one."""
+        `print` blocks when stdout is a pipe nobody reads; done here, under the writer's
+        lock, every request would have waited behind it. The thread prints in order. If
+        it falls READER_LOG_ECHO_BACKLOG lines behind, the newer lines are not echoed
+        (`echo_dropped` counts them); the file has every one."""
         try:
             self._echo_q.put_nowait(line)
         except queue.Full:
@@ -8406,60 +8002,45 @@ class Reader:
         self.token = token
         self.port = port
         # The script corpus under this workspace. Its ids are minted per run too.
-        self.scripts = SCRIPTS.Corpus(workspace)
-        # o9 W248: the human's reviewed marks for "00 - Full Rewrite Scripts" (a per-machine file
-        # outside the worktree; see reader_full_rewrite.py).
-        self.fr_marks = FRW.Marks()
-        # o9L1506: notes on scripts, one file per script in the same per-machine state folder.
-        self.script_notes = SNOTES.Store()
+        # All six are None when the script files are not installed (HAS_SCRIPTS is False).
+        self.scripts = SCRIPTS.Corpus(workspace) if HAS_SCRIPTS else None
+        self.fr_marks = FRW.Marks() if HAS_SCRIPTS else None
+        self.script_notes = SNOTES.Store() if HAS_SCRIPTS else None
         # The text of every script file for the search box; built in the background (see
         # `ScriptTextIndex`), started by `scripts.warm()`'s caller and on the first search.
-        self.script_text = SCRIPTS.ScriptTextIndex(self.scripts)
+        self.script_text = SCRIPTS.ScriptTextIndex(self.scripts) if HAS_SCRIPTS else None
         # Draft beside rewrite, with the human's reason for each change. Same corpus, same ids.
-        self.compare = COMPARE.Compare(self.scripts)
+        self.compare = COMPARE.Compare(self.scripts) if HAS_SCRIPTS else None
         # ⭐ None means "do not land" - every test server and `--no-land`. The save still
         # happens and the page says, in words, that it was not committed.
         self.lander = lander
-        # o9 W202: o10's library runner: started after an approval lands; status read from its file.
-        self.runner = RUNNER.Runner()
-        # ⭐ THE SAME FOR NOTES, INSTRUCTIONS AND §2.0 (o9:W123): the background worker that
-        # puts each save on main (`reader_landing.LandingWorker`), INLINE_LANDING, or None for
-        # "do not land". Before this, `--no-land` stopped only the script lander, and every note
-        # a test Reader saved was committed and pushed to whatever origin its workspace had.
+        self.runner = RUNNER.Runner() if HAS_SCRIPTS else None
+        # Before this, `--no-land` stopped only the script lander, and every note a test Reader
+        # saved was committed and pushed to whatever origin its workspace had.
         self.landing = landing
-        # o9:W123: the page's id for each save -> whether its write is running or what it
-        # answered, so a page that lost the answer can ask for it (GET /landing?cid=).
         self._sent = {}
         self._sent_mx = threading.Lock()
-        # o9:W150: called with one timing line per request (see ReaderLog), or None for none.
         self.reqlog = reqlog
-        # o9L1152: see `single_flight`.
         self._flight_mx = threading.Lock()
         self._flight = None
         self._flight_seq = 0
-        # o9L1163: (home_key, page, pictures seen) of the last home render, see `home_page`.
         self._home_cache = None
 
     def single_flight(self, build):
-        """o9L1152: run `build()` for a request, sharing the answer with the requests that
-        arrived while it ran, and return its result (or raise what it raised).
+        """
+        ⛔ WHY. The home page is 1.4 MB and renders in about 3 s alone. Renders now run
+        one at a time. A request waiting for the mutex takes the result of a render that
+        STARTED after the request arrived (so it is as fresh as its own render would
+        have been) and otherwise renders; at most two renders serve any number of
+        waiting requests.
 
-        ⛔ WHY. The home page is 1.4 MB and renders in about 3 s alone. After a restart the open
-        tab re-asked for it every few seconds while it was not ready, and every ask started its
-        own render: 35 renders at once, each slowed by the others to 80-180 s (reader.log,
-        2026-10-08 22:52-22:55), and every client gave up long before its answer, leaving a
-        server-side CLOSE_WAIT socket until its render ended. Renders now run one at a time.
-        A request waiting for the mutex takes the result of a render that STARTED after the
-        request arrived (so it is as fresh as its own render would have been) and otherwise
-        renders; at most two renders serve any number of waiting requests.
-
-        o9L1155: "started after the request arrived" is a render NUMBER, not a clock reading.
-        `time.monotonic()` ticks every ~16 ms on Windows, so a render that began a moment
-        BEFORE a request (say, before the save that request follows) could carry the same
-        reading and be shared as if it were newer. Each render takes the next number under the
-        mutex; a request notes the last number given out when it arrives and takes only a
-        render numbered above it. A render that raises gives every request sharing it the same
-        exception, which the GET handler turns into a 500, so no waiter hangs."""
+        `time.monotonic()` ticks every ~16 ms on Windows, so a render that began a
+        moment BEFORE a request (say, before the save that request follows) could carry
+        the same reading and be shared as if it were newer. Each render takes the next
+        number under the mutex; a request notes the last number given out when it
+        arrives and takes only a render numbered above it. A render that raises gives
+        every request sharing it the same exception, which the GET handler turns into a
+        500, so no waiter hangs."""
         arrived = self._flight_seq       # one int read; renders bump it only under the mutex
         with self._flight_mx:
             hit = self._flight
@@ -8478,19 +8059,18 @@ class Reader:
             return result
 
     def home_key(self):
-        """o9L1163: everything the home page is rendered from, as one comparable value.
-
+        """
         Read off the code: `build_index` (each OrchDoc file, by name, modification time and
         size: the same things `build_doc_model_cached` keys on), today's date (a routine falls
         due at midnight with no file moving), `scripts_count()` (the rail's script count, from
         the corpus folders) and the write token (minted per run). Times and sizes come from
         `doc_revs()`, which /landing already reports.
 
-        o9L1164 review: two more inputs. `orchdoc.human_name()` names the human in the colour
-        key's ON YOUR PLATE hover text, from `.orchdoc-config.json` (else `~/.claude.json`), so
-        it is in the key. Whether each picture an entry shows exists on disk decides whether the
-        page draws it; those are not in the key but are re-checked by `home_page` against what
-        the last render saw (`_IMG_SEEN`)."""
+        `orchdoc.human_name()` names the human in the colour key's ON YOUR PLATE hover
+        text, from `.orchdoc-config.json` (else `~/.claude.json`), so it is in the key.
+        Whether each picture an entry shows exists on disk decides whether the page
+        draws it; those are not in the key but are re-checked by `home_page` against
+        what the last render saw (`_IMG_SEEN`)."""
         scripts = self.scripts_stamp()
         return (tuple(sorted(self.doc_revs().items())),
                 orchdoc._dt.date.today().isoformat(), scripts, self.token,
@@ -8498,8 +8078,8 @@ class Reader:
 
     @staticmethod
     def _images_unchanged(seen):
-        """o9L1164: True when every picture the cached page showed (or could not show) still
-        resolves the same way. One `resolve_asset` per picture on the home page."""
+        """One `resolve_asset` per picture on the home page.
+        """
         for url, relp in (seen or {}).items():
             try:
                 p, now, _x = resolve_asset(url)
@@ -8510,11 +8090,11 @@ class Reader:
         return True
 
     def scripts_stamp(self):
-        """o9L1163: a cheap stand-in for `scripts_count()` in the key: the modification time of
-        every folder the corpus walk would enter (same skips: hidden and underscore names, depth
-        limit). The count changes only when a folder, or a `.md` file in one, is added or
-        removed, and either changes that folder's own time. `scripts_count()` itself costs about
-        0.9 s on the live corpus (it models every file); this is one `scandir` per folder."""
+        """The count changes only when a folder, or a `.md` file in one, is added or removed, and
+        either changes that folder's own time. `scripts_count()` itself costs about 0.9
+        s on the live corpus (it models every file); this is one `scandir` per folder."""
+        if not HAS_SCRIPTS:
+            return None
         try:
             root = self.scripts._root_resolved()
             if root is None or not root.is_dir():
@@ -8537,16 +8117,14 @@ class Reader:
             return ("unreadable", time.time_ns())
 
     def home_page(self):
-        """o9L1163: the home page, rendered again only when `home_key()` has changed.
-
+        """
         ⛔ FRESHNESS. This runs inside the render that `single_flight` numbers, so the key is
         read after the request arrived: a request that follows a save sees the saved file's new
         time and size, misses, and renders. The key is read BEFORE the files are, so a file that
         changes mid-render leaves an older key stored and the next request renders again.
 
-        o9L1164: the pictures are checked as the render saw them (recorded by `_safe_img_src`
-        on this thread), so a picture that appears or goes away after the render renders again.
-        One cached page only: `_home_cache` is (key, page, pictures seen), replaced whole."""
+        One cached page only: `_home_cache` is (key, page, pictures seen), replaced
+        whole."""
         key = self.home_key()
         hit = self._home_cache
         if hit is not None and hit[0] == key and self._images_unchanged(hit[2]):
@@ -8566,6 +8144,8 @@ class Reader:
 
     def scripts_count(self):
         """Folders in the corpus, or None when there is no corpus (then the rail omits it)."""
+        if not HAS_SCRIPTS:
+            return None
         try:
             listing = self.scripts.discover()
         except Exception:
@@ -8606,12 +8186,11 @@ class Reader:
     def doc_model(self, slug, fresh=False):
         """o9cL1: one doc's model, for the checks a save makes, or None for no such doc.
 
-        Without `fresh`, the model this process last built of that doc, even if the file has
-        changed since: a save only needs to know the entry (and the note) it names exist, and
-        `orchdoc.py`, which writes under the doc's own lock, refuses one that does not. A save
-        used to call `index()`, which holds the lock every page request waits on and re-models
-        every doc whose file changed - after a save that is the 3.6 MB o9 doc, every time.
-        With `fresh` (or no model yet), that one doc is modelled again, still without the lock.
+        Without `fresh`, the model this process last built of that doc, even if the file
+        has changed since: a save only needs to know the entry (and the note) it names
+        exist, and `orchdoc.py`, which writes under the doc's own lock, refuses one that
+        does not. With `fresh` (or no model yet), that one doc is modelled again, still
+        without the lock.
         """
         path = self.doc_path(slug)
         if path is None:
@@ -8623,11 +8202,10 @@ class Reader:
         return build_doc_model_cached(slug, path)
 
     def entry_context(self, slug):
-        """o9:W164: (the model of doc `slug` as its file is now, every doc's model for resolving
-        references), or (None, []) for no such doc. For `GET /entry/`, which shows what a save
-        just wrote and so needs the doc's CURRENT model - but only that doc's, and without
-        `index()`'s lock. Nothing here waits on another request: the models are cached by file
-        time and size, and the other docs' are the ones this process last built."""
+        """For `GET /entry/`, which shows what a save just wrote and so needs the doc's CURRENT
+        model - but only that doc's, and without `index()`'s lock. Nothing here waits on
+        another request: the models are cached by file time and size, and the other
+        docs' are the ones this process last built."""
         found = list(discover_docs(self.workspace))
         mine = next((p for s, p in found if s == slug), None)
         if mine is None:
@@ -8734,12 +8312,9 @@ class Reader:
                                 wait)
 
     def _land_args(self):
-        """How an `orchdoc.py` write from this server lands (o9:W123).
-
-        ⛔ EVERY WRITE GETS ONE OF THESE, so no save can land while landing is off. Measured
-        2026-10-01: a save that landed itself kept the page waiting 3-6 s, up to about 27 s when
-        main was busy, almost all of it the fetch and push to GitHub. Now the writer journals the
-        change and returns, and the worker lands it.
+        """
+        ⛔ EVERY WRITE GETS ONE OF THESE, so no save can land while landing is off. Now
+        the writer journals the change and returns, and the worker lands it.
         """
         if self.landing is None:
             return ["--no-land"]
@@ -8769,9 +8344,9 @@ class Reader:
         return out
 
     def doc_revs(self):
-        """o9:W164: {doc slug: file time and size}, one stat each, no lock and no model. The page
-        compares it with what it holds and, for the doc on screen, asks `/revs/<slug>` which
-        entries changed (a save made by another session) and draws only those again."""
+        """The page compares it with what it holds and, for the doc on screen, asks `/revs/<slug>`
+        which entries changed (a save made by another session) and draws only those
+        again."""
         out = {}
         for slug, path in discover_docs(self.workspace):
             try:
@@ -8782,8 +8357,8 @@ class Reader:
         return out
 
     def entry_hashes(self, slug):
-        """o9:W164: (rev, {entry id: short hash of everything the page shows of it}) for one doc
-        as its file is now, or None. The model is the per-doc cached one: no lock."""
+        """The model is the per-doc cached one: no lock.
+        """
         path = self.doc_path(slug)
         if path is None:
             return None
@@ -8842,8 +8417,7 @@ class Reader:
 
         `wait` (seconds) replaces WRITER_ANSWER_WAIT: WRITER_BG_WAIT for a save the page sent
         from its outbox (o9cL1), which is answered "pending" at once.
-
-        The time the request waits here is the `write` part of its timing line (o9:W150)."""
+        """
         with _timed("write"):
             return self._run_writer_timed(cmd, cid, wait)
 
@@ -8902,19 +8476,9 @@ class Reader:
 
     def _run_writer_raw(self, cmd):
         import time as _time
-        # ORCHDOC_REF: the canonical ref this process already worked out, from the same working
-        # folder the writer runs in, so the writer does not start with a git call of its own
-        # (o9:W123: one git call took 0.6-5 s on a busy machine, and a save waits for it).
         env = dict(os.environ, ORCHDOC_WORKSPACE=str(self.workspace),
                    ORCHDOC_REF=os.environ.get("ORCHDOC_REF") or orchdoc.CANONICAL_REF)
-        # o9:W147 review: this is the Reader's own write, which `orchdoc.py today` accepts for a
-        # priority choice and a new Do-today item; a session's command line does not carry it.
         env[orchdoc.READER_WRITE_ENV] = "1"
-        # o9:W258: `orchdoc.py note` and `instruct` refuse a caller that is an orchestrator, and
-        # $ORCHDOC_ME says so. A Reader started from an orchestrator's terminal inherits it, but
-        # what this call writes is the human's own text from the page, so the child starts without it.
-        # o9L1478: the same for $CLAUDECODE and $ORCHDOC_LANE, which a Reader started from a
-        # Claude Code session or a lane inherits and which also mark the caller as a session.
         env = orchdoc.owner_writer_env(env)
         for attempt in range(WRITER_LOCK_RETRIES + 1):
             try:
@@ -8922,9 +8486,8 @@ class Reader:
                                    encoding="utf-8", errors="replace", env=env,
                                    creationflags=NO_WINDOW)
             except subprocess.TimeoutExpired:
-                # o9:W123, the human: no timeout message, ever. Plain words for the one case left: a
-                # writer hung for WRITER_HARD_CAP seconds. `_writer_finish` still reports a save
-                # whose record is on disk as saved.
+                # Plain words for the one case left: a writer hung for WRITER_HARD_CAP seconds.
+                # `_writer_finish` still reports a save whose record is on disk as saved.
                 return {"ok": False, "no_answer": True,
                         "error": "the writer on this computer ran for %d minutes without "
                                  "answering and was stopped; nothing it did was confirmed"
@@ -8974,9 +8537,8 @@ def make_handler(reader):
             fire in normal use - and a traceback that appears during correct operation is
             how a real one stops being read.
 
-            o9:W150: each request writes one timing line once it is answered (see ReaderLog).
-            The clock starts in `parse_request`, after the request line has arrived, so the
-            time a kept-alive connection sat idle before it is not counted."""
+            The clock starts in `parse_request`, after the request line has arrived,
+            so the time a kept-alive connection sat idle before it is not counted."""
             self._t0 = None
             try:
                 BaseHTTPRequestHandler.handle_one_request(self)
@@ -8998,7 +8560,7 @@ def make_handler(reader):
             self._bytes = 0
             _REQ.t = {}
             self._land0 = _landing_brief(reader.landing)
-            _flight_add(1)             # o9:W195: a request in flight blocks a self-restart
+            _flight_add(1)
             self._counted = True
             return BaseHTTPRequestHandler.parse_request(self)
 
@@ -9078,15 +8640,16 @@ def make_handler(reader):
 
         def do_GET(self):
             path = self.path.split("?")[0]
-            # ⛔ FIRST, FOR EVERY ROUTE, SO NO ROUTE CAN BE ADDED WITHOUT IT. Security review,
-            # 2026-09-23: only the file and script routes checked the Host, and `/` (which
-            # carries the write token) and `/doc/__scripts__` (script names and ids) answered
-            # a DNS-rebinding request with 200. A route list is exactly what drifts.
+            # ⛔ FIRST, FOR EVERY ROUTE, SO NO ROUTE CAN BE ADDED WITHOUT IT. A route list is
+            # exactly what drifts.
             if not self._host_ok():
                 self._send("refused: this request did not name this server as its host",
                            "text/plain; charset=utf-8", 403)
                 return
             try:
+                if not HAS_SCRIPTS and path.startswith(SCRIPT_ROUTES):
+                    self._send("not found", "text/plain; charset=utf-8", 404)
+                    return
                 if path == "/":
                     # ⛔ A GET NEVER MUTATES ANYTHING A CLIENT NAMED. It rebuilds our own page
                     # from our own files; it takes no id, no text and no body. Every write is
@@ -9095,6 +8658,13 @@ def make_handler(reader):
                         return reader.home_page()
                     page = reader.single_flight(_home)
                     self._send(page)
+                    return
+                if path.startswith("/batch/"):
+                    # READ-ONLY: it renders one batch.json and writes nothing; the id is checked
+                    # against R<digits> by batch_approval.
+                    import batch_approval
+                    body, code = batch_approval.page_for(urllib.parse.unquote(path[7:]))
+                    self._send(body, "text/html; charset=utf-8", code)
                     return
                 if path.startswith("/file/"):
                     # ⛔ READ-ONLY, CONFINED LIKE /img/. One text file inside the workspace,
@@ -9111,7 +8681,9 @@ def make_handler(reader):
                     if kind == "markdown":
                         ctx = _links_ctx(XrefTargets(reader.index()),
                                          base_rel=posixpath.dirname(relp), href_prefix="/")
-                    self._send(render_file_page(relp, text, kind, ctx))
+                    self._send(render_file_page(
+                        relp, text, kind, ctx,
+                        token=reader.token if discover_docs(reader.workspace) else None))
                     return
                 if path.startswith("/script/"):
                     # ⛔ AN ID, NEVER A PATH. `describe` refuses anything it did not issue.
@@ -9119,12 +8691,9 @@ def make_handler(reader):
                     if not d.get("ok"):
                         self._json({"ok": False, "error": d.get("error")}, d.get("code", 404))
                         return
-                    # o9L1212: the reading pane shows the script, not its header fields
                     d["html"] = md_to_html(SCRIPTS.hide_library_header(d["text"]), script=True)
                     d["prov_html"] = render_prov_line(d.get("prov"))
                     d["notes"] = reader.script_notes.list(d.get("srel"))
-                    # o9:W208: opening a text no longer starts a review (the human 2026-10-13: a
-                    # review runs only when he asks for one).
                     self._json(d)
                     return
                 if path.startswith("/script-diff/"):
@@ -9160,7 +8729,6 @@ def make_handler(reader):
                                 "landing": reader.lander is not None})
                     return
                 if path == "/library-sync-status":
-                    # o9 W202: read-only. The runner's status file as plain fields; with ?job=
                     # also whether that landing's commit is inside the run's workspace commit.
                     st = reader.runner.status()
                     q = urllib.parse.parse_qs(self.path.partition("?")[2])
@@ -9184,6 +8752,10 @@ def make_handler(reader):
                                              "disk"}, 404)
                         return
                     self._json(dict(st, ok=True))
+                    return
+                if path == "/documents":
+                    # ⛔ READ-ONLY, like /done: lists the folders the user chose, no token.
+                    self._send(render_documents_page(reader.workspace))
                     return
                 if path == "/done":
                     # ⛔ NO TOKEN, NO WRITE UI, NO LOGIN - a read-only page (RULE ONE).
@@ -9217,18 +8789,16 @@ def make_handler(reader):
                                "application/json; charset=utf-8")
                     return
                 if path == "/doc-counts":
-                    # o9:W150 Task D: every badge in the document list, so an open page follows
-                    # a document another session rewrote (see `rail_counts`). The same models
-                    # as GET /: a changed file is read again once, by whichever asks first.
+                    # The same models as GET /: a changed file is read again once, by whichever
+                    # asks first.
                     idx = reader.index()
                     with _timed("render"):
                         obj = rail_counts(idx)
                     self._json(obj)
                     return
                 if path == "/landing":
-                    # o9:W123: how many saves are still on their way to main, and why any of
-                    # them failed. Reads a folder listing and the worker's memory only.
-                    # `?cid=a,b`: also what became of those saves (see `sent_status`).
+                    # Reads a folder listing and the worker's memory only. `?cid=a,b`: also what
+                    # became of those saves (see `sent_status`).
                     q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                     cids = [c for c in ",".join(q.get("cid") or []).split(",") if c][:50]
                     self._json(reader.landing_status(cids))
@@ -9251,18 +8821,13 @@ def make_handler(reader):
                     self._json({"ok": True, "rev": got[0], "ids": got[1]})
                     return
                 if path.startswith("/entry/"):
-                    # o9cL1: ONE entry, as the pane shows it, so a save is shown by replacing
-                    # that entry instead of re-reading the whole view (o9's is 3.6 MB of JSON,
-                    # painted in one task). `?show_doc=1`: as the plate and Do-today lists
-                    # show it, with its doc's name.
+                    # `?show_doc=1`: as the plate and Do-today lists show it, with its doc's
+                    # name.
                     parts = urllib.parse.unquote(path[len("/entry/"):]).split("/")
                     q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-                    # o9:W164: no `reader.index()`. It holds the lock every page request waits
-                    # on and models every doc whose file changed; after a save that is the
-                    # 3.6 MB o9 doc, so one save made the next request of any page wait for it.
-                    # The entry's own doc is modelled again if its file changed (that is what the
-                    # entry shows), still without the lock; the others, for references, are the
-                    # models this process already has.
+                    # The entry's own doc is modelled again if its file changed (that is what
+                    # the entry shows), still without the lock; the others, for references, are
+                    # the models this process already has.
                     d, idx = (reader.entry_context(parts[0]) if len(parts) == 2
                               else (None, []))
                     with _timed("render"):
@@ -9285,13 +8850,11 @@ def make_handler(reader):
                 if path.startswith("/doc/"):
                     slug = path[5:]
                     idx = reader.index()
-                    # o9:W150: the view and its JSON are the `render` part of the timing line.
                     with _timed("render"):
                         xref = XrefTargets(idx)
                         code, obj = 200, None
-                        # `plate` is the hash the human types and the one the rail now writes; the
-                        # internal key stays `__plate__`. Accept both so a page cached before
-                        # this change, or a link he kept, does not 404 into a blank reader.
+                        # `plate` is the hash the human types and the one the rail now writes;
+                        # the internal key stays `__plate__`.
                         if slug in ("__plate__", "plate"):
                             nav, body = render_plate_view(idx, xref)
                             obj = {"nav": nav, "body": render_today_strip(idx) + body}
@@ -9301,7 +8864,7 @@ def make_handler(reader):
                         elif slug == "rule":
                             nav, body = render_rules_view(xref)
                             obj = {"nav": nav, "body": body}
-                        elif slug in (SCRIPTS_VIEW, "scripts"):
+                        elif HAS_SCRIPTS and slug in (SCRIPTS_VIEW, "scripts"):
                             nav, body = render_scripts_view(
                                 reader.scripts.annotate_provenance(reader.scripts.discover()),
                                 fr_marks=reader.fr_marks, workspace=reader.workspace)
@@ -9357,7 +8920,6 @@ def make_handler(reader):
                     return no("that is not a §2.0 item on this page - reload it")
                 args = ["--" + act, eid]
             elif act == "priority":
-                # o9:W147: the human's priority choice on any live entry of this document.
                 eid, choice = payload.get("id"), payload.get("choice")
                 import priority as _prio_w
                 if not isinstance(choice, str) or _prio_w.choice_norm(choice) is None:
@@ -9368,8 +8930,8 @@ def make_handler(reader):
                     return no("that is not a live entry on this page - reload it")
                 args = ["--priority", eid, "--choice", _prio_w.choice_norm(choice)]
             elif act in ("status", "unstatus"):
-                # o9L1328: the human's Done / Superseded button, and its Undo. `orchdoc.py resolve`
-                # writes it and the landing worker lands it; no model is involved.
+                # `orchdoc.py resolve` writes it and the landing worker lands it; no model is
+                # involved.
                 import reader_status as _rs
                 eid = payload.get("id")
                 _m_id = orchdoc.ID_RE.match(eid) if isinstance(eid, str) else None
@@ -9393,7 +8955,7 @@ def make_handler(reader):
                         return no("nothing to undo")
                     wargs = ["resolve", eid, "--doc", str(path), "--status", "OPEN",
                              "--ruling", "undo", "--undo-json", json.dumps(undo)]
-                    if orchdoc.doc_owner_id(path) != "o9":
+                    if not _rs.is_own_doc(path):
                         wargs.append("--not-mine")
                 self._send(json.dumps(reader._run_writer(
                     [sys.executable, str(Path(orchdoc.__file__).resolve())] + wargs +
@@ -9424,7 +8986,6 @@ def make_handler(reader):
                 self._send(json.dumps({"ok": False, "error": "bad request shape"}),
                            "application/json; charset=utf-8", 400)
                 return
-            # o9:W164: the doc's file is looked up; the whole index is not built (see `/entry/`).
             if reader.doc_path(slug) is None:
                 self._send(json.dumps({"ok": False, "error": "no such document"}),
                            "application/json; charset=utf-8", 400)
@@ -9459,18 +9020,19 @@ def make_handler(reader):
             having the field quietly ignored, so a mistake is visible instead of silent.
             """
             if _DRAINING.is_set():
-                # o9:W195: the Reader is restarting onto new code. Nothing of this write was
-                # read or taken; the page may send it again in a few seconds.
+                # Nothing of this write was read or taken; the page may send it again in a few
+                # seconds.
                 self.close_connection = True
-                # o9L1254: the words "never reached the writer" are what the page's outbox
-                # (obSend) reads as "not delivered, send again"; any other error text is read
-                # as a refusal and the save is handed back to the human instead of retried.
                 self._send(json.dumps({"ok": False, "error": "it never reached the writer: the "
                                        "Reader is restarting onto new code; it is sent again in "
                                        "a few seconds"}),
                            "application/json; charset=utf-8", 503)
                 return
             path = urllib_path(self.path)
+            if not HAS_SCRIPTS and path.startswith(SCRIPT_ROUTES):
+                self._send(json.dumps({"ok": False, "error": "this Reader has no script features"}),
+                           "application/json; charset=utf-8", 404)
+                return
             if path in _SCRIPT_KEYS:
                 self._script_post(path)
                 return
@@ -9486,6 +9048,9 @@ def make_handler(reader):
                 return
             if path == "/today":
                 self._today_post()
+                return
+            if path == "/file-note":
+                self._file_note_post()
                 return
             if path not in ("/note", "/instruct", "/instruct-doc"):
                 self._send(json.dumps({"ok": False, "error": "not found"}),
@@ -9536,7 +9101,6 @@ def make_handler(reader):
                 self._send(json.dumps({"ok": False, "error": "bad request shape"}),
                            "application/json; charset=utf-8", 400)
                 return
-            # o9:W123: the page's id for this save, so a resend writes nothing twice.
             cid = payload.get("cid")
             if cid is not None and not (isinstance(cid, str) and orchdoc.CLIENT_ID_RE.match(cid)):
                 self._send(json.dumps({"ok": False, "error": CID_REFUSAL}),
@@ -9614,9 +9178,7 @@ def make_handler(reader):
                 self._send(json.dumps(result), "application/json; charset=utf-8", 200)
                 return
 
-            # ⛔ THE DURABLE WRITE IS THE WHOLE ACTION. There is no second step and nothing
-            # to fall back to: if this fails, nothing happened, and the page says so and keeps
-            # his words.
+            # ⛔ THE DURABLE WRITE IS THE WHOLE ACTION.
             result = reader.write_note(slug, eid, "", text, False, kind="instruction", cid=cid,
                                        wait=wait)
             # ⛔ THE ROLE IS THE RESOLVED DOCUMENT'S OWN SLUG, never a string the browser
@@ -9625,6 +9187,57 @@ def make_handler(reader):
             if result.get("ok"):
                 result["role"] = model["slug"]
             self._send(json.dumps(result), "application/json; charset=utf-8", 200)
+
+        def _file_note_post(self):
+            """A note on a file in the workspace. The page names the file; this server checks it
+            is one it would show, picks the OrchDoc (the first one found, or the `doc` slug the
+            page sent), and writes through the same single writer as /note:
+
+              no entry yet for this file  ->  `orchdoc.py instruct` opens one, titled
+                                              "Notes on the file <path>.", with the path in it
+              an entry already exists     ->  the note is added to that entry
+
+            Either way it is an INSTRUCTION note, so the orchestrator must acknowledge it."""
+            payload, err = _reader_gate(self.headers, self.rfile, reader.token, reader.port,
+                                        host=HOST)
+            if err:
+                self._json({"ok": False, "error": err[1]}, err[0])
+                return
+            extra = sorted(set(payload) - {"token", "file", "text", "doc"})
+            if extra:
+                self._json({"ok": False, "error": "unexpected field(s) %s" % ", ".join(extra)}, 400)
+                return
+            file_, text, doc = payload.get("file"), payload.get("text"), payload.get("doc")
+            if not isinstance(file_, str) or not isinstance(text, str) or \
+                    not (doc is None or isinstance(doc, str)):
+                self._json({"ok": False, "error": "bad request shape"}, 400)
+                return
+            if not text.strip() or len(text) > NOTE_MAX_CHARS:
+                self._json({"ok": False, "error": "a note must have text, and at most %d "
+                                                  "characters" % NOTE_MAX_CHARS}, 400)
+                return
+            got, why = reader.viewable(file_)
+            if got is None:
+                self._json({"ok": False, "error": "that file is not shown: %s" % why}, 400)
+                return
+            relp = got[1]
+            docs = discover_docs(reader.workspace)
+            slug = doc or (docs[0][0] if docs else "")
+            model = reader.doc_model(slug, fresh=True) if slug else None
+            if model is None:
+                self._json({"ok": False, "error": "there is no OrchDoc to put the note in yet"}, 400)
+                return
+            marker = "Notes on the file %s." % relp
+            hit = next((e for e in model.get("entries", [])
+                        if marker in (e.get("raw_title") or e.get("title") or "")), None)
+            if hit:
+                result = reader.write_note(slug, hit["id"], "", text, False, kind="instruction")
+            else:
+                result = reader.write_doc_instruction(
+                    slug, "%s The file: `%s`. Note: %s" % (marker, relp, text.strip()))
+            if result.get("ok"):
+                result["role"] = model["slug"]
+            self._json(result)
 
         def _script_post(self, path):
             """The script writes. ⛔ THE SAME GATE AS /note - the same function, the same four
@@ -9635,8 +9248,7 @@ def make_handler(reader):
             that names a place is refused with a message that says so, and any other stray key
             is refused too - ignored, it would be a field the page believes does something.
             """
-            # ⛔ A WHY-NOTE IS NOTE-SIZED, SO ITS ROUTE GETS THE NOTE CAP, not the 2 MB a whole
-            # script needs (o9's review of W72). Never larger than /note's.
+            # Never larger than /note's.
             payload, err = _reader_gate(
                 self.headers, self.rfile, reader.token, reader.port,
                 max_body=WHY_MAX_BODY if path in ("/script/why", "/script/approve-plan",
@@ -9673,9 +9285,9 @@ def make_handler(reader):
                 return
 
             if path == "/script/why":
-                # ⛔ ONE NOTE PER REQUEST (o9's ruling for o8:W72). The page names the pair by
-                # its issued id and the change by the key this server computed; the server
-                # re-reads the notes file under the lock and sets that one entry.
+                # The page names the pair by its issued id and the change by the key this server
+                # computed; the server re-reads the notes file under the lock and sets that one
+                # entry.
                 sid, key = payload.get("id"), payload.get("k")
                 if not isinstance(sid, str) or not isinstance(key, str):
                     self._json({"ok": False, "error": "bad request shape"}, 400)
@@ -9742,9 +9354,9 @@ def make_handler(reader):
             self._json(result)
 
         def _script_note_post(self, payload):
-            """o9L1506: save one note on a script. The page names the script by the id this
-            server issued; the note goes to script_note_store (a per-machine file, one per
-            script), never into the script file. The full text is kept or refused, never cut."""
+            """The page names the script by the id this server issued; the note goes to
+            script_note_store (a per-machine file, one per script), never into the
+            script file. The full text is kept or refused, never cut."""
             f, why = reader.scripts.resolve(payload.get("id"))
             if f is None:
                 self._json({"ok": False, "error": why}, 400)
@@ -9756,9 +9368,9 @@ def make_handler(reader):
             self._json({"ok": True, "note": got, "notes": reader.script_notes.list(f["relroot"])})
 
         def _full_rewrite_post(self):
-            """o9 W248: set or clear one reviewed mark of "00 - Full Rewrite Scripts". The same
-            gate as every write (token, origin, size). The key is a label, never a path; the
-            only thing written is the marks file (reader_full_rewrite.Marks)."""
+            """The same gate as every write (token, origin, size). The key is a label, never a
+            path; the only thing written is the marks file
+            (reader_full_rewrite.Marks)."""
             payload, err = _reader_gate(
                 self.headers, self.rfile, reader.token, reader.port,
                 max_body=WHY_MAX_BODY, host=HOST)
@@ -9782,10 +9394,11 @@ def make_handler(reader):
             self._json({"ok": True, "reviewed": payload["reviewed"]})
 
         def _review_request_post(self, sid):
-            """o9L1310. Approve & Review: write one review request file (never approve, never
-            touch the script). The same gate as every script write (token, origin, size); the
-            body carries the token and nothing else; the script is named by the id in the path
-            (an id this server issued, never a file path) and resolved and confined by Corpus."""
+            """Approve & Review: write one review request file (never approve, never touch the
+            script). The same gate as every script write (token, origin, size); the
+            body carries the token and nothing else; the script is named by the id
+            in the path (an id this server issued, never a file path) and resolved
+            and confined by Corpus."""
             payload, err = _reader_gate(
                 self.headers, self.rfile, reader.token, reader.port,
                 max_body=WHY_MAX_BODY, host=HOST)
@@ -9800,9 +9413,10 @@ def make_handler(reader):
             self._json(result, code) if not result.get("ok") else self._json(result)
 
         def _approve_post(self, path, sid):
-            """o9 W192. The token, origin and size checks already ran in _script_post (the same
-            gate as every script write); the script is named by the id this server issued, and
-            resolved and confined by Corpus. /script/approve is landed like a save."""
+            """The token, origin and size checks already ran in _script_post (the same gate as
+            every script write); the script is named by the id this server issued,
+            and resolved and confined by Corpus. /script/approve is landed like a
+            save."""
             if not isinstance(sid, str):
                 self._json({"ok": False, "error": "bad request shape"}, 400)
                 return
@@ -9829,7 +9443,6 @@ def make_handler(reader):
                         "reason": "this reader was started with landing turned off "
                                   "(--no-land), so the approval was NOT committed or pushed."}
                 else:
-                    # o9 W202: a folder moved (or the app's text changes) -> start the runner
                     moved = (result.get("folder_before") != result.get("folder_after")
                              or result.get("app_change") not in (None, "none"))
                     jid = reader.lander.submit_approve(result["adds"], result["removes"],
@@ -9847,8 +9460,7 @@ def urllib_path(raw):
     return raw.split("?")[0].split("#")[0]
 
 
-# o9:W195: requests being answered right now, and whether new writes are being refused because the
-# Reader is about to restart. See reader_restart.py.
+# See reader_restart.py.
 _FLIGHT_MX = threading.Lock()
 _FLIGHT = [0]
 _DRAINING = threading.Event()
@@ -9893,8 +9505,7 @@ class _Server(ThreadingHTTPServer):
 
 
 class _StartingHandler(BaseHTTPRequestHandler):
-    """o9L1152: what the port answers while the Reader is still reading its documents.
-
+    """
     The logon task starts the Reader and gives it ~10 s to answer. Reading and auditing the
     documents takes about 6 s on a warm machine and far longer at logon. Binding only after
     that left the task reporting FAILED; and the work between the bind and the accept loop left
@@ -9907,9 +9518,7 @@ class _StartingHandler(BaseHTTPRequestHandler):
 
     def _starting(self):
         # ⛔ A WRITE IS REFUSED WHOLE. A POST here never reaches the gate, the token or any
-        # writer: nothing in this class can write. Its body is read (up to 1 MB) and thrown
-        # away only so the socket closes cleanly; on Windows, closing with unread bytes sends
-        # a reset that can reach the client before this 503 does (o9L1155).
+        # writer: nothing in this class can write.
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -9947,15 +9556,12 @@ POWER_THROTTLING_EXECUTION_SPEED = 0x1
 
 
 def opt_out_of_ecoqos(kernel32=None, throttle=False):
-    """o9:W248 (o9L1474): tell Windows never to run this process under EcoQoS. Left
-    system-managed, Windows 11 put the live Reader (started below-normal, with no window) on
-    efficiency scheduling: py-spy showed every function in a Scripts page load slower by the
-    same factor, and the load cost 4.2-4.9 s of CPU against 0.8 s in a fresh Reader on the
-    same code and files. Setting this on the live process alone brought it to 0.9 s. True when
-    Windows took the setting; False elsewhere or on any failure (never raises).
-
-    o9L1491: `throttle=True` is the opposite request, for a BACKGROUND process that must stay out
-    of the Reader's way (reader_phone_export.py): same call, state bit ON = run as EcoQoS."""
+    """Left system-managed, Windows 11 put the live Reader (started below-normal, with no window)
+    on efficiency scheduling: py-spy showed every function in a Scripts page load slower by
+    the same factor, and the load cost 4.2-4.9 s of CPU against 0.8 s in a fresh Reader on
+    the same code and files. Setting this on the live process alone brought it to 0.9 s.
+    True when Windows took the setting; False elsewhere or on any failure (never raises).
+    """
     if os.name != "nt":
         return False
     try:
@@ -9978,9 +9584,8 @@ def opt_out_of_ecoqos(kernel32=None, throttle=False):
 
 
 def main(argv=None):
-    """o9L1155: the port is now bound before the documents are read, so EVERY way out of
-    `_main` (a return, a raise, ctrl-c) closes it; a caller that runs main() in-process, as
-    the tests do, would otherwise keep a server answering 503 on that port for its life."""
+    """
+    """
     held = {}
     try:
         return _main(argv, held)
@@ -10013,17 +9618,15 @@ def _main(argv, held):
                     help="the dedicated landing worktree (default "
                          "<workspace>/.worktrees/reader-landing)")
     ap.add_argument("--self-restart", action="store_true",
-                    help="restart onto new code when a file this Reader runs changes (o9:W195); "
+                    help="restart onto new code when a file this Reader runs changes ; "
                          "always on for the default workspace, off when READER_SELF_RESTART=0")
     ap.add_argument("--warm-done", action="store_true",
                     help="warm the /done 48h cache at startup even though --workspace is not "
                          "the default workspace (the default workspace always warms)")
     ap.add_argument("--warm-scripts", action="store_true",
                     help="warm the Scripts view's provenance cache at startup even though "
-                         "--workspace is not the default workspace (o9:W167)")
+                         "--workspace is not the default workspace ")
     a = ap.parse_args(argv)
-    # o9:W195: what the code this process loaded looks like NOW, before any slow work, so a file
-    # changed while it starts is seen as a change (see reader_restart.py).
     _boot = None
     if RESTART is not None and not a.once:
         try:
@@ -10035,9 +9638,8 @@ def _main(argv, held):
     # was called from nowhere, while the comment above STATUS_CLASS claimed it made drift
     # impossible. A function that returns a list is not a check until something reads it.
     #
-    # \u26a0\ufe0f It WARNS and never refuses. The reader is how the human reads his own plate; an
-    # unmapped status makes some dots grey, which is cosmetic. Refusing to render would take
-    # the instrument away to report a small flaw in it.
+    # \u26a0\ufe0f It WARNS and never refuses. Refusing to render would take the instrument away
+    # to report a small flaw in it.
     _uncoloured = _status_class_covers_vocabulary()
     if _uncoloured:
         sys.stderr.write(
@@ -10047,9 +9649,9 @@ def _main(argv, held):
             % (len(_uncoloured), ", ".join(_uncoloured)))
 
     ws = Path(a.workspace)
+    os.environ.setdefault("ORCHDOC_WORKSPACE", str(ws.resolve()))   # the settings file is found from it
     global ASSET_ROOT
     ASSET_ROOT = ws.resolve()
-    # o9L1152: bind and start accepting BEFORE the slow reading below (see _StartingHandler).
     # `--once` only audits and never serves.
     srv = None
     if not a.once:
@@ -10114,23 +9716,17 @@ def _main(argv, held):
             print("   %-4s %-5s -> %s:%-6s %s" % row)
         return 0
     print("       (--once lists every unresolved one)")
-    # o9:W248: before any thread starts, so a self-restart's new process opts out too.
     opt_out_of_ecoqos()
 
-    lander = None if a.no_land else SCRIPTS.Lander(ws, worktree=a.land_worktree,
-                                                    branch=a.land_branch)
-    # o9:W150: the landing worker's lines and one timing line per request, printed and kept in
-    # a size-capped file in the workspace (the logon task sends stdout to DEVNULL).
+    lander = None if (a.no_land or not HAS_SCRIPTS) else SCRIPTS.Lander(
+        ws, worktree=a.land_worktree, branch=a.land_branch)
     rlog = ReaderLog(reader_log_path(ws), own_dir=True)
-    # o9:W123: notes, instructions and §2.0 land in the background, oldest first. Created
-    # before the bind but started after it, so a reader that cannot bind lands nothing.
+    # Created before the bind but started after it, so a reader that cannot bind lands nothing.
     if a.no_land:
         landing = None
     elif LANDING is None:
         landing = INLINE_LANDING
     else:
-        # ...and a second thread watches whether each doc on this computer still follows main
-        # (o9:W123 (a)), for the notice at the top of the page.
         # Its lines get the request line's date and time after their first word (box 13).
         def make_landing():
             return LANDING.LandingWorker(ws, log=StampedLog(rlog),
@@ -10142,11 +9738,9 @@ def _main(argv, held):
     reader = Reader(ws, token=GATE.mint_token(), port=a.port, lander=lander, landing=landing,
                     reqlog=rlog)
     if lander is not None:
-        # o9 W202: an approval that moved a folder starts o10's library runner once it lands.
         lander.on_approve_landed = lambda job: reader.runner.start()
     if landing not in (None, INLINE_LANDING):
         landing.start()
-    # o9L1152: from here every request reaches the Reader; before it, the 503 above.
     srv.RequestHandlerClass = make_handler(reader)
     url = "http://%s:%d/" % (HOST, a.port)
     print("")
@@ -10171,13 +9765,12 @@ def _main(argv, held):
         print("       on disk, uncommitted, and the page says \"%s\"." % LANDING_OFF_TEXT)
     elif landing == INLINE_LANDING:
         print("[WARN] reader_landing.py could not be imported, so each save lands before the")
-        print("       page gets its answer (seconds, the way it was before o9:W123).")
+        print("       page gets its answer .")
     else:
         print("       Each save returns once it is on disk; a background worker then commits")
         print("       and pushes it to %s, oldest first, and retries until it is there."
               % orchdoc.CANONICAL_REF)
         print("       Waiting saves are in %s and survive a restart." % LANDING.QUEUE_REL)
-    # o9:W109: the skill copy runs in folders that are not git workspaces, where nothing lands.
     print("       In a folder that is not a git workspace with an origin remote, a save stays")
     print("       in the file on this computer, and the page says so after the save.")
     # ⛔ SAY WHAT AN INSTRUCTION ACTUALLY DOES, AND WHAT IT DOES NOT. It is written to the
@@ -10189,17 +9782,22 @@ def _main(argv, held):
     print("       until they acknowledge it. Nothing is sent, and nothing has to be running.")
     # ⛔ AND SAY THAT IT CAN WRITE SCRIPTS, AND WHERE THE WRITES GO.
     _sc = reader.scripts_count()
-    print("scripts: %s. An agent draft is never written; a save goes to %s's rewrite of it,"
-          % ("ON (%d in %s)" % (_sc, reader.scripts.rel) if _sc is not None
-             else "no corpus at %s" % reader.scripts.rel,
-             orchdoc.human_name().title()))
-    print("       and a rewrite is snapshotted to .edit-history/ before it is replaced.")
-    if lander is None:
-        print("       Landing is OFF (--no-land): saves stay on disk, uncommitted.")
+    if HAS_SCRIPTS:
+        print("scripts: %s. An agent draft is never written; a save goes to %s's rewrite of it,"
+              % ("ON (%d in %s)" % (_sc, reader.scripts.rel) if _sc is not None
+                 else "no corpus at %s" % reader.scripts.rel,
+                 orchdoc.human_name().title()))
+        print("       and a rewrite is snapshotted to .edit-history/ before it is replaced.")
+        if lander is None:
+            print("       Landing is OFF (--no-land): saves stay on disk, uncommitted.")
+        else:
+            print("       Each save is committed and pushed to %s/%s from %s"
+                  % (lander.remote, lander.branch, lander.worktree))
+            print("       - never from this checkout.")
     else:
-        print("       Each save is committed and pushed to %s/%s from %s"
-              % (lander.remote, lander.branch, lander.worktree))
-        print("       - never from this checkout.")
+        _folders = documents_folders()
+        print("documents: %s" % (("ON (%s)" % ", ".join(_folders)) if _folders else
+              "no folders chosen yet; name them with `orchdoc_config.py set doc_folders <folder>`"))
     print("files: /file/<path> shows a workspace text file read-only (what §1 links open).")
     print("log: one timing line per request, and each landing, printed here and kept in")
     print("       %s (at most 2 x %d MB)" % (rlog.path, READER_LOG_MAX // (1024 * 1024)))
@@ -10209,8 +9807,7 @@ def _main(argv, held):
     if DONE is not None and (a.warm_done or ws.resolve() == Path(orchdoc.PROJECTS).resolve()):
         DONE.warm(str(ws), DONE.DEFAULT_REF, DONE.parse_window("48h"))
         print("done: /done is warming its 48h window in the background.")
-    # o9:W167: the Scripts view's first open on the real library runs ~620 `git log` calls
-    # (~45 s cold). Warm it after the bind, under the same rule as /done.
+    # Warm it after the bind, under the same rule as /done.
     if _sc is not None and (a.warm_scripts or ws.resolve() == Path(orchdoc.PROJECTS).resolve()):
         reader.scripts.warm()
         print("scripts: the Scripts view's provenance is warming in the background.")
@@ -10257,11 +9854,9 @@ def _main(argv, held):
             if landing not in (None, INLINE_LANDING):
                 landing.stop(timeout=60)      # waits for a landing it is running; the rest stay queued
                 if landing._thread is not None and landing._thread.is_alive():
-                    # o9L1254: never start the new process while this one is still landing:
-                    # the two have no shared lock, so the new one could land the same job at
-                    # the same time. Wait out the job's own time limit, and only then stop it
-                    # the way reader_landing documents as safe (its job file stays; a landing
-                    # that already pushed is found on main).
+                    # Wait out the job's own time limit, and only then stop it the way
+                    # reader_landing documents as safe (its job file stays; a landing that
+                    # already pushed is found on main).
                     say("restart: waiting for the landing this process is running to finish")
                     landing._thread.join(getattr(LANDING, "JOB_TIMEOUT", 900) + 60)
                     if landing._thread.is_alive():
@@ -10298,7 +9893,6 @@ def _main(argv, held):
                     break
                 time.sleep(0.25)
             else:
-                # o9L1254: still running but not answering. Take the port back if it is free
                 # (the port is exclusive, so the new process then fails its own bind and ends);
                 # if the new process holds it, it is serving and this one ends.
                 say("restart: the new process has not answered after 90 s but is still running")
@@ -10347,8 +9941,8 @@ def _main(argv, held):
         RESTART.watch(_restarter, poll=_poll)
         print("restart: ON - this Reader restarts itself when one of its %d code files changes."
               % len(_boot))
-        # o9L1254: also in reader.log. The logon task and ensure_local_servers.py send stdout
-        # nowhere, so without this line nothing shows that the watcher is running.
+        # The logon task and ensure_local_servers.py send stdout nowhere, so without this line
+        # nothing shows that the watcher is running.
         _say("restart: watcher ON, pid %d, watching %d code files" % (os.getpid(), len(_boot)))
     try:
         while cur["accept"].is_alive() or cur["busy"].is_set():

@@ -2,32 +2,24 @@
 
 <!-- subject: knowledge-routing -->
 
-The human, 2026-08-17: *"We need a hook attached to this that forces any agent attempting to write a
-new doc that concerns this info to either edit it in the cornerstone, or justify why they need a
-new doc, and if they create a new doc, to document the new doc in the cornerstone. It must be
-forced at every step."*
+It must be forced at every step."*
 
 ⭐ THE DESIGN THAT MAKES IT SELF-CLOSING: the only escape is to REGISTER the new doc in the
 cornerstone. So a session that insists on a second doc must edit the cornerstone to get past this
 - which is exactly the outcome, reached by the shortest path available to them. There is no
 "acknowledge and proceed" door, because a door like that is the one every session takes.
 
-⛔ WHY A PROSE RULE WOULD NOT HAVE HELD. On 2026-08-17 four separate rules in this workspace were
-written down, had a correct check, and were broken anyway - by the session that wrote them, the
-same day. "Singular source of truth" is the same class of instruction and would fail the same
-way.
+⛔ WHY A PROSE RULE WOULD NOT HAVE HELD. "Singular source of truth" is the same class of
+instruction and would fail the same way.
 
 HOW A FACT IS DECLARED - in a cornerstone's "Facts this doc owns" table:
 
     <!-- owns: external-provider-api-key-path -->
-    | the vendor key path | `.shared/secrets/external-provider-api-key.txt` | 2026-08-17 |
 
 The VALUE is read from the backticked cell on the marker's line or the lines just after it. That
 value is then forbidden in every other doc.
 
 HOW A SECOND DOC IS REGISTERED - a row in the cornerstone naming its path:
-
-    | if you need the rotation procedure | `memory/vendor-key-rotation.md` |
 
 Any doc whose path the cornerstone names is allowed to restate the facts that cornerstone owns.
 
@@ -53,9 +45,9 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="repla
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 REFUSE = 9
-# ⛔ A KEY MUST CONTAIN A LETTER OR DIGIT. `.` is in the class, so the placeholder
-# `<!-- owns: ... -->` parsed as the key "..." - and two docs quoting the syntax then
-# collided as "two owners of one fact". Measured by o1, 2026-08-19.
+# ⛔ A KEY MUST CONTAIN A LETTER OR DIGIT. `.` is in the class, so the placeholder `<!-- owns:
+# ... -->` parsed as the key "..." - and two docs quoting the syntax then collided as "two
+# owners of one fact".
 OWNS_RE = re.compile(r"<!--\s*owns:\s*(?=[A-Za-z0-9._-]*[A-Za-z0-9])([A-Za-z0-9._-]+)\s*-->")
 CORNER_RE = re.compile(r"<!--\s*cornerstone:\s*([A-Za-z0-9._-]+)\s*-->")
 # A value worth protecting is a path or a token - never a bare English word, which would fire on
@@ -99,11 +91,9 @@ def corpus_docs():
 def collisions(facts_multi):
     """Two ways a declaration set can be incoherent. Both REFUSE - neither is resolvable.
 
-    ⛔ the human, 2026-08-17: "what prevents 2 sessions from creating different names independently?"
-    The VALUE is what the guard matches, so divergent KEY names alone do not let a duplicate
-    through. But the first version did `facts.setdefault(value, ...)` - first read wins,
-    SILENTLY - so two cornerstones claiming one fact resolved by directory walk order. That is
-    the two-live-homes state this tool exists to prevent, inside the tool.
+    But the first version did `facts.setdefault(value, ...)` - first read wins, SILENTLY -
+    so two cornerstones claiming one fact resolved by directory walk order. That is the
+    two-live-homes state this tool exists to prevent, inside the tool.
 
     ⭐ A conflict a program resolves by ORDER is a conflict it is hiding.
     """
@@ -177,14 +167,12 @@ def offenders(paths):
             continue
         # ⛔ A GENERATED PAGE CANNOT DRIFT, so it cannot be a second source of truth. Its whole
         # job is to list the artifacts it was computed from, which necessarily means naming
-        # their paths. Measured 2026-08-17: the guard refused the knowledge browse page for
-        # "restating" corpus.py, which that page exists to link to. If a generated view is ever
-        # wrong, the correction is to regenerate it - never to edit it - so there is nothing
-        # here for this guard to protect.
-        # ⭐ WIDENED from a GENERATED-only check to all four derived kinds. The private version
-        # exempted generated pages because one refused a browse page; templates, correspondence
-        # and tests hit the identical defect in three other guards on the same day. Reusing the
-        # shared test means the next kind added there is covered here without anyone noticing.
+        # their paths. If a generated view is ever wrong, the correction is to regenerate it -
+        # never to edit it - so there is nothing here for this guard to protect. ⭐ WIDENED from
+        # a GENERATED-only check to all four derived kinds. The private version exempted
+        # generated pages because one refused a browse page; templates, correspondence and tests
+        # hit the identical defect in three other guards on the same day. Reusing the shared
+        # test means the next kind added there is covered here without anyone noticing.
         derived, _why = is_derived(t, p)
         if derived:
             continue
@@ -359,8 +347,6 @@ if __name__ == "__main__":
         sys.exit(selftest() if a.selftest else install() if a.install
                  else audit() if a.audit else check())
     except Exception as e:
-        # ⛔ NEVER take the workspace down. A crash here must not block every commit - that is
-        # the failure knowledge_gate.py shipped on 2026-08-13, where a syntax error refused
-        # every commit in the workspace until it was found.
+        # ⛔ NEVER take the workspace down.
         print("[owns] guard error (not blocking): %s" % e)
         sys.exit(0)

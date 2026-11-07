@@ -4,8 +4,8 @@
 <!-- subject: knowledge-routing -->
 <!-- route-tags: facet platform access mechanism component retired misconception vocabulary naming -->
 
-The human, 2026-08-13: *"if a platform is involved, the platform MUST be included... If it involves a
-specific mechanism for accessing it... Any potential MISconceptions about how it is accessed."*
+If it involves a specific mechanism for accessing it... Any potential MISconceptions about how
+it is accessed."*
 
 A SUBJECT fixes the topic. It does not fix the four things a searcher most often types instead:
 the **platform**, the **access mechanism**, the **business component**, and - the sharpest of
@@ -16,13 +16,10 @@ bet that already failed. This reads the document, finds the platform it is plain
 REFUSES the commit until the facet is declared. The author cannot forget what the machine
 noticed for them.
 
-⭐ THE RETIRED FACET IS THE ONE NOBODY WOULD THINK TO BUILD, and it is the highest value. On
-2026-07-15 a deploy platform's MCP integration was deleted on the workspace owner's direction;
-sessions kept reaching for it for weeks because three documented copies of "don't" lost to one
-habit. A session searching for that integration today must NOT get a clean miss - a clean miss
-reads as "nobody has covered this" and invites re-adding the exact thing that was removed.
-Absence of a record is not a record of absence, and for a retired path the difference is the
-whole cost.
+⭐ THE RETIRED FACET IS THE ONE NOBODY WOULD THINK TO BUILD, and it is the highest value. A
+session searching for that integration today must NOT get a clean miss - a clean miss reads as
+"nobody has covered this" and invites re-adding the exact thing that was removed. Absence of a
+record is not a record of absence, and for a retired path the difference is the whole cost.
 
     facets.py --audit          which docs are missing a facet they plainly need
     facets.py --check <path>   what THIS doc is missing
@@ -90,11 +87,8 @@ FLOORS = {"platform": 3, "access": 2, "component": 2}
 #   `[[<vendor>_api_gotchas]]`                                         a WIKILINK to another doc
 #   "The source - the file, the API, the actual branch - answers..."   a stock phrase
 #
-# ⭐ Measured 2026-08-17 over the whole corpus, not guessed: 83 documents detect `api`, and
-# the band at exactly 2 holds 18 of them - a git-hygiene doc, a stale-descriptions writing
-# principle, a handoff-phrasing note, an MCP-staleness note. Every one hand-checked, none of
-# them about API access. At 3 the band is a deploy-platform reliability history, a migrations
-# runbook and a staging-auth rules note - all plainly right.
+# Every one hand-checked, none of them about API access. At 3 the band is a deploy-platform
+# reliability history, a migrations runbook and a staging-auth rules note - all plainly right.
 #
 # Keyed by VALUE, not by facet, so every caller inherits it without a signature change -
 # facets_retract.py re-derives through this same function and must not be able to disagree.
@@ -111,10 +105,8 @@ def detect(text, table, floor=2, path=None):
     """Facet values this document is PLAINLY about - mentioned at least `floor` times.
 
     ⛔ A DERIVED DOCUMENT GETS NO FACETS AT ALL, whatever the counts say. A template names a
-    vendor in every example row and is not about that vendor; a generated view lists whatever it
-    was computed from; a test must contain the strings it exercises. Measured 2026-08-17: the
-    cornerstone TEMPLATE was tagged `platform: external_provider` and `access: api` off its own placeholder
-    rows, and the platform floor of 3 did not save it because the examples repeat.
+    vendor in every example row and is not about that vendor; a generated view lists
+    whatever it was computed from; a test must contain the strings it exercises.
 
     ⭐ The floor answers "is one mention aboutness?". This answers a different question the floor
     cannot reach: "is this document making a claim at all?" Four guards needed that same test on
@@ -125,10 +117,8 @@ def detect(text, table, floor=2, path=None):
     times is a doc about that platform whether or not its author framed it that way.
 
     ⛔ WORDS, NOT SUBSTRINGS - the same defect route.py already fixed and this file repeated.
-    `low.count("cli")` counts the "cli" inside *client*, *click* and *decline*; `"api"` counts
-    the one inside *therapies* and *rapid*. Measured 2026-08-13: the backfill dry run tagged a
-    sleep guide `access: api, cli`, and at 266 documents that would have written confident
-    wrong facets across the corpus.
+    `low.count("cli")` counts the "cli" inside *client*, *click* and *decline*; `"api"`
+    counts the one inside *therapies* and *rapid*.
 
     ⭐ A wrong facet is worse than a missing one. Missing merely fails to route someone to the
     right doc; wrong actively routes them to the wrong one, with the map's authority behind it.
@@ -152,13 +142,10 @@ def detect(text, table, floor=2, path=None):
     for value, aliases in table.items():
         spans = set()
         for a in aliases:
-            # ⛔ A HOSTNAME ALIAS MUST MATCH A WHOLE HOST, NOT A SUFFIX OF ONE.
-            # `app.example.com` is the product app; `example.com` is the marketing site -
-            # different repo, different deploy path, different component - and the second is a
-            # SUFFIX of the first. So every app document also detected as a marketing-site
-            # document. Measured 2026-08-17: 10 detections, and every one is a false positive;
-            # `feedback_deploy_terms_plain_with_urls.md` was about to be declared a
-            # marketing-site doc on the strength of two app URLs and nothing else.
+            # ⛔ A HOSTNAME ALIAS MUST MATCH A WHOLE HOST, NOT A SUFFIX OF ONE. `app.example.com`
+            # is the product app; `example.com` is the marketing site - different repo,
+            # different deploy path, different component - and the second is a SUFFIX of the
+            # first. So every app document also detected as a marketing-site document.
             #
             # ⭐ BUG 5 CANNOT REACH THIS, which is why it survived that fix. Counting distinct
             # POSITIONS collapses two aliases matching at the same offset; here the two matches
@@ -265,22 +252,15 @@ def facet_aliases(text):
 # it were the territory.
 NEVER_FACET = {"CLAUDE.md", "DEV-DOCS-INDEX.md", "MEMORY.md", "Memory2.md", "README.md",
                "ORCHESTRATOR-REGISTRY.md",
-               # The script-writing canon: a rule family read start-to-finish, like
-               # CLAUDE.md. knowledge_gate's NEVER_GATE exempts the same files; it lacked
-               # AUTHORING-CHECKLIST-UNIVERSAL.md (file U) until o9 W156 (lane o9L1065, 2026-10-05).
                "AUTHORING-CHECKLIST.md", "AUTHORING-CHECKLIST-UNIVERSAL.md",
-               "SCRIPT-CHECKLIST-2-LENGTH.md",
-               "SCRIPT-CHECKLIST-2B-PAUSE.md", "SCRIPT-CHECKLIST-3-DROPDOWNS.md",
-               "SCRIPT-CHECKLIST-4-VOICE.md", "SCRIPT-CHECKLIST-4B-BANNED-WORDS.md",
-               "SCRIPT-CHECKLIST-5-FORMAT-AND-GATE.md",
-               # The AT book, a rule file of the same router since o9:D71 (2026-10-05).
-               "SCRIPT-CHECKLIST-AT.md", "SCRIPT-CHECKLIST-AT-B-NIGHT-RAMPS-BREATH.md",
-               # Files 0, 6, 6B and 7, rule files of the same router that this list missed
-               # when they were made (2026-08-17 to 2026-10-02); added for o9 W156.
-               # test_rule_file_lists.py fails when a rule file the router check reads is
-               # missing here.
-               "SCRIPT-CHECKLIST-0-UNIVERSAL.md", "SCRIPT-CHECKLIST-6-REFERENT-AND-STRENGTH.md",
-               "SCRIPT-CHECKLIST-6B-STRENGTH-AND-REACH.md", "SCRIPT-CHECKLIST-7-ARC.md"}
+               "WRITING-RULES-TO-THE HUMAN.md",
+               
+               
+               
+               
+               
+               
+               }
 
 # ⛔ LAUNCH INPUTS, NOT KNOWLEDGE - the same exclusion knowledge_gate already applies, which
 # this file failed to inherit. A lane seed names every platform its lane will touch, so it
@@ -290,11 +270,10 @@ EPHEMERAL = re.compile(r"(-SEED|-PROMPT|-bootstrap|-bridge|-PREVIEW|-SKILL-DRAFT
                        r"\.md$", re.I)
 
 # ⛔ A GENERATED VIEW IS THE MAP, NOT THE TERRITORY - bug 4 arriving from a new direction.
-# `docs/knowledge/*.md` are rendered by knowledge_pages.py from the artifacts they LIST.
-# Measured 2026-08-17 on commerce.md: it detects one payment vendor six times, and every hit is
-# either a linked document's FILENAME or its own "Searched as" alias row. Not one of them is
-# the page being about a vendor - it is a directory OF vendor docs, and its own banner says
-# "route to the SOURCES, not to this page". Tagging it puts a middleman in front of the answer.
+# `docs/knowledge/*.md` are rendered by knowledge_pages.py from the artifacts they LIST. Not one
+# of them is the page being about a vendor - it is a directory OF vendor docs, and its own
+# banner says "route to the SOURCES, not to this page". Tagging it puts a middleman in front of
+# the answer.
 #
 # ⭐ And the second, independent reason: render() rebuilds these files from scratch, so a facet
 # written here is erased on the next --write while the audit keeps demanding it - a backlog
@@ -308,11 +287,9 @@ GENERATED = re.compile(r"<!--\s*GENERATED by\s")
 def _docs():
     """The corpus the FACET rule governs - deliberately narrower than route.py's.
 
-    ⛔ The first version scanned everything and reported 842 documents 'missing a facet they
-    plainly need', most of them voice-note research entries that mention Google once per
-    paragraph and are not process docs at all. A gate whose refusals are mostly wrong gets
-    switched off, and takes the real ones with it - the same measurement that stopped the
-    reachability gate from demanding an index row for lane seeds.
+    A gate whose refusals are mostly wrong gets switched off, and takes the real ones with
+    it - the same measurement that stopped the reachability gate from demanding an index row
+    for lane seeds.
 
     Facets are for docs a session will LOOK SOMETHING UP IN. Research logs are read forward,
     not searched sideways.
@@ -322,7 +299,7 @@ def _docs():
     keep = [p for p in docs + mem
             if p.name not in NEVER_FACET and not EPHEMERAL.search(p.name)
             and not p.name.startswith("ORCHESTRATOR-DECISIONS-")
-            and "voice_notes" not in p.parts and "research_log" not in p.parts]
+            and "captured_notes" not in p.parts and "research_log" not in p.parts]
     # Read to exclude generated views. Costs one open per doc; the alternative is a path rule
     # that would go stale the moment a generated page is written anywhere else.
     out = []

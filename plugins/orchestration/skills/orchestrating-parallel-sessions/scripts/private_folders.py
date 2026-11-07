@@ -3,16 +3,14 @@
 
 <!-- subject: agent-security -->
 
-<!-- route-tags: private folders app-feedback email_briefing outsider text never index never
+<!-- route-tags: private folders private-feedback private_inbox outsider text never index never
      name generator exclusion dev-docs-index knowledge pages land step -->
 
-ONE DEFINITION (o9:W149 review fix 2, ruled by o9 on 2026-10-03). Files under a folder named
-`app-feedback` (the app's feedback form) or `email_briefing` (the morning email briefing) hold
-text that whoever emailed the human or filled in the form wrote. The lane rules say no session reads
-them, and that text must never reach a file on origin/main. Before this module, neither index
-generator excluded them: dev_docs_index.py walked every folder of the tree and the memory store,
-and knowledge_pages.py read every `.md` corpus.py lists, which includes the whole memory store.
-The nightly land step only hid such a file's NAME while its content could still land.
+The lane rules say no session reads them, and that text must never reach a file on origin/main.
+Before this module, neither index generator excluded them: dev_docs_index.py walked every folder
+of the tree and the memory store, and knowledge_pages.py read every `.md` corpus.py lists, which
+includes the whole memory store. The nightly land step only hid such a file's NAME while its
+content could still land.
 
 Who reads these names, matched by folder NAME wherever the folder sits, in any letter case:
   - dev_docs_index.py      SKIP_DIRS, and its walk prunes either name before descending
@@ -21,21 +19,15 @@ Who reads these names, matched by folder NAME wherever the folder sits, in any l
                            under either folder, and counts such files instead of naming them
   - check_script.py        neither folder walk (discover, discover_corpus) descends into
                            or starts inside either folder, and main() refuses a file in
-                           one without opening it (o9 W152, lane o9L1065)
-  - check_checklist_router.py   the waypoint check's walk prunes either name (o9 W152)
   - training_header.py     the --all walk (walk_artifacts) starts in, enters and follows a link
                            into neither folder, and a file named on its command line in one is
-                           not opened (o9 W152, lane o9L1118)
   - dev_docs_index.py      also starts in no private folder, enters no junction or symbolic
-                           link and reads no linked file (o9 W152, lane o9L1118)
-corpus.py and route.py do not use it yet; o9 decides those separately.
 
-A FOLDER HAS OTHER NAMES ON WINDOWS (o9 W152, lane o9L1069, after review o9L1067). A junction
-or symbolic link that points at `app-feedback` reaches its files under the link's own name, and
+or symbolic link that points at `private-feedback` reaches its files under the link's own name, and
 the folder itself also answers to its 8.3 short name (`APP-FE~1`) and to
-`app-feedback::$INDEX_ALLOCATION`. A test of the names in a path misses all three. So:
+`private-feedback::$INDEX_ALLOCATION`. A test of the names in a path misses all three. So:
   - in_private_folder(path) tests the path as given and the path os.path.realpath() resolves,
-    which turns each of the three back into `app-feedback`. check_script.py uses it for the
+    which turns each of the three back into `private-feedback`. check_script.py uses it for the
     start folder of both walks and for a file named on its command line, and
     check_checklist_router.py for the start folder of the waypoint check's walk.
   - is_link(path) is True for a junction or a symbolic link. Those walks do not follow one:
@@ -51,7 +43,7 @@ import os
 import re
 
 #: The folder names. Lower case; every comparison lower-cases the other side.
-NAMES = ("app-feedback", "email_briefing")
+NAMES = ("private-feedback", "private_inbox")
 
 _LOWER = frozenset(NAMES)
 _SPLIT = re.compile(r"[\\/]+")
@@ -64,8 +56,8 @@ def is_private_name(name):
 
 def has_private_part(path):
     """True when any FOLDER in `path` (str, bytes or path-like; either slash) has a private
-    name. The last part is the file's own name and is not a folder: `app-feedback.md` is not
-    private, `app-feedback/x.md` is."""
+    name. The last part is the file's own name and is not a folder: `private-feedback.md` is not
+    private, `private-feedback/x.md` is."""
     text = os.fsdecode(os.fspath(path)) if not isinstance(path, str) else path
     parts = [p for p in _SPLIT.split(text) if p]
     return any(is_private_name(p) for p in parts[:-1])
@@ -84,7 +76,7 @@ def in_private_folder(path):
     short name and `<folder>::$INDEX_ALLOCATION` (see the module docstring). realpath() asks the
     file system for the path's final name: it reads no file and lists no folder. A path it cannot
     resolve counts as private, so a caller never opens a file this could not check. Unlike
-    has_private_part(), the last part counts too: a walk's start folder named `app-feedback` is
+    has_private_part(), the last part counts too: a walk's start folder named `private-feedback` is
     private."""
     try:
         text = os.fsdecode(os.fspath(path))

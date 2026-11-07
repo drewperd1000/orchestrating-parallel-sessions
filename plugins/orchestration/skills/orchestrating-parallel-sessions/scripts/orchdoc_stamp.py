@@ -3,19 +3,16 @@
 
 <!-- subject: orchestration -->
 
-THE FOOTGUN (the human named it, 2026-08-06)
 ---------------------------------------
-o9 wrote 22 attestation timestamps as `2026-08-07T02:30:00-07:00`. Today was the 6th. The
 first diagnosis - "the times were invented" - was WRONG, and the correction matters because
 it changes the fix:
 
     written : 2026-08-07T02:30:00-07:00      <- value from a UTC clock, LABELLED as PDT
     actual  : 2026-08-06T19:30:00-07:00      <- the same instant, correctly labelled
 
-Converted as UTC, every one of those stamps lands inside the real session window. The
-VALUES were right. The OFFSET LABEL was wrong, and because UTC is 7 hours ahead of PDT,
-anything after 17:00 local crosses midnight UTC and flips the DATE too. At 22:34 PDT on
-2026-08-06 it is already 05:34 on 2026-08-07 in UTC.
+Converted as UTC, every one of those stamps lands inside the real session window. The VALUES
+were right. The OFFSET LABEL was wrong, and because UTC is 7 hours ahead of PDT, anything after
+17:00 local crosses midnight UTC and flips the DATE too.
 
 ⭐ That is why the error was invisible: the timestamps were well-formed, precise, internally
 consistent, and monotonically increasing. They satisfied E-AMBIGUOUSDATE, which asks for
@@ -29,7 +26,6 @@ reports, through one function - so the value and its label can never disagree, b
 nothing ever chooses them separately.
 
     python orchdoc_stamp.py            -> 2026-08-06T22:41:03-07:00
-    python orchdoc_stamp.py --human    -> 06-Aug-2026 22:41 PDT
     python orchdoc_stamp.py --utc      -> 2026-08-06T22:41:03-07:00 (2026-08-07T05:41:03Z)
     python orchdoc_stamp.py --check "2026-08-07T02:30:00-07:00"
 
@@ -137,9 +133,8 @@ def main():
         # worst possible place for the wrong form to live: the generator whose entire job is to
         # make compliance the path of least effort was producing non-compliant output.
         #
-        # the human's rule is three marks - green checkbox, struck through, GREYED OUT. Tildes give
-        # exactly one of them. `- [x]` renders all three natively, which is why he said it is
-        # "most easily accomplished with checkbox markdown format".
+        # the human's rule is three marks - green checkbox, struck through, GREYED OUT. Tildes
+        # give exactly one of them.
         #
         # ⭐ AND THE GENERATOR WAS FIGHTING THE FIXER. `orchdoc.py strike` STRIPS redundant
         # tildes when it normalises a line, so this command wrote something the other command

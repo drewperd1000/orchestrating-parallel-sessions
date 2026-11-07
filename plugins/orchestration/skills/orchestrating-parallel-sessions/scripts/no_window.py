@@ -2,25 +2,15 @@
 
 <!-- subject: claude-tooling -->
 
-⛔ WHY THIS EXISTS (the human, via o1, 2026-09-24): console windows kept jumping in front of his
-work, in bursts of 5-20 plus single pop-ups, starting 09-23. The cause: the OrchDoc reader
-is launched by `ensure_local_servers.py` with DETACHED_PROCESS, so it has NO console. On
-09-23 the reader began running `git` on page loads (the script corpus and its authored
-dates). A console program started from a process with no console cannot inherit one, so
-Windows gives it a FRESH console, which is a visible window that takes the foreground - one
-per git call, a burst per page load. `morning_self_heal.py` hit and documented the same bug
-on 2026-07-16.
+The cause: the OrchDoc reader is launched by `ensure_local_servers.py` with DETACHED_PROCESS, so
+it has NO console. On 09-23 the reader began running `git` on page loads (the script corpus and
+its authored dates). A console program started from a process with no console cannot inherit
+one, so Windows gives it a FRESH console, which is a visible window that takes the foreground -
+one per git call, a burst per page load.
 
-⭐ CREATE_NO_WINDOW gives the child a console with no window, and the attribute is inherited
-by the child's whole subtree (measured by morning_self_heal on 2026-07-16).
-
-⛔ BUT IT IS NOT HARMLESS ON EVERY LAUNCH, WHICH THIS FILE SAID UNTIL 2026-09-24. The child
-gets a NEW console, and a child whose output is not redirected writes to that console, where
-nobody can read it. Measured 2026-09-24 from a process whose stdout was a pipe, and again
-with stdout sent to a file: `print('HELLO from child')` arrived with no flag and vanished
-with CREATE_NO_WINDOW, in both cases. So an unconditional flag on a call like
-`subprocess.run(["git", "push"])` would hide git's messages from whoever ran the script in a
-terminal.
+The child gets a NEW console, and a child whose output is not redirected writes to that console,
+where nobody can read it. So an unconditional flag on a call like `subprocess.run(["git",
+"push"])` would hide git's messages from whoever ran the script in a terminal.
 
 ⭐ THAT IS WHY `flags()` IS CONDITIONAL. It adds CREATE_NO_WINDOW only when THIS process has
 no console. With a console present, a child shares it and cannot open a window of its own,
@@ -28,8 +18,6 @@ so passing nothing is already correct and `flags()` returns exactly what was pas
 Without a console - a DETACHED process, a pythonw process, a GUI app's child - an
 un-flagged console child gets a fresh VISIBLE console, and that is the only case where the
 flag changes anything.
-
-Measured 2026-09-24 with a child writing GetConsoleCP() and GetConsoleWindow() to a file:
 
     started with            GetConsoleCP   GetConsoleWindow
     no flags                     437              0          (shares the parent's console)
@@ -65,13 +53,11 @@ not DETACHED_PROCESS - see ensure_local_servers.py.
             return extra
 
 The fallback returns `extra` unchanged, which is exactly what those launches did before the
-2026-09-24 sweep - so a missing no_window.py costs the protection, never the tool. A script
 in a SUBFOLDER of .shared/scripts must first append the parent folder to sys.path, or the
 import always fails and the fallback silently becomes the behaviour.
 
 A Windows SCHEDULED TASK is outside everything above: Task Scheduler starts a console program
-with a visible window of its own before any of this code runs. Its action must go through
-`pythonw.exe run_hidden.py [--log PATH] -- <program> <args>` (o1:D45, 2026-09-24).
+with a visible window of its own before any of this code runs.
 """
 import os
 import subprocess

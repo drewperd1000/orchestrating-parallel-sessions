@@ -3,9 +3,6 @@
 
 <!-- subject: orchestration -->
 
-WHY IT EXISTS (o9, 2026-09-25). The human used 78% of a week's Claude usage in 36 hours while the
-orchestrators worked through every open item, and he had no view of WHAT got done. This lists
-each completed thing as one line with its OrchDoc id, newest first, so he can click through.
 It costs no Claude usage to run: every item is computed from `git log` and the doc text.
 
 WHAT COUNTS AS AN ITEM. Every non-merge commit reachable from the ref that changed an
@@ -22,19 +19,13 @@ changes nothing that is keyed and adds no item. A box ticked in commit A and mov
 appears once, at A. A box whose text is re-worded after it was already ticked (a continuation
 line added, a typo fixed) is paired with its old ticked version and adds nothing.
 
-THE PARSER IS orchdoc.py's, like the Reader's. Where an entry begins, its id (including the
-archived `_(was W12 - RESOLVED)_` heading form), its status and which lines are inside a code
-fence all come from `orchdoc.parse_entries`, `orchdoc.status_of` and `orchdoc.scan_structure`.
+THE PARSER IS orchdoc.py's, like the Reader's.
 
-WHICH REF: `origin/main`, with NO fetch. Measured 2026-09-25 over the 276 OrchDoc commits of
-the previous 48 hours: `origin/main` in the shared repo received every one of them within a
-median 3 s (max 30 s) of its commit time, because 396 of its last 400 reflog updates were
-"update by push" from this machine - every session pushes from here, and a push moves the
-remote-tracking ref. The shared checkout's local `main` received the same commits with a
-median 35 s but a 90th percentile of 58 minutes and a maximum of 22 hours, because only
-`deliver.py` advances it and the Reader's own script saves bypass it (it was 3 commits behind
-when measured). A `git fetch` costs about 1.7 s and writes into the shared .git; it would
-only add commits pushed from another machine, and none of the 276 arrived that way.
+WHICH REF: `origin/main`, with NO fetch. The shared checkout's local `main` received the same
+commits with a median 35 s but a 90th percentile of 58 minutes and a maximum of 22 hours,
+because only `deliver.py` advances it and the Reader's own script saves bypass it (it was 3
+commits behind when measured). A `git fetch` costs about 1.7 s and writes into the shared .git;
+it would only add commits pushed from another machine, and none of the 276 arrived that way.
 
 CACHE. A commit's diff never changes, so its items are cached per commit hash in
 `$DONE_FEED_STATE_DIR/cache.json` (default `~/.claude/state/done-feed/`). A refresh only

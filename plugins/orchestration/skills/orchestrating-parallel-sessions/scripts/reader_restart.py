@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""o9:W195 - the live OrchDoc Reader restarts itself onto new code.
-
+"""
 <!-- subject: orchestration -->
 
-WHY. The Reader loads its code once. On 2026-10-11 it ran from 00:04 PT, the script-link code
-landed on main at 13:55 PT, and the human's script links failed ("not a script id this reader
-issues") until someone restarted it by hand at 15:52. The restarted process then loaded the old
-training_header.py, which o10:W242 changed a few minutes later.
+WHY. The Reader loads its code once.
 
 DESIGN (the simplest that is reliable). The Reader watches the files it runs and restarts itself
 when one changes. Not deliver.py: deliver is only one way main's files change (a hand `git pull`,

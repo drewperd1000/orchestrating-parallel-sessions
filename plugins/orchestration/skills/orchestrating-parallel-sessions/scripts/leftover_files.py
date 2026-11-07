@@ -6,12 +6,9 @@
 <!-- route-tags: leftover leftovers untracked deleted moved renamed deliver never deletes
      generator dev-docs-index knowledge-pages index-regen nightly landing origin main history -->
 
-o9:W149, ruled by o9 on 2026-10-03 at about 17:50 PT, on the must-fix lane o9L1027 found in the
-nightly landing (land_generated_indexes.py). deliver.py writes files and never deletes them, so
-when a session deletes or moves a marked doc on origin/main, the old file stays in the main
-checkout as an untracked file. The generators read the disk, so they listed it again: that
-night's commit put back the row the session removed, and a moved doc got two rows, one at a
-path origin/main no longer has. The row count went up, so the shrink guard did not fire.
+The generators read the disk, so they listed it again: that night's commit put back the row the
+session removed, and a moved doc got two rows, one at a path origin/main no longer has. The row
+count went up, so the shrink guard did not fire.
 
 THE TEST. A file is a LEFTOVER of `base` in `repo` when all three hold:
   1. it is in the repo's own tree: no folder between the repo's top and the file holds a
@@ -49,8 +46,7 @@ import private_folders  # the folders outsiders write, ONE definition
 
 #: What a plain run checks against: the ref the nightly land step pins as its base.
 PLAIN_BASE = "refs/remotes/origin/main"
-#: Seconds for each git call. Measured 2026-10-03 on this workspace's 4,757 commits: the
-#: deletion query took 0.2 s.
+# : Seconds for each git call.
 TIMEOUT = 60
 #: Paths per `git log`, so its command line stays far below Windows' 32,767 characters.
 BATCH = 100

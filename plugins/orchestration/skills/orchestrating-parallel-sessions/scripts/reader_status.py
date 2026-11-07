@@ -1,10 +1,5 @@
-"""the human's "Done" and "Superseded" buttons in the OrchDoc Reader (o9L1328).
-
+"""
 <!-- subject: orchestration -->
-
-The human, 2026-10-15: *"Add an option to the Orchdoc Reader for every Section 2 and 3 item that allows
-me to directly mark it as 'Done' or 'Superseded'. This will allow me to directly handle items that
-I know are done/old/stale without using tokens."*
 
 A click runs `orchdoc.py resolve --queue-landing --json` (no model call anywhere). That is the
 same edit `resolve` makes (`orchdoc.apply_resolve`), and the Reader's landing queue lands it, as
@@ -25,9 +20,10 @@ THE ENTRY LEAVES THE LIVE SECTION, as `orchdoc.py archive` would move it. A term
 in §2 or §3 is E-DONEINACTIVE, which blocks the next `check`; `commit` runs `archive` on the
 owner's own landing, but the Reader's landing does not, so the same move is made here, with the
 generated plate and index brought up to date as `archive` does. An entry with an unfinished
-sub-item stays where it is (the human's D5 ruling, the same hold `archive` applies).
+sub-item stays where it is (the rule, the same hold `archive` applies).
 """
 import difflib
+import os
 import re
 from datetime import datetime
 
@@ -65,8 +61,8 @@ def clean_reason(reason):
 
 
 def ruling_text(choice, reason="", now=None):
-    """`Marked Done by the human in the OrchDoc Reader at 14:05 PT. <reason>`. The time is this
-    computer's local time, which is Pacific; never UTC."""
+    """<reason>`. The time is this computer's local time, which is Pacific; never UTC.
+    """
     now = now or datetime.now()
     text = "Marked %s by the human in the OrchDoc Reader at %s PT." % (LABEL_FOR[choice],
                                                                    now.strftime("%H:%M"))
@@ -77,13 +73,24 @@ def ruling_text(choice, reason="", now=None):
     return text
 
 
-def writer_args(doc_path, eid, choice, reason="", now=None, owner_is_o9=None):
+def is_own_doc(doc_path):
+    """True when the workspace's `.orchdoc-config.json` lists this doc's owner under
+    `reader_own_docs`, so a click in the Reader writes it without `--not-mine`. The setting is
+    empty by default: every click then carries the flag, which is what the ownership guard asks
+    for from a tool that does not know which orchestrator is at the keyboard."""
+    own = os.environ.get("ORCHDOC_READER_OWN_DOCS") or orchdoc._config_get("reader_own_docs") or ()
+    if isinstance(own, str):
+        own = [o.strip() for o in own.split(",")]
+    return orchdoc.doc_owner_id(doc_path) in own
+
+
+def writer_args(doc_path, eid, choice, reason="", now=None, own_doc=None):
     """The `orchdoc.py` arguments (after the interpreter and script) for one click."""
-    if owner_is_o9 is None:
-        owner_is_o9 = orchdoc.doc_owner_id(doc_path) == "o9"
+    if own_doc is None:
+        own_doc = is_own_doc(doc_path)
     args = ["resolve", eid, "--doc", str(doc_path), "--status", STATUS_FOR[choice],
             "--ruling", ruling_text(choice, reason, now), "--depends", DEPENDS]
-    if not owner_is_o9:
+    if not own_doc:
         args.append("--not-mine")
     return args
 

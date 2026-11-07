@@ -2,20 +2,18 @@ r"""MEMORY.md as a GENERATED VIEW - parse, prove, inject, build.
 
 <!-- subject: knowledge-routing -->
 
-    python .shared/scripts/memory_index.py roundtrip   # THE proof: parse -> render -> byte-diff
-    python .shared/scripts/memory_index.py survey      # what the notes carry today
-    python .shared/scripts/memory_index.py inject --limit 5      # dry-run by default
-    python .shared/scripts/memory_index.py inject --limit 5 --write
-    python .shared/scripts/memory_index.py build                 # regenerate from the notes
-    python .shared/scripts/memory_index.py build --codes         # variant B
-    python .shared/scripts/memory_index.py check                 # drift
-    python .shared/scripts/memory_index.py --selftest
+    python <scripts>/memory_index.py roundtrip   # THE proof: parse -> render -> byte-diff
+    python <scripts>/memory_index.py survey      # what the notes carry today
+    python <scripts>/memory_index.py inject --limit 5      # dry-run by default
+    python <scripts>/memory_index.py inject --limit 5 --write
+    python <scripts>/memory_index.py build                 # regenerate from the notes
+    python <scripts>/memory_index.py build --codes         # variant B
+    python <scripts>/memory_index.py check                 # drift
+    python <scripts>/memory_index.py --selftest
 
-WHY THIS EXISTS. The human's rule: an index is a VIEW computed from the artifacts, never a file someone
-appends to. `MEMORY.md` is hand-kept, loads into every session, and is the one artifact whose whole
-value is being complete and current. He approved the mechanism on 2026-08-17 (`o9:D7`) - a numeric
-`memory_index` in frontmatter whose INTEGER part is the group and DECIMAL part the position inside
-it, so a plain sort reproduces order AND nesting. Measured 2026-09-18: 0 of 202 notes carried it.
+WHY THIS EXISTS. The human's rule: an index is a VIEW computed from the artifacts, never a file
+someone appends to. `MEMORY.md` is hand-kept, loads into every session, and is the one artifact
+whose whole value is being complete and current.
 
 =============================================================================
 THE ORDER OF OPERATIONS, AND WHY IT IS THIS ORDER
@@ -28,7 +26,6 @@ verified.
 
 **The row template is what makes that possible.** A row is stored as prose with `{1}`, `{2}` slots:
 
-    - ⭐ [Service Access Guide](service_access_guide.md) - READ FIRST when blocked on creds.
       template: "⭐ {1} - READ FIRST when blocked on creds."
 
     - ⭐✍️ Copy craft: [Idea Vault](a.md) + [NLP](b.md)
@@ -38,13 +35,10 @@ The template lives on the group's FIRST note; each note owns only its own title 
 row's prose has exactly one home, and rendering a code instead of a filename (variant B) is a
 change to one function.
 
-⛔ **A NOTE CAN APPEAR IN MORE THAN ONE ROW, WITH A DIFFERENT TITLE EACH TIME - found by running
-`survey` before writing anything, which is exactly why that step exists.**
-`pwa_migrations_manual_apply.md` is *"migrations"* in row 3 and *"§2"* in row 5;
-`backblaze_b2_cli.md` appears in row 3 and again in row 85. A scalar `memory_index` cannot express
-that, and a design assuming one-note-one-row would have silently dropped one of each pair. **So the
-field is a JSON LIST of occurrences** - `[{"at": "3.1", "title": "...", "row": "<template>"}]`,
-with `row` present only where that note holds position 1.
+A scalar `memory_index` cannot express that, and a design assuming one-note-one-row would have
+silently dropped one of each pair. **So the field is a JSON LIST of occurrences** - `[{"at":
+"3.1", "title": "...", "row": "<template>"}]`, with `row` present only where that note holds
+position 1.
 
 =============================================================================
 ⛔ WHAT THIS DOES NOT DO - stated because a silent limit is the defect
@@ -94,52 +88,30 @@ ROW = re.compile(r"^-\s(.*)$")
 # MEMORY.md before this conversion began - the final hand-kept version. It lives in git where the
 # thing being checked cannot edit it. Move this forward deliberately, never to make a check pass.
 BASELINE_REF = "1d58289"
-# Moved 2026-09-18 from 173c282, deliberately and after looking: o9 added one row
-# ("HOOKS run the MAIN checkout, not your worktree"). `verify-titles` reported 1 ADDED, 0 CHANGED,
-# 0 REMOVED - a new note being indexed, not a word drifting.
+# `verify-titles` reported 1 ADDED, 0 CHANGED, 0 REMOVED - a new note being indexed, not a word
+# drifting.
 #
-# ⛔ THE OLD RULE HERE WAS BACKWARDS AND IT BLOCKED A CORRECT CHANGE. It read "move this
-# forward only after reading a CHANGED count of zero." A CHANGED row is the ONLY thing that ever
-# needs a human to look at it - so that rule permitted the move exactly when there was nothing to
-# approve, and forbade it exactly when someone had looked and approved. o4 hit it on 2026-09-19:
-# they corrected a row that was teaching a retracted number, read CHANGED 1, correctly refused to
-# move the pin on the rule as written, and had to put it on the human's plate as o9:D41 - a decision
-# about a constant in a script he will never open.
+# ⛔ THE OLD RULE HERE WAS BACKWARDS AND IT BLOCKED A CORRECT CHANGE.
 #
 # ⭐ THE RULE, RESTATED: move this forward only after READING each CHANGED row and naming
 # here why it is correct. That is what every move above actually did; the old phrasing described
 # the easy case and accidentally outlawed the real one. "Never to make a check pass" still holds
 # and is the thing the naming enforces - a reason you cannot write is a move you should not make.
 #
-# Moved 2026-09-19 from 0a780c9 to c01c064. ONE changed row, read and named:
-# `pwa-promote-scripts-tests` went from "exactly 3 named tests expected" to "COUNT THE NAMES, do
-# not assume 3 (measured 2 on 2026-09-18)" - the index was teaching the exact count its own note
-# had retracted, after o10 repeated the wrong one into six lane seeds in a day. The row is right
-# and the baseline was wrong. `check --live` is green either side of the move.
+# The row is right and the baseline was wrong. `check --live` is green either side of the move.
 #
-# Moved 2026-10-30 from c01c064 to 00e133e (lane o1L301, o1:T24, the human: "Efficiency rules. Do it").
 # Against c01c064 the list was 24 ADDED, 1 REMOVED, 2 CHANGED, every row read:
-#   - 24 ADDED: new notes indexed between 2026-09-19 and 2026-10-13, each with its own note file.
-#   - REMOVED `todo_spatial_pan_tab.md`: de-indexed on purpose 2026-09-21 (o4) because the feature
 #     shipped; the row is in Memory2.md line 66 with that reason.
-#   - CHANGED `google_sheet_feature_tracker.md` "Google Sheet Feature Tracker" -> "Feature Tracker
-#     (generated)": matches the note's own name ("GENERATED from the code; the Google Sheet is the
-#     output"), changed in b02185c (o10:D70).
-#   - CHANGED `pwa_promote_scripts_tests_fail_in_worktrees.md` "...fail in worktrees by name" ->
 #     "...fail LOCALLY by name (worktree and main checkout)": matches the note's description,
-#     measured in the main checkout 2026-09-23 (c58d488).
-# 00e133e is the LAST commit whose MEMORY.md this command can match: from 4320fe9 (2026-10-14) on,
 # MEMORY.md holds hand rows CARRIED by `build` (`hand_rows`), and this command compares against
 # `collect_from_notes()` alone, so every later commit reports each carried row as REMOVED. One
-# CHANGED row stays and is intended: `feedback_key_rotation_one_command.md` "Key rotation = ONE
-# command for the human" -> "Key rotation = the SESSION does ALL of it", the human's ruling of 2026-10-22,
 # matching the note's description (c09d0da).
 #
-# Moved 2026-10-30 from 00e133e to 1d58289 (lane o1L304, o1:W42). The limit above is fixed:
-# `verify-titles` now merges the carried hand rows the same way `build` and `check --live` do.
-# Before the fix, against 1d58289: 0 ADDED, 17 REMOVED, 0 CHANGED, and all 17 REMOVED were hand
-# rows still present in that commit's MEMORY.md. After the fix: 218 links each side, 0 ADDED,
-# 0 REMOVED, 0 CHANGED. Nothing to name; the move only takes in rows added since 00e133e.
+# The limit above is fixed: `verify-titles` now merges the carried hand rows the same way
+# `build` and `check --live` do. Before the fix, against 1d58289: 0 ADDED, 17 REMOVED, 0
+# CHANGED, and all 17 REMOVED were hand rows still present in that commit's MEMORY.md. After the
+# fix: 218 links each side, 0 ADDED, 0 REMOVED, 0 CHANGED. Nothing to name; the move only takes
+# in rows added since 00e133e.
 
 # ⛔ THE ONE THING WITH NO BASELINE ANYWHERE. Hooks are AUTHORED and appear nowhere in the
 # hand-kept MEMORY.md, so nothing can reconstruct one that goes missing - and the near-miss was
@@ -148,12 +120,8 @@ BASELINE_REF = "1d58289"
 # a run pass.
 EXPECTED_HOOKS = 46
 # HISTORY OF THIS PIN, newest last. Every move names the exact hook and the reason.
-#   44 -> 43  2026-09-18, cold-store round. The guard fired; the missing hook was "11 Clarity
-#             features scored against our needs", on `clarity_feature_evaluation.md`, a note the human
 #             asked to cold-store. It left WITH its note - a removal, not a loss. ⛔ Verified from
 #             git BEFORE lowering, which is the only acceptable reason to lower it.
-#   43 -> 46  2026-09-18, the human's ruling on o9:D39(a). Three parked notes gained index rows -
-#             `todo_spatial_pan_tab`, `todo_variant_archive`, `post_launch_audio_value_adds` -
 #             each with its own hook. ⭐ The guard reported the RISE as a note rather than a
 #             failure, which is the right asymmetry: hooks appearing is normal, hooks vanishing
 #             is not.
@@ -196,12 +164,10 @@ CODE_DIR = "m"          # short on purpose: it is repeated once per link
 def render_link(title, target, code=None, hook=None, style="path"):
     """style only matters when `code` is set.
 
-    ⭐ "path" IS THE DEFAULT ON PURPOSE, AND IT IS 890 BYTES WORSE THAN "bare". Measured
-    2026-09-18 on the live 106 rows: bare `[Title][24]` is 15,655 bytes, `[Title](m/24.md)` is
-    16,545. The extra 890 buys away the entire resolution mechanism:
+    ⭐ "path" IS THE DEFAULT ON PURPOSE, AND IT IS 890 BYTES WORSE THAN "bare". The extra 890
+    buys away the entire resolution mechanism:
 
       bare  - needs a CLAUDE.md line AND/OR a PreToolUse hook, both edits to the human's config, and
-              the sealed test measured 1 agent in 6 following a code unaided. D30's security
               finding also says the instruction cannot live in MEMORY.md, because content telling
               a session to go read another file and trust it is shaped like prompt injection -
               one agent refused on exactly those grounds and was right to.
@@ -515,8 +481,6 @@ def fm_set(fm, key, value):
     return fm.rstrip(NL) + NL + line
 
 
-# --------------------------------------------------------------------------- the index field
-# ⛔ A MARKER'S SHAPE IS A CONTRACT BETWEEN EVERY TOOL THAT READS IT (o9 W149 box 8, 2026-10-03).
 # When the Write tool saves a memory note it rewrites the frontmatter: keys it does not own move
 # under `metadata:`, and the one-line JSON value of `memory_index` becomes a YAML block list:
 #
@@ -528,10 +492,9 @@ def fm_set(fm, key, value):
 #           row: "⭐ Recovery/backup: {1} (CANONICAL 10-step) + {2}."
 #           order: 87
 #
-# The memory repo's history holds 7 notes saved that way, 2026-09-21 to 2026-09-28 (commit db7d3ac
-# is one). This file read only a top-level `memory_index:` line, so such a note got no MEMORY.md
-# row until someone moved the line back by hand, and the knowledge gate then refused it as a note
-# no index reaches.
+# This file read only a top-level `memory_index:` line, so such a note got no MEMORY.md row
+# until someone moved the line back by hand, and the knowledge gate then refused it as a note no
+# index reaches.
 #
 # ⭐ ONE READER AND ONE WRITER, HERE. `read_index` reads either place; `fm_set_index` writes the
 # top-level line and removes a nested copy, so a note never carries two. Every command in this
@@ -821,12 +784,11 @@ class _Yaml(object):
 
 _META_LINE = re.compile(r"^metadata:[ \t]*(#.*)?$")
 _INDEX_LINE = re.compile(r"^( *)" + INDEX_KEY + r"[ \t]*:")
-# The key anywhere else - deeper, quoted, or inside a flow mapping. Only used to report a shape
-# nobody reads, by `_index_elsewhere`.
-# ⛔ A KEY, NEVER A VALUE (o9L1023). This was one regex matching the words on any line, so a
-# description that mentions `memory_index:` was reported as the field in a shape nobody reads,
-# and so was an empty `memory_index:` line, which the readers before read_index skipped. Either
-# one printed a [warn] line and failed roundtrip's `not problems`.
+# The key anywhere else - deeper, quoted, or inside a flow mapping. This was one regex matching
+# the words on any line, so a description that mentions `memory_index:` was reported as the
+# field in a shape nobody reads, and so was an empty `memory_index:` line, which the readers
+# before read_index skipped. Either one printed a [warn] line and failed roundtrip's `not
+# problems`.
 _INDEX_KEY_LINE = re.compile(r"^[ \t]*(?:-[ \t]+)?([\"']?)" + INDEX_KEY + r"\1[ \t]*:(.*)$")
 _INDEX_FLOW_KEY = re.compile(r"[{,][ \t]*([\"']?)" + INDEX_KEY + r"\1[ \t]*:")
 # A quoted value, where YAML opens one: at a line's start, after `- `, after `: `, or after
@@ -1086,11 +1048,9 @@ SLUG_BAD = re.compile(r"[^a-z0-9]+")
 def row_key(r):
     """A stable name for a row, derived from its own prose.
 
-    ⛔ WHY NOT THE ROW NUMBER. The number is file ORDER. Inserting one row in the middle shifts
-    every later row, so every note after it carries a wrong `at` - about 170 notes rewritten to
-    add one line to the index. Nobody would do that, so the index would go back to being edited by
-    hand, which is the thing this replaces. o9 named it: *"position 1 is not the wrong member, it
-    is the wrong KIND of place."*
+    ⛔ WHY NOT THE ROW NUMBER. The number is file ORDER. Inserting one row in the middle
+    shifts every later row, so every note after it carries a wrong `at` - about 170 notes
+    rewritten to add one line to the index.
 
     ⭐ So identity is a KEY and order is a separate integer. Renumbering moves `order` and never
     touches identity.
@@ -1282,11 +1242,8 @@ def collect_from_notes():
         if rn not in tpl:
             problems.append("row %r has no template (it belongs on the row's first note)" % rn)
             continue
-        # ⛔ THE SLOT COUNT COMES FROM THE TEMPLATE, NEVER FROM THE POSITIONS FOUND.
-        # Measured 2026-09-18 on the first real batch: row 2 has six links, five notes had been
-        # injected, and deriving the expected count from max(found) produced a five-link row that
-        # rendered as a COMPLETE row with one link silently gone. A partial batch must look
-        # partial; it must never look finished and be short.
+        # ⛔ THE SLOT COUNT COMES FROM THE TEMPLATE, NEVER FROM THE POSITIONS FOUND. A partial
+        # batch must look partial; it must never look finished and be short.
         slots = sorted(int(x) for x in set(re.findall(r"\{(\d+)\}", tpl[rn])))
         missing = [p for p in slots if p not in by_row[rn]]
         if missing:
@@ -1306,13 +1263,10 @@ def collect_from_notes():
 def hand_rows(rows, disk_text, table):
     """Rows on disk that no note's `memory_index` builds, whose linked note file exists.
 
-    ⛔ A BUILD MUST NEVER DROP A ROW WHOSE NOTE STILL EXISTS. Rows are built only from note
-    frontmatter, so a row someone added to MEMORY.md by hand (a link to a named note file, no
-    `memory_index` field on the note) was invisible to `build`: the rebuild overwrote the file
-    and the row was gone, and `check --live` then said OK because the file matched its own
-    output (o5, 2026-10-21, 8 rows lost). Such a row is CARRIED: it keeps its text, joins the
-    build, and is coded and styled like any other row. A new note gets the next code from
-    codes.json the same way, so a carried note is treated exactly as a newly indexed one.
+    ⛔ A BUILD MUST NEVER DROP A ROW WHOSE NOTE STILL EXISTS. Such a row is CARRIED: it keeps
+    its text, joins the build, and is coded and styled like any other row. A new note gets
+    the next code from codes.json the same way, so a carried note is treated exactly as a
+    newly indexed one.
 
     Returns [(row, anchor_target)]: row records shaped like collect_from_notes rows, with
     m/<n>.md links resolved back to filenames through the code table; anchor_target is a target
@@ -1354,12 +1308,8 @@ def unlisted_notes(rows):
     """Note files that nothing lists: no built or carried row links them, and Memory2.md does not
     name them.
 
-    ⛔ WHY (o9L1516, 2026-10-30): `build` makes a row only from a note's `memory_index` field, or
-    carries a row somebody already typed into MEMORY.md. A new note with neither (the two notes
-    feedback_tested_copy_always_kept.md and feedback_claim_bank_boundary_is_not_a_ban.md) produced
-    NO row, NO warning and NO drift, so `check --live` said what it always said and the note was
-    never loaded. It must be listed, so a build and `check --live` name it. `rows` is the list a
-    build writes (carried hand rows already merged in). A note named in Memory2.md is parked on
+    It must be listed, so a build and `check --live` name it. `rows` is the list a build
+    writes (carried hand rows already merged in). A note named in Memory2.md is parked on
     purpose and is not reported.
     """
     linked = set(l["target"] for r in rows for l in r["links"])
@@ -1393,7 +1343,6 @@ def merge_hand_rows(rows, extras):
                     at = i + 1
                     break
         # after the hand rows already placed at this spot, so two carried rows keep disk order
-        # (o9L1447: two rows at the top swapped on every build, and check --live never settled)
         while at < len(merged) and merged[at].get("row") == "hand":
             at += 1
         merged.insert(at, r)
@@ -1553,8 +1502,6 @@ def cmd_check(a):
     # ⛔ THE BASELINE HAS TO SURVIVE THE SWITCH. While MEMORY.md is hand-kept it IS the control.
     # The moment the generated view replaces it, comparing against it becomes the generator
     # checking its own output - it passes by construction and reports clean forever.
-    # `--against <ref>` moves the control into git, where the thing being checked cannot edit it.
-    # o9's framing: the switch is the moment every existing control stops applying at once.
     #
     # ⭐ ALIGN BY ORDER, NOT BY ID. A row's identity is a stable KEY and the file has no keys in
     # it, so the only shared coordinate between the notes and the file is position.
@@ -1646,9 +1593,8 @@ def hook_count():
 def cmd_cutover(a):
     """What loses its baseline the moment the generated view replaces MEMORY.md.
 
-    ⭐ o9's question, and it is the right one to ask BEFORE rather than after: the switch is the
-    moment every existing control stops applying at once. This enumerates them and says which
-    survive, so the list is a fact to check rather than a memory to trust.
+    This enumerates them and says which survive, so the list is a fact to check rather than
+    a memory to trust.
     """
     rows, problems = collect_from_notes()
     n_hooks = hook_count()
@@ -1708,10 +1654,10 @@ CODE_PATH_RE = re.compile(r"^" + re.escape(CODE_DIR) + r"/(\d+)\.md$")
 def resolve_at_ref(target, ref, cache):
     """A baseline target may be a CODE PATH. Resolve it back to the note it points at.
 
-    ⛔ THIS IS THE SWITCH BREAKING A CONTROL A SECOND TIME, and I missed it. While the baseline
-    was a pre-switch commit its targets were filenames and comparison worked. The moment the
-    baseline moved PAST the switch its targets became `m/NN.md`, so every link read as changed -
-    a check that can only report drift, which is the exact failure `cutover` was written about.
+    While the baseline was a pre-switch commit its targets were filenames and comparison
+    worked. The moment the baseline moved PAST the switch its targets became `m/NN.md`, so
+    every link read as changed - a check that can only report drift, which is the exact
+    failure `cutover` was written about.
 
     ⭐ The pointer files are versioned too, so the resolution is read from the SAME ref. A
     baseline that resolves itself stays a baseline.
@@ -1742,9 +1688,7 @@ def cmd_verify_titles(a):
     `title` is edited to something incorrect, the row still has the right number of links, the
     round-trip still passes, and the index quietly says the wrong thing.
 
-    Today the original file is the control. **The moment the generated view REPLACES it, that
-    control is gone** - o9 named this as the limit I would otherwise have only written down:
-    *"after it there is no instrument that can find it."*
+    Today the original file is the control.
 
     ⭐ So the control moves into git, where it cannot be edited by the thing it checks. The last
     hand-kept `MEMORY.md` stays at a fixed commit forever, and this compares against that.
@@ -1761,10 +1705,8 @@ def cmd_verify_titles(a):
     want = [(l["title"], resolve_at_ref(l["target"], ref, cache))
             for r in base for l in r["links"]]
     rows, problems = collect_from_notes()
-    # ⛔ COMPARE WHAT A BUILD WRITES, carried hand rows included (see `hand_rows`). Without this
-    # step every hand row in a post-4320fe9 baseline read as REMOVED although it was still in the
-    # file, so no baseline after 00e133e could pass (o1:W42). The carried rows come from the live
-    # MEMORY.md, as `build` and `check --live` take them.
+    # ⛔ COMPARE WHAT A BUILD WRITES, carried hand rows included (see `hand_rows`). The carried
+    # rows come from the live MEMORY.md, as `build` and `check --live` take them.
     try:
         disk_text = io.open(MEMFILE, encoding="utf-8", errors="replace").read()
     except Exception:
@@ -1779,10 +1721,8 @@ def cmd_verify_titles(a):
         print()
         print("[OK] every title and target matches the baseline. No word has drifted.")
         return 0
-    # ⛔ REPORT INSERTIONS AS INSERTIONS. A positional compare turns one added row into "twelve
-    # rows changed", because everything after it shifts - which buries the single fact a human
-    # needs. o9's new row on 2026-09-18 produced exactly that. A sequence diff separates an
-    # ADDED link from a CHANGED one, and only the second is a reason to worry.
+    # ⛔ REPORT INSERTIONS AS INSERTIONS. A sequence diff separates an ADDED link from a CHANGED
+    # one, and only the second is a reason to worry.
     import difflib
     sm = difflib.SequenceMatcher(a=want, b=got, autojunk=False)
     added, removed, changed = [], [], []
@@ -1925,10 +1865,8 @@ def _row_filter(spec):
 def cmd_citations(a):
     """Find `m/NN.md` cited from OUTSIDE the generated index, and say what each points at NOW.
 
-    ⭐ FIXED 2026-10-08 (o1:W27): codes now come from `m/codes.json` and never move or get
-    reused (`assign_codes`), so a citation made after that date keeps its meaning; a removed
-    note's code reads RETIRED. The history below is why, and still explains citations made
-    BEFORE the switch, which may already point somewhere their author did not mean.
+    The history below is why, and still explains citations made BEFORE the switch, which may
+    already point somewhere their author did not mean.
 
     ⛔ THE CODES WERE POSITIONAL. `codes[target] = str(len(codes) + 1)` assigned them by
     first-encounter order, so inserting a note anywhere but the end renumbers every code after
@@ -1936,11 +1874,9 @@ def cmd_citations(a):
     it, a citation is a NUMBER THAT QUIETLY COMES TO MEAN A DIFFERENT NOTE, and nothing breaks:
     the link still resolves, to the wrong thing.
 
-    ⭐ IT HAD ALREADY FIRED WHEN THIS WAS WRITTEN. o1's OrchDoc recorded a sealed test as
-    following `m/138.md` -> `reoon_email_verifier.md` and `m/175.md` ->
-    `feedback_pushover_high_priority_only.md`. One note was later indexed ahead of them, and
-    those two are now 137 and 174. The entry reads as a plain record of what an agent did, and
-    a reader checking it lands on two unrelated notes and concludes the test was misreported.
+    One note was later indexed ahead of them, and those two are now 137 and 174. The entry
+    reads as a plain record of what an agent did, and a reader checking it lands on two
+    unrelated notes and concludes the test was misreported.
 
     ⚠️ AND THE OBVIOUS CHECK MISSES IT. Asking "do these codes still resolve?" answers
     YES for every one of them, forever - that is what made it invisible. The question is whether
@@ -1980,7 +1916,7 @@ def cmd_citations(a):
             cache[code] = target
         print("  %-34s line %-6s m/%s.md -> %s" % (fname, line, code, cache[code]))
     print()
-    print("Codes are stable since 2026-10-08 (m/codes.json). A citation made before then may")
+    print("Codes are stable (m/codes.json). A citation made before they existed may")
     print("already point at another note than its author meant - check it against its text.")
     print("Cite the note FILENAME instead; only the index itself should use codes.")
     return 0
@@ -1999,9 +1935,8 @@ def cmd_hooks(a):
         if want and r["row"] not in want:
             continue
         # ⛔ SKIP A SLOT THE TEMPLATE ALREADY ANNOTATES. The text BETWEEN slots is per-note
-        # signal - "(NEVER force-push)", "(SINGLE ledger)" - and 35 of the 100 multi-link
-        # links already carry one. A hook there duplicates it. Measured 2026-09-18 after a dry
-        # run rendered "never force-push (NEVER force-push)".
+        # signal - "(NEVER force-push)", "(SINGLE ledger)" - and 35 of the 100 multi-link links
+        # already carry one. A hook there duplicates it.
         parts = re.split(r"\{(\d+)\}", r["template"])
         annotated = set()
         for i in range(1, len(parts) - 1, 2):
@@ -2110,7 +2045,6 @@ def selftest():
     if fm_get(fm3, "memory_index") != "4.1" or fm3.count("memory_index") != 1:
         print("[FAIL] fm_set did not replace in place: %r" % fm3)
         ok = False
-    # W149 box 8: the field as the Write tool leaves it, nested under metadata as a YAML list.
     nested = NL.join(["metadata: ", "  node_type: memory", "  memory_index: ",
                       "    - at: k.1", "      title: A", '      row: "x: {1}"', "      order: 3",
                       "  modified: 2026-09-25T21:37:53.419Z"])
@@ -2167,9 +2101,8 @@ def selftest():
     finally:
         globals()["MEMDIR"] = save_dir
 
-    # ⛔ THE TEMPLATE IS THE NEW SINGLE POINT OF TRUST, so a WRONG template must refuse in BOTH
-    # directions - o9's catch. Too few slots must not swallow a note; too many must not render
-    # short. The partial-batch run only ever proved the second.
+    # Too few slots must not swallow a note; too many must not render short. The partial-batch
+    # run only ever proved the second.
     d2 = tempfile.mkdtemp()
     save2 = globals()["MEMDIR"]
     try:
@@ -2249,7 +2182,7 @@ def main():
     p.add_argument("--rows", default="", help="comma list or range, e.g. 2 or 2,3 or 2-9")
     p.add_argument("--write", action="store_true")
     p.add_argument("--budget", type=int, default=84,
-                   help="max hook chars; the 3/4-parity figure from D30")
+                   help="max hook chars; the 3/4-parity figure")
     p = sub.add_parser("verify-codes")
     p.add_argument("--index", required=True, help="a variant-B render")
     p.add_argument("--supplement", required=True, help="its code table")

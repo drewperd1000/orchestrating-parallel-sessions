@@ -1,5 +1,4 @@
-"""the human's priority choice for one entry, written by the OrchDoc Reader's priority menu (o9:W147).
-
+"""
 <!-- subject: orchestration -->
 
 The six choices and their classes are in `priority.py` (NOW A, High B, Medium / Low / Hold for
@@ -16,7 +15,7 @@ import re
 
 import orchdoc
 import priority
-from priority import CHOICES, CHOICE_CLASS, DONT_DO, choice_norm  # noqa: F401 - re-exported
+from priority import CHOICES, CHOICE_CLASS, DONT_DO, choice_norm
 
 DONTDO_NOTE = "_items the human marked Don't do - kept for the record, never run_"
 ARCHIVE_HEAD = "## §99 ARCHIVE"

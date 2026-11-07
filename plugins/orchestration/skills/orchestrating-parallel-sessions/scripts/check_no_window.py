@@ -5,12 +5,9 @@
 <!-- route-tags: console window pop up foreground CREATE_NO_WINDOW creationflags subprocess
      launch invisible hidden detached pre-commit guard no_window os.system -->
 
-⛔ THE HUMAN, 2026-09-24 (via o1): console windows kept jumping in front of his work, in bursts of
-5-20. The cause was found and fixed in de886bf1 - a server started with DETACHED_PROCESS had
-no console, so every `git` it ran got a fresh, visible one. He then asked for this:
-*"build in a requirement that every script or process your tooling creates or launches runs
-invisibly - never in a window that takes over his screen. Make it a check that fails, not only
-a written rule."*
+The cause was found and fixed in de886bf1 - a server started with DETACHED_PROCESS had no
+console, so every `git` it ran got a fresh, visible one. Make it a check that fails, not only a
+written rule."*
 
 WHAT IT REFUSES, per Python file (read with `ast`, so a call inside a string or a comment is
 never counted):
@@ -66,7 +63,7 @@ except Exception:
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 SCOPE = ".shared/scripts/"            # what --staged checks, relative to the repo root
-SKIP_DIRS = {".codesight", "__pycache__"}
+SKIP_DIRS = {".code-graph", "__pycache__"}
 
 LAUNCHERS = {"run", "Popen", "call", "check_call", "check_output"}
 # Launches with no creationflags parameter at all: the only fix is to not use them.

@@ -4,18 +4,10 @@
 <!-- subject: knowledge-routing -->
 <!-- route-tags: browse index cornerstone read hook pretooluse route instead of search -->
 
-The human, 2026-08-17: *"If every cornerstone page opens with 'this page is a browse view; to find
-one thing, run route.py', then it allows the agent to ignore it as a suggestion, not hard-wired
-law."*
+The router trigger in CLAUDE.md failed for the orchestrator who had it loaded. A note authored
+that morning did not fire for its own author that afternoon.
 
-He is right, and it is the same lesson three times over now: a banner at the top of a page is
-PROSE, and prose is optional. The router trigger in CLAUDE.md failed for the orchestrator who
-had it loaded. A note authored that morning did not fire for its own author that afternoon.
-
-⭐ WHAT MAKES THIS ONE DIFFERENT: reading a page is a TOOL CALL, so it passes a chokepoint. o1's
-line - *a guard that fires on an ARTIFACT is mechanisable; a guard that fires on a CLAIM is
-not* - applies here in the agent's favour. "Deciding to browse" is unguardable. "Opening the
-file" is not.
+"Deciding to browse" is unguardable. "Opening the file" is not.
 
 ⛔ IT BLOCKS ONCE, THEN GETS OUT OF THE WAY. Browsing is legitimate - surveying a subject,
 answering "what do we know about X", a human reading. So a refusal that stood forever would be
@@ -106,11 +98,29 @@ def _waved():
     return {k: v for k, v in d.items() if now - v < WINDOW}
 
 
+def _dispatch(payload):
+    """Other guards that ride on THIS hook's registration. 0 allow, 2 block. Fails open.
+
+    ⭐ This hook is already registered on PreToolUse Bash, so a guard dispatched from here
+    needed no settings.json change.
+    """
+    try:
+        # the same cheap reject the module has, before importing it: this runs on every Bash call
+        if "grep" not in str((payload.get("tool_input") or {}).get("command") or ""):
+            return 0
+        import block_whole_tree_grep
+        return 2 if block_whole_tree_grep.run(payload) == 2 else 0
+    except Exception:
+        return 0
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0
+    if _dispatch(payload) == 2:
+        return 2
     path = ""
     for cand in _candidate_paths(payload):
         if BROWSE.search(str(cand).replace("\\", "/")):
@@ -139,7 +149,7 @@ def main():
     print("  If you are looking for something specific, this is faster and searches the",
           file=sys.stderr)
     print("  WHOLE corpus rather than one branch:\n", file=sys.stderr)
-    print("      python .shared/scripts/route.py <the words you would have grepped for>\n",
+    print("      python <scripts>/route.py <the words you would have grepped for>\n",
           file=sys.stderr)
     print("  ⛔ Why it matters: a subject tree can only tell you about the branch you picked.",
           file=sys.stderr)
@@ -166,13 +176,13 @@ def _selftest():
     ]
     PASS = [
         {"tool_input": {"command": "git add docs/knowledge/legal.md"}},
-        {"tool_input": {"command": "python .shared/scripts/knowledge_pages.py --write"}},
+        {"tool_input": {"command": "python <scripts>/knowledge_pages.py --write"}},
         {"tool_input": {"command": "ls docs/knowledge/"}},
         {"tool_input": {"command": "grep -n bipa docs/knowledge/legal.md"}},
         {"tool_input": {"command": "cat README.md"}},
         {"tool_input": {"command": "cat docs/knowledge/CREATE.md"}},
         {"tool_input": {"file_path": "docs/knowledge/CREATE.md"}},
-        {"tool_input": {"file_path": "ORCHESTRATOR-DECISIONS-o9.md"}},
+        {"tool_input": {"file_path": "ORCHESTRATOR-DECISIONS-o99.md"}},
         {"tool_input": {}},
         # \u2b50 THE ONE THAT CAUGHT THE FIRST VERSION, a minute after it was registered:
         # `head -2` at the end of the pipeline supplied the verb, and the path came out of a
@@ -195,7 +205,22 @@ def _selftest():
         if hit:
             bad += 1
             print("  [FAIL] should PASS, would fire on %s: %r" % (hit, p["tool_input"]))
-    print("selftest: %d case(s), %d failure(s)" % (len(FIRE) + len(PASS), bad))
+    # The dispatch: a whole-workspace grep is refused THROUGH this hook, and an ordinary command
+    # is not. `run` is stubbed so the check never writes the real wave-through file.
+    import io
+    import block_whole_tree_grep as wtg
+    real_run, real_stdin = wtg.run, sys.stdin
+    try:
+        for cmd, stub, want in (("grep -rn x .", 2, 2), ("git status", 0, 0)):
+            wtg.run = lambda _p, _rc=stub: _rc
+            sys.stdin = io.StringIO(json.dumps({"tool_input": {"command": cmd}}))
+            got = main()
+            if got != want:
+                bad += 1
+                print("  [FAIL] dispatch: %r returned %s, wanted %s" % (cmd, got, want))
+    finally:
+        wtg.run, sys.stdin = real_run, real_stdin
+    print("selftest: %d case(s), %d failure(s)" % (len(FIRE) + len(PASS) + 2, bad))
     return 1 if bad else 0
 
 

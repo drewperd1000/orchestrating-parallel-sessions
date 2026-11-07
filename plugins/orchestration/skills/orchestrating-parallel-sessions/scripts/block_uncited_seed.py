@@ -4,16 +4,8 @@
 
 <!-- route-tags: seed lane launch hook citation propagation worker prompt -->
 
-THE FINDING THIS IMPLEMENTS (o9L10, the adversarial pass, as its single best unseen idea):
-**the lane-launch junction is interceptable.** Launching a worker is a Bash tool call, so a
-PreToolUse hook can refuse a seed that asserts knowledge without citing where it came from.
-
-THE DAMAGE IT PREVENTS (o10, verbatim): *"an inherited fact repeated into N worker prompts is N
-copies of an unverified claim, and none of them carry their own provenance."* Their bootstrap
-said *"v1 is CURRENT; v2 and v5 are DEPRECATED"*; they propagated it into FOUR lane seeds without
-verifying it, then repeated it to the human - who immediately asked a question the inherited one-liner
-could not answer. **A registry entry has ONE home to correct. Four seeds have four, and the
-author has to remember all four.**
+**A registry entry has ONE home to correct. Four seeds have four, and the author has to remember
+all four.**
 
 ⭐ WHY A HOOK AND NOT A RULE. The only mechanism that demonstrably changes behaviour here is one
 that arrives INSTEAD of the result: `block_python_heredoc.py` stopped two orchestrators seven
@@ -34,9 +26,7 @@ import pathlib
 import re
 import sys
 
-# Paths are RESOLVED, not hardcoded - see workspace_paths.py. A script carrying one
-# machine's absolute path cannot run in a skill, a fresh clone, a worktree or the cloud,
-# which is why none of this shipped anywhere until 2026-08-13.
+# Paths are RESOLVED, not hardcoded - see workspace_paths.py.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from workspace_paths import WS, MEM  # noqa: E402
 
@@ -156,7 +146,7 @@ def main():
     print("and the claim could not answer the first question asked of it.", file=sys.stderr)
     print("", file=sys.stderr)
     print("DO ONE OF THESE - each takes a line:", file=sys.stderr)
-    print("  1. CITE it.  python .shared/scripts/route.py <subject>   then name the artifact",
+    print("  1. CITE it.  python <scripts>/route.py <subject>   then name the artifact",
           file=sys.stderr)
     print("     the fact came from, so the lane can re-read the source rather than trust you.",
           file=sys.stderr)

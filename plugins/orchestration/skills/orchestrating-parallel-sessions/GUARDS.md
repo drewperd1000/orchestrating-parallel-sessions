@@ -238,6 +238,34 @@ the text runs it. No flag reopens the shell, on purpose.
 
 ---
 
+## `git_guard.py` — keeps a test from writing your real repository's git config
+
+**What it refuses.** Once imported, it removes the variables that redirect git (`GIT_DIR`,
+`GIT_INDEX_FILE` and the like) and refuses a `git config` write, or a `git init`, that would reach
+your real repository's config or your global one. The refusal is raised before git starts.
+
+**The failure.** Git sets `GIT_DIR` for a hook, and a script a hook starts passes it on. A test
+that makes a temporary repository and sets a user name in it then writes that name into the real
+repository, because git ignores the folder it was started in when `GIT_DIR` is set.
+
+**When it fires:** make the temporary repository through `sandbox_env.py`, which imports this
+guard, and give each test its own folder.
+
+---
+
+## `block_whole_tree_grep.py` — holds a recursive search over the whole workspace once
+
+**What it refuses.** The first recursive `grep` or `rg` aimed at the workspace root or your home
+folder in a session. The message names the router command to run instead. Sending the same command
+again passes, so the rare search that really needs the whole tree is never stuck.
+
+**The failure.** A search across every worktree and dependency folder runs past the tool's time
+limit and prints nothing, while the router answers the same question in seconds.
+
+**When it fires:** run the router command the message shows, or narrow the search to one folder.
+
+---
+
 ## The pattern underneath all of them
 
 ⭐ **An instrument answering about ITSELF, read as an answer about the world.** It appeared eight

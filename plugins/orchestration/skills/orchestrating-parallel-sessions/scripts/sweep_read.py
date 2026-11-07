@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The ONLY shell command a fresh-eyes sweep lane may run (o9:W76). It reads; it cannot write.
+"""It reads; it cannot write.
 
 <!-- subject: orchestration -->
 
@@ -11,7 +11,7 @@
     python <workspace>/.shared/scripts/sweep_read.py route <terms...>
 
 ⛔ WHY A WRAPPER AND NOT PREFIX RULES. The second review of the sweep (0521fb89) showed that the
-prefix rules `Bash(git log:*)`, `Bash(git show:*)` and `Bash(python .shared/scripts/route.py:*)`
+prefix rules `Bash(git log:*)`, `Bash(git show:*)` and `Bash(python <scripts>/route.py:*)`
 let a lane write files and run code:
   * `git log --output=<file>` and `git show --output=<file>` write any content anywhere - the
     reviewer overwrote a .py file and ran it, and could have planted `.git/hooks/post-commit`,
@@ -21,10 +21,7 @@ let a lane write files and run code:
     the command text while git reads the argument the shell produced.
 
 ⭐ THIS SCRIPT SEES THE ARGUMENTS AFTER THE SHELL HAS JOINED THE QUOTES, so `--outp''ut` arrives
-here as `--output` and is refused. An argument that ABBREVIATES a refused option is refused too:
-`git log` rejects `--outp=` (measured 2026-09-25, rc 128), but git commands built on
-parse-options accept any unambiguous abbreviation, and this check should not depend on which
-parser a subcommand happens to use.
+here as `--output` and is refused.
 
 What it allows, and nothing else:
   * git: the subcommands show, log, ls-tree, merge-base, rev-parse, and `cat-file -p`, run with
@@ -121,10 +118,7 @@ def github_name(repo):
 def known_repos():
     """[(path, "<your-github-user>/<name>")] - every citable repo with a GitHub remote, worktrees left
     out. ONE list for the brief (which names them) and for `gh --repo` (which accepts them).
-
-    A worktree is recognised by its `.git` being a FILE, not by where it sits: measured
-    2026-09-25, `.wt-o10-cta-refund` beside the main checkout was listed as product-app
-    ahead of the real clone, and the brief sent lanes to a stray worktree."""
+    """
     if "known" not in _REPOS:
         out, seen = [], set()
         for r in citable_repos():

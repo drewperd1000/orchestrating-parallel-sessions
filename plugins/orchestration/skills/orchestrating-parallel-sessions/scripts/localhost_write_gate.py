@@ -4,10 +4,7 @@
 <!-- subject: orchestration -->
 <!-- route-tags: localhost server write gate csrf token origin json content-type 127.0.0.1 -->
 
-⛔ `127.0.0.1` IS NOT A SECURITY BOUNDARY. Every page open in the human's browser can make
-requests to a server on his own machine. A localhost server that can only READ is fine; the
-moment one can WRITE - trash mail, send a reply, edit an OrchDoc - it is a thing any website
-he visits can try its luck against.
+⛔ `127.0.0.1` IS NOT A SECURITY BOUNDARY.
 
 ⭐ SO THE POSTURE IS FOUR INDEPENDENT CHECKS AND A REQUEST HAS TO PASS ALL OF THEM. It was
 written for `serve_daily_dashboard.py`, it has a test suite behind it, and this module is that
@@ -95,12 +92,11 @@ def check_request(headers, rfile, token, port, max_body=MAX_BODY, host=HOST, bro
         _drain()
         return None, (403, "refused: the request did not come from this page")
 
-    # o9:W258 (lane o9L1480): `browser_only` adds a fifth check for a server whose writes are
-    # the human's own words (the OrchDoc Reader). A browser sends `Sec-Fetch-Site: same-origin` on a
-    # fetch from the server's own page, and no page script can set or change that header. A
-    # script on this computer (curl, Invoke-WebRequest, requests) sends no such header unless
-    # it is written to, so this stops the plain local POST; it is not a wall against a process
-    # that forges every header, which is why block_live_reader_write.py refuses the command too.
+    # A browser sends `Sec-Fetch-Site: same-origin` on a fetch from the server's own page, and
+    # no page script can set or change that header. A script on this computer (curl,
+    # Invoke-WebRequest, requests) sends no such header unless it is written to, so this stops
+    # the plain local POST; it is not a wall against a process that forges every header, which
+    # is why block_live_reader_write.py refuses the command too.
     if browser_only:
         site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
         if site != "same-origin":

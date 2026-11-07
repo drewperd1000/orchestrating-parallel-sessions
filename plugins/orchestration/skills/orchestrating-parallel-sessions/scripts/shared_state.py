@@ -6,15 +6,11 @@
 <!-- route-tags: shared state global cache mutable cross-session marker autosave stash
      collision audit worktree -->
 
-⛔ the human, 2026-08-18, after one `git stash -u` cost three sessions a day of confusion:
-*"Global caches of just about anything is bound to be dangerous."*
-
-He is right, and `git stash` was not the only one. The dangerous property is narrow and worth
-stating exactly:
+The dangerous property is narrow and worth stating exactly:
 
   ⭐ ONE SESSION WRITES IT, ANOTHER READS IT, AND NEITHER IS TOLD.
 
-That is not the same as "shared". `.shared/secrets/` is shared and safe: it is read-mostly, and a
+That is not the same as "shared". `<your-secrets-folder>/` is shared and safe: it is read-mostly, and a
 write to it is a deliberate act nobody performs by accident. `refs/stash` is shared and unsafe
 because an ordinary local-looking command writes it on your behalf.
 
@@ -39,11 +35,8 @@ except ImportError:  # a partial delivery must not take the tool down
         return extra
 import sys
 
-# ⛔ RECONFIGURE, NEVER REWRAP - this module is now IMPORTED, not only run. Building a new
-# TextIOWrapper around `sys.stdout.buffer` at import time hands the importer a stdout whose
-# underlying buffer is closed when that wrapper is collected: `test_cited_paths.py` died
-# with "I/O operation on closed file" the moment orchdoc.py imported this. `reconfigure`
-# mutates the existing stream and closes nothing.
+# ⛔ RECONFIGURE, NEVER REWRAP - this module is now IMPORTED, not only run. `reconfigure` mutates
+# the existing stream and closes nothing.
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -65,10 +58,8 @@ def main_checkout():
     `__file__`, a script running inside a worktree writes THAT worktree's copy - so the rows
     scatter, and when the worktree is removed they go with it.
 
-    ⭐ Measured 2026-09-21, on the log built to stop estimates being the only evidence: two
-    landings wrote their gate-5 rows into a throwaway worktree and I deleted them with it an
-    hour later. The gate reported success both times. Nothing anywhere said the rows had
-    gone somewhere that would not survive the afternoon.
+    The gate reported success both times. Nothing anywhere said the rows had gone somewhere
+    that would not survive the afternoon.
 
     `git rev-parse --git-common-dir` answers this from any worktree - it names the shared
     `.git`, whose parent is the main tree. Asked with `-C` the script's own directory, so
@@ -93,11 +84,7 @@ def main_checkout():
     return fallback
 
 
-#: Test-isolation overrides. Each is read HERE and nowhere else; unset, production is unchanged.
-#: Measured 2026-09-25 (o9:W92): orchdoc tests run against temp workspaces still appended 15
-#: rows for a throwaway `o901` doc to the shared checkout's gate-refusals.jsonl, because
-#: state_dir() finds the main checkout from THIS file's location, not from the workspace the
-#: caller pointed orchdoc at. A test sets these; see sandbox_env.py.
+# : Test-isolation overrides. A test sets these; see sandbox_env.py.
 SHARED_STATE_ENV = "CLAUDE_SHARED_STATE_DIR"
 HOME_STATE_ENV = "CLAUDE_HOME_STATE_DIR"
 
@@ -153,14 +140,14 @@ def survey():
         "refs/stash", "SILENT" if n_stash else "SILENT (empty)",
         "%d entr(ies), visible from every worktree" % n_stash,
         "ONE ref for the whole repo. `git stash` reads as local and is not. Cost 64 files "
-        "across three sessions on 2026-08-17. GUARDED by block_shared_tree_ops.py."))
+        "across three sessions. GUARDED by block_shared_tree_ops.py."))
 
     auto = [b for b in git("branch", "-r").split("\n") if "autosave/" in b]
     rows.append((
         "autosave/* branches", "SILENT",
         "%d branch(es), force-pushed, self-pruning" % len(auto),
         "⛔ NOT A BACKUP - a rolling net. git_backlog_prune.py deletes them after ~3 days, so "
-        "work living only there is on an invisible countdown. o1 lost 345 lines to exactly this "
+        "work living only there is on an invisible countdown. a session lost 345 lines to exactly this "
         "shape and recovered them by chance. SURFACED by worktrees.py --risk."))
 
     st = home_state_dir()
@@ -186,7 +173,7 @@ def survey():
         "visible in the file."))
 
     rows.append((
-        ".shared/secrets/", "READ-MOSTLY",
+        "<your-secrets-folder>/", "READ-MOSTLY",
         "%s file(s)" % (_count(WS / ".shared" / "secrets") or 0),
         "Shared by design and safe for it: reads are constant, writes are a deliberate human "
         "act. Shared is not the hazard - SILENTLY WRITTEN is."))
@@ -198,12 +185,12 @@ def survey():
         "NOT scope refs/stash, which is why the guard exists."))
 
     rows.append((
-        ".codesight/ graphs", "SCOPED",
+        ".code-graph/ graphs", "SCOPED",
         "per-directory",
         "One graph per scanned root. A stale graph misleads its own readers only."))
 
     rows.append((
-        "~/.gbrain-catalog/", "READ-MOSTLY",
+        "~/.knowledge-catalog/", "READ-MOSTLY",
         "embedding catalog",
         "Rebuilt by a maintenance job; queried read-only by sessions."))
 
@@ -225,7 +212,7 @@ def report():
     print("  %d of %d classified SILENT - a write changes another session with no signal."
           % (len(silent), len(rows)))
     print()
-    print("  ⭐ SHARED IS NOT THE HAZARD. `.shared/secrets/` is shared and safe because writing")
+    print("  ⭐ SHARED IS NOT THE HAZARD. `<your-secrets-folder>/` is shared and safe because writing")
     print("     it is a deliberate act. The hazard is state an ORDINARY-LOOKING command writes")
     print("     on your behalf, which is why every SILENT row above needs a guard or a report,")
     print("     not a note telling people to be careful.")

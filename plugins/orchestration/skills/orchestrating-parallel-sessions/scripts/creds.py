@@ -4,7 +4,6 @@
 
 TWO RECURRING FAILURES, and they are opposite mistakes about the same fact.
 
-  1. "THE MCP IS DOWN, SO I HAVE NO ACCESS."
      Often false, and the agent cannot tell without looking. A static token for the same
      service may be sitting on disk - needing no interactive auth, and working in headless
      runs, cron jobs and subagents where the MCP does not exist at all. `creds list` answers
@@ -41,9 +40,7 @@ a failure is reported as one of:
     NOT-CONFIGURED   no credential here at all. A clean slate, not a failure.
 
 ⭐ THE LAST THREE ARE THE POINT. Only LIKELY-BAD justifies asking the human for anything, and
-collapsing any of the others into it is what manufactures the false report. "I could not
-check", "you never set this up", and "it failed" are three different sentences, and a tool
-that renders them identically will get someone sent to fix something that was never broken.
+collapsing any of the others into it is what manufactures the false report.
 
 ⚠️ THE PROBES BELOW ARE WORKED EXAMPLES, NOT A CLAIM ABOUT YOUR STACK. A different machine has
 different vendors, different scope rules, and possibly nothing yet. What travels is the
@@ -75,7 +72,6 @@ except Exception:
     pass
 
 HERE = pathlib.Path(__file__).resolve().parent
-# The main checkout's secrets folder on any machine (o9 W139); a worktree has none of its own.
 try:
     from workspace_paths import SECRETS_DIR as SECRETS
 except Exception:  # a partial delivery: the folder beside this one, as before
@@ -168,7 +164,7 @@ PROBES = {
 # beside this file defining EXTRA_PROBES / EXTRA_GROUPS to make your own services first-class.
 # The value that travels is the four-outcome model; the vendor list is local by nature.
 try:
-    import creds_local as _local           # noqa: F401
+    import creds_local as _local
     PROBES.update(getattr(_local, "EXTRA_PROBES", {}))
 except Exception:
     _local = None
@@ -231,7 +227,7 @@ def cmd_how(args):
         print("Known: %s" % ", ".join(sorted(PROBES)))
         print()
         print("An absent entry means the correct call has not been WRITTEN DOWN, which is not")
-        print("the same as there being none. Check .shared/secrets/README.md and the memory")
+        print("the same as there being none. Check <your-secrets-folder>/README.md and the memory")
         print("notes before concluding a service is unreachable.")
         return 2
     _fn, fname, note = PROBES[key]

@@ -50,7 +50,7 @@ These are the ones an audit reaches for:
 | `restamp <ID> --doc <id> --because "<what moved>"` | record a re-review, with the bar applied at the write |
 | `resolve <ID> --doc <id> --ruling "<what was decided, by whom>"` | flip a Status in place |
 | `archive --doc <id> --commit` | move finished entries out of the live sections |
-| `priority <ID> --doc <id>` | propose that the human look at an entry first. It always writes the PROPOSED form; his own bare mark outranks it |
+| `priority <ID> --doc <id>` | propose that the human look at an entry first. It always writes the PROPOSED form; the human's own bare mark outranks it |
 | `commit --doc <id> -m "<msg>" --commit` | the only supported way a doc reaches `main`. Without `--commit` it is a dry run, which is how to see the landing-only gates |
 | `selftest` | the built-in fixtures. Run it when a finding looks wrong before assuming the document is |
 
@@ -91,7 +91,6 @@ And the rules the gate now enforces, so none of them can be closed past:
 |---|---|
 | `E-SETTLEDNOTSTRUCK` | a settled sub-item in a LIVE entry is `- [x]` |
 | `E-ALLSUBSDONE` | all sub-items done -> close it and move it to §99 **whole**; never leave it live |
-| `E-IDSHAPE` | ids are PREFIX+NUMBER with the summary in the title - `D7 - pause cues`, not `D-PAUSE` |
 | `E-IDORDER` | numbers run in order within a section, so a reader stops when they arrive |
 
 ### The findings an auditor should expect, and what a clean run is
@@ -116,11 +115,6 @@ exempt it.** Its test is a disjunction: the entry is either MOVING (something wa
 WAITING on something it names. Re-reading an entry is the input to that decision, not an
 outcome of it - one doc restamped a single entry seventeen times in a day without touching its
 subject.
-
-⛔ **`W-DEADCITE` is a defect the tool taught.** `**Depends:** path/to/doc.md#T7` with no
-backticks parses as no citation, so the entry satisfies the has-a-dependency check on the
-strength of its text and then reads as permanently current. Backticks go round the PATH, not
-round the line: **Depends:** `path/to/doc.md#T7`.
 
 ⚠️ **`check` is not the whole gate, and an auditor who only runs `check` will miss two
 classes.** Landing through `orchdoc.py commit` runs further gates over what the landing ADDS -

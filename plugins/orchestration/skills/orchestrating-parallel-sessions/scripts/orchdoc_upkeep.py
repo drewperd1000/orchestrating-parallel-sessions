@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Advisory upkeep checks for OrchDocs, built from o8's W-sweep lessons.
-
+"""
 <!-- subject: orchestration -->
 <!-- route-tags: orchdoc check advisory upkeep plate owner human sibling rewrite ruling landed
      cross-doc citation reciprocal checkbox sub-items unnumbered section heading no id -->
 
-SOURCE: `working_corpus_o8/W-UPKEEP-LESSONS-2026-09-22.md` (o8's W57 sweep, 52 entries). That
-report names eleven ways an entry goes stale after it is written (P1-P11). Six of them can be
-caught by reading the document, and this module reads for those six. `orchdoc.py check` calls
+That report names eleven ways an entry goes stale after it is written (P1-P11). Six of them can
+be caught by reading the document, and this module reads for those six. `orchdoc.py check` calls
 `check()` once per doc, at the end of `check_doc`.
 
 EVERY CODE HERE IS ADVISORY. The rule in this codebase is to count the inherited backlog first
@@ -16,11 +14,7 @@ W-STALLED in orchdoc.py for the same sequencing). None of these codes is in orch
 
     code                 report  what it reports
     W-PLATEOWNER         P1      a live entry in §2.x whose Owner does not name the human, so the
-                                 plate generator holds it off his plate; or a live entry in §3
-                                 whose Owner names the human, so it renders on his plate as an ask
     W-HUMANLINE           P2      inside a live §3 entry that is not the human's, a line asking
-                                 something of the human ("needs the human", "his call", ...). The plate
-                                 is built from entries, so that line never reaches him
     W-NEWERSIBLING       P3      a live entry cites a file, and the same directory holds a
                                  later version of it (`<name> - the human rewrite`, `<name>-v2`,
                                  `<name>...rewrite`) that the entry never mentions
@@ -38,13 +32,13 @@ W-STALLED in orchdoc.py for the same sequencing). None of these codes is in orch
                                  entry holds; after §99 or before §1 also a closed entry's
                                  unticked box, a live entry, or a `###` heading with no id
 
-    W-SWEEPOPEN          W76     the doc's latest fresh-eyes sweep report
                                  (`orchdoc-sweeps/oN/<date>.md`) has action rows, and no entry
                                  in the doc cites that report's path - so nothing records that
                                  anyone read it
 
-Each rule above was narrowed against the eleven live OrchDocs on 2026-09-24, and the comment
 beside each regex or scope line names the measured case that forced it.
+                                 and its Opened date and any `**Rechecked:** <date>` line are
+                                 both more than 7 days old
     W-UPKEEPCRASH        -       one of the checks above raised. Reported, never raised, so an
                                  advisory check cannot take down the commit gate
 
@@ -81,27 +75,32 @@ except ImportError:  # a partial delivery must not take the tool down
 # The codes this module can emit. None of them is blocking - see the docstring.
 CODES = ("W-PLATEOWNER", "W-HUMANLINE", "W-NEWERSIBLING", "W-RULEDNOTLANDED",
          "W-ONEWAYCITE", "W-NOSUBITEMS", "W-UNIDENTIFIED", "W-UNNUMBERED", "W-SWEEPOPEN",
-         "W-UPKEEPCRASH")
+         "W-TITLEHIDESASK", "W-EXTERNALCLAIM", "W-UPKEEPCRASH")
 
 DOC_SLUG_RE = re.compile(r"^ORCHESTRATOR-DECISIONS-(o\d+)\.md$")
 
 # ---- P2: language that asks something of the human ---------------------------------------------
 #
-# The list is o9's, from the brief, with two phrases tightened after measuring (2026-09-24):
 #   * `needs?` - "the two older ones need the human to open the app" asks the same thing.
-#   * "his taste" alone matched description ("the corpus already carries his taste"); it now
-#     needs a verb that makes it an ask ("needs his taste", "up to his taste").
 # The human's name is read from orchdoc.human_name() when a check runs (see `_name`), never written
 # here, so a copy of this tool used by anyone else asks about its own reader.
 _ASK_CACHE = {}
 
 
+_NAME_MEMO = None
+
+
 def _name(od=None):
     """The human's name for the patterns below: `od.human_name()`, else a neutral word."""
+    if _NAME_MEMO is not None and id(od) in _NAME_MEMO:
+        return _NAME_MEMO[id(od)]
     try:
-        return od.human_name()
+        name = od.human_name()
     except Exception:
-        return "THE HUMAN"
+        name = "THE HUMAN"
+    if _NAME_MEMO is not None:
+        _NAME_MEMO[id(od)] = name
+    return name
 
 
 def human_ask_re(od=None):
@@ -117,21 +116,18 @@ def human_ask_re(od=None):
             re.I)
     return rx
 
-# A negation earlier in the same clause turns the phrase into its opposite: "nothing here
-# needs the human", "it does not need the human". Measured 2026-09-24: 4 of the first 17 hits.
+# A negation earlier in the same clause turns the phrase into its opposite: "nothing here needs
+# the human", "it does not need the human".
 NEGATED_RE = re.compile(
     r"(?i)(?:\b(?:no|not|nothing|never|none|neither|nor|without)\b|n't\b)[^.;:!?]{0,40}$")
 # "a note FROM the human must still count" - the human is the object of a preposition, not the one who
 # must act.
 PREP_BEFORE_RE = re.compile(r"(?i)\b(?:from|by|of|to|for|with)\s+$")
 
-# A statement that RECORDS a ruling rather than asking for one. When the same statement (one
-# list item, one prose paragraph, one table row) carries one of these, the human-language in it
-# is the record of what he decided, not a question still open.
+# A statement that RECORDS a ruling rather than asking for one.
 #
-# ⛔ "ruling" on its own is NOT here: "this needs the human's ruling" is the exact line P2 exists to
-# find. Only past-tense and closed-state markers count, plus a dated attribution to the human
-# ("the human, 2026-09-15"), which is how these docs quote something he already said.
+# ⛔ "ruling" on its own is NOT here: "this needs the human's ruling" is the exact line P2 exists
+# to find.
 def ruling_mark_re(od=None):
     """The pattern for a statement that records a ruling, for the human's name; cached per name."""
     name = _name(od)
@@ -142,8 +138,7 @@ def ruling_mark_re(od=None):
             r"|(?i:\bverbatim\b)|\b%s,?\s+(?:on\s+)?\d{4}-\d{2}-\d{2}" % re.escape(name.title()))
     return rx
 
-# An entry id written in prose. A statement naming a live §2 entry is a POINTER to where the
-# the human part is already filed ("changing either needs the human's yes, which is D45").
+# An entry id written in prose.
 PROSE_ID_RE = re.compile(r"(?<![A-Za-z0-9:/#])([A-Z]{1,3}\d+[a-z]?)\b")
 
 LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
@@ -158,17 +153,15 @@ UNCHECKED_RE = re.compile(r"^\s*[-*+]\s*\[\s\]")
 REWRITE_RE = re.compile(r"rewrite", re.I)
 VERSION_RE = re.compile(r"[-_ ]v(\d+)[a-z]?$", re.I)
 # What to strip off a cited name to find the family it belongs to.
-# "<title> - the human rewrite" is a FILE-NAME suffix fixed by the script library, not the reader's name.
+# "<title> - the human rewrite" is a FILE-NAME suffix fixed by the document library, not the reader's name.
 FAMILY_TAIL_RE = re.compile(r"(?:\s+-\s+the human rewrite.*|[-_ ]v\d+[a-z]?|[-_ ]?rewrite.*)$", re.I)
 MIN_FAMILY_CHARS = 6   # a family name shorter than this matches unrelated files
 
 # ---- P7: what counts as naming a file in a resolution --------------------------------------
 RESOLUTION_FIELD_RE = re.compile(
     r"^\s*\*\*(?:Resolved|Ruled|RULED|Answered|ANSWERED|Ruling)\b[^*]*:\*\*")
-# Evidence that a ruling reached something outside the tracker: a file, a PR, a URL, a commit
-# in backticks, or the words "landed at". A PR and a live URL count because rulings about code
-# land in a PR and rulings about a page land on the page (measured 2026-09-24: o1:D17 names
-# PR #226, o7:D15 names the production URL it was verified on).
+# Evidence that a ruling reached something outside the tracker: a file, a PR, a URL, a commit in
+# backticks, or the words "landed at".
 FILE_NAMED_RE = re.compile(
     r"[\w.\-/\\]+\.(?:md|py|ts|tsx|js|mjs|cjs|jsx|json|astro|ya?ml|sql|sh|ps1|txt|html|css"
     r"|toml|csv)\b"
@@ -177,9 +170,8 @@ FILE_NAMED_RE = re.compile(
     r"|`[0-9a-f]{7,40}`|\bv\d+\.\d+\.\d+\b"
     r"|(?<!not )\b(?:landed|applied|merged|deployed|promoted)\b"
     r"|\bshipped in\b|\blive (?:in|on) production\b", re.I)
-# A ruling that says nothing has to be written anywhere: no change, the status quo kept,
-# already done, deferred, withdrawn, rejected, or handed to another group to carry. Each one
-# came from a measured false positive (2026-09-24 spot-checks of the fleet's recent rulings).
+# A ruling that says nothing has to be written anywhere: no change, the status quo kept, already
+# done, deferred, withdrawn, rejected, or handed to another group to carry.
 NOTHING_TO_LAND_RE = re.compile(
     r"(?i)\bnothing (?:to (?:build|change|land|do|write)|changes)\b|\bno (?:change|action)\b"
     r"|\bdeferred\b|\bdeclined\b|\bno-?op\b"
@@ -338,7 +330,7 @@ def check_plate_owner(d):
             out.append(od.Finding(
                 "W-PLATEOWNER", e["line"],
                 "%s sits in §%s, the human's section, but its Owner is %s - the plate is chosen by "
-                "Owner, so it is not on his plate" % (e["id"], d.section(e["line"]),
+                "Owner, so it is not on the human's plate" % (e["id"], d.section(e["line"]),
                                                      "'%s'" % _snip(owner, 40) if owner
                                                      else "missing"),
                 "if it needs the human, write **Owner:** the human; if it is the orchestrator's own work, "
@@ -348,7 +340,7 @@ def check_plate_owner(d):
                 "W-PLATEOWNER", e["line"],
                 "%s sits in §3, the orchestrator's work, but its Owner '%s' names the human%s"
                 % (e["id"], _snip(owner, 40),
-                   " - so it renders on his plate as an ask" if st in od.PLATE_STATUS else ""),
+                   " - so it renders on the human's plate as an ask" if st in od.PLATE_STATUS else ""),
                 "if it needs the human, move it to §2 (a T entry for a to-do); if the orchestrator "
                 "acts, name the orchestrator in **Owner:** and put the human's part in the body"))
     return out
@@ -448,8 +440,8 @@ def check_human_line(d):
                         "W-HUMANLINE", i,
                         "%s is orchestrator work in §3, but this line asks something of the human "
                         "('%s'): %s" % (e["id"], m.group(0), _snip(d.lines[i - 1].strip())),
-                        "the plate is built from entries, so this line never reaches him. If it "
-                        "needs him, lift it into a §2 entry with **Owner:** the human and point to "
+                        "the plate is built from entries, so this line never reaches the human. If it "
+                        "needs the human, lift it into a §2 entry with **Owner:** the human and point to "
                         "it from here"))
                     break
     return out
@@ -488,7 +480,7 @@ ANY_VERSION_RE = re.compile(r"[-_ ]v(\d+)(?![0-9])", re.I)
 
 
 def _any_version(stem):
-    """The first -vN anywhere in a name: `SC-05-PILOT-v2-rule18 - THE HUMAN REWRITE` is a rewrite
+    """The first -vN anywhere in a name: `X-05-PILOT-v2-rule18 - THE HUMAN REWRITE` is a rewrite
     OF v2."""
     m = ANY_VERSION_RE.search(stem)
     return int(m.group(1)) if m else 0
@@ -497,11 +489,9 @@ def _any_version(stem):
 def _is_later(cited_stem, sib_stem):
     """By its NAME, is `sib_stem` a later version of `cited_stem`?
 
-    Names, not modification times: in a git worktree every file carries the checkout time, so
-    a time comparison says nothing there. A rewrite is later than the file it rewrites, and a
-    higher -vN is later than a lower one. A rewrite of an OLDER version is not later: measured
-    2026-09-24, `SC-05-PILOT-v2-rule18 - THE HUMAN REWRITE.md` was reported against a citation of
-    `SC-05-PILOT-v4.md`.
+    Names, not modification times: in a git worktree every file carries the checkout time,
+    so a time comparison says nothing there. A rewrite is later than the file it rewrites,
+    and a higher -vN is later than a lower one.
     """
     if REWRITE_RE.search(sib_stem) and not REWRITE_RE.search(cited_stem):
         return _any_version(sib_stem) >= _any_version(cited_stem)
@@ -528,9 +518,6 @@ def check_newer_sibling(d):
         if not _is_live(e, od):
             continue
         # Citations from statements that are still OPEN. A file named in a checked sub-item or
-        # in struck text is finished work - measured 2026-09-24, o8:T13 cited the superseded
-        # S5 pilot only inside its `- [x]` line. Each citation keeps the statement it came
-        # from, so "and his own rewrite of it" (o8:W49) counts as knowing about the rewrite.
         lo = e["line"] + 1
         hi = e["line"] + len(e["body"].splitlines()) - 1
         cited = {}
@@ -592,7 +579,7 @@ def check_newer_sibling(d):
                         "%s cites %s, and the same folder holds a later version it never "
                         "mentions: %s" % (e["id"], rel.name, name),
                         "open the later file; if it supersedes the cited one, re-point the "
-                        "entry at it (o8's W38 was attested five times against a superseded "
+                        "entry at it (an entry was attested five times against a superseded "
                         "file)"))
     return out
 
@@ -636,7 +623,6 @@ def names_a_file(text):
 def check_ruled_not_landed(d, today=None):
     """A D entry ruled in the last RULED_RECENT_DAYS whose resolution names nowhere it landed.
 
-    SCOPE, each part measured on 2026-09-24:
       * ARCHIVED ENTRIES ARE INCLUDED. `commit` archives a resolved entry on the same landing,
         so every new ruling is archived within minutes; skipping archived entries would have
         made this check blind to exactly the rulings it exists for.
@@ -711,9 +697,7 @@ def _peer_entries(path, od):
 
 def mentions_back(target_body, target_id, my_slug, my_id):
     """Does the target entry name this entry - as `oN:ID`, or as the bare id?
-
-    The bare id only counts when it differs from the target's own id: two docs can both have
-    a W47, and the target's own heading would otherwise answer for it."""
+    """
     if re.search(r"\b%s\s*[:/]\s*%s\b" % (re.escape(my_slug), re.escape(my_id)), target_body):
         return True
     if re.search(r"ORCHESTRATOR-DECISIONS-%s\.md#%s\b" % (re.escape(my_slug), re.escape(my_id)),
@@ -726,10 +710,8 @@ def mentions_back(target_body, target_id, my_slug, my_id):
 
 
 # Kinds that hold WORK or an ASK, and so describe another group's plan. A finding (F) or a
-# specimen (S) citing another doc's entry is citing evidence, which does not go stale the way
-# a description of someone else's plan does. Measured 2026-09-24: all 6 hits from F entries
-# were citations of evidence or of a narrowed Depends edge; both hits from W entries were real
-# mirrors with no join key (o8:W22 -> o10:W6, and o1:W2 -> o10:W4, which calls it "o1's T9").
+# specimen (S) citing another doc's entry is citing evidence, which does not go stale the way a
+# description of someone else's plan does.
 MIRROR_KINDS_RE = re.compile(r"^(?:W|T|D|Q|A)\d")
 
 
@@ -788,10 +770,8 @@ H12_RE = re.compile(r"^#{1,2}(?!#)\s+(.*)$")
 def check_unidentified(d):
     """A `###` heading with no entry id.
 
-    In §2 or §3 always: those sections promise that every item in them is an entry. Anywhere
-    else only when unchecked boxes sit directly under it, because the heading ended the entry
-    above it and those boxes now belong to nothing - measured 2026-09-24, o9:F228's
-    `### 2. One duplicate...` orphaned the box "The generator-side fix is NOT done".
+    In §2 or §3 always: those sections promise that every item in them is an entry. One
+    duplicate...` orphaned the box "The generator-side fix is NOT done".
     """
     od, out = d.od, []
     if not d.has_schema:
@@ -822,11 +802,8 @@ def check_unnumbered(d):
 
     Counted, and nothing else:
       * an unchecked `- [ ]` directly under it that NO entry holds - an `##` heading ends the
-        entry above it, so a list written under one belongs to nothing (o9's "## What needs
         the human" inside §3)
       * when the heading sits in the tail or head (after §99, or before §1):
-          - an unchecked `- [ ]` inside a CLOSED entry - a box nobody will tick again (o8's
-            W26 case; E-CLOSEDWITHOPENSUBS reads words such as PENDING, not empty boxes)
           - a live entry, or a `###` heading that is not an entry
     A `###` heading in §2 or §3, or one with orphaned boxes under it, is W-UNIDENTIFIED's
     finding, so it is not counted twice here. An entry with an id is visible to every check
@@ -890,11 +867,9 @@ def check_unnumbered(d):
 
 
 # =============================================================================================
-# W76 - the fresh-eyes sweep report: its format, and W-SWEEPOPEN
 # =============================================================================================
 
 SWEEP_DIR = "orchdoc-sweeps"
-# `2026-09-25.md`, and `2026-09-25-2.md` for a second report the same day.
 SWEEP_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.md$")
 # One machine-readable line at the top of every report. Values carry no spaces.
 SWEEP_HEADER_RE = re.compile(r"<!--\s*orchdoc-sweep:\s*([^>]*?)\s*-->")
@@ -902,9 +877,7 @@ SWEEP_HEADER_RE = re.compile(r"<!--\s*orchdoc-sweep:\s*([^>]*?)\s*-->")
 
 def sweep_report_key(name):
     """Sort key for a report file name, or None when the name is not a report.
-
-    Not the plain name: `2026-09-25-2.md` sorts BEFORE `2026-09-25.md` as text ('-' < '.'),
-    which would make the first report of the day read as the latest."""
+    """
     m = SWEEP_NAME_RE.match(Path(str(name)).name)
     return (m.group(1), int(m.group(2) or 1)) if m else None
 
@@ -990,10 +963,9 @@ def latest_sweep_report(od, slug):
 def check_sweep_open(d):
     """The latest sweep report has action rows and nothing in the doc cites it.
 
-    Advisory by design (o9's W76 plan). Citing the report is the cheapest proof that someone
-    read it: the entry that records what was done about a row names the file it came from.
-    Only the LATEST report counts - an older one was either acted on or superseded by a newer
-    sweep of the same boxes."""
+    Citing the report is the cheapest proof that someone read it: the entry that records
+    what was done about a row names the file it came from. Only the LATEST report counts -
+    an older one was either acted on or superseded by a newer sweep of the same boxes."""
     od = d.od
     if not d.slug:
         return []
@@ -1015,6 +987,129 @@ def check_sweep_open(d):
 
 
 # =============================================================================================
+# =============================================================================================
+#
+# W-TITLEHIDESASK: a live entry the orchestrator owns has a statement that asks something of the
+# human, and its TITLE says nothing of it. Advisory while that rate stands.
+TITLE_ASK_RE = re.compile(
+    r"(?i)\b(?:the human|owner|rulings?|rule[sd]?|decid\w*|decisions?|approv\w*|legal|questions?|answers?"
+    r"|needs?|your|sign-?off|choose|pick)\b")
+
+
+def check_title_hides_ask(d):
+    od, out = d.od, []
+    plate_ids = {e["id"] for e in d.entries if _is_live(e, od) and d.top(e["line"]) == "2"}
+    for e in d.entries:
+        if not _is_live(e, od) or od.owner_is_human(e["body"]):
+            continue
+        if TITLE_ASK_RE.search(re.sub(r"^\W*[A-Z]\d+\b", "", e["title"])) \
+                or TITLE_ASK_RE.search(_name_title(od, e["title"])):
+            continue
+        lo = e["line"] + 1
+        hi = e["line"] + len(e["body"].splitlines()) - 1
+        for a, b in _units(d, lo, hi):
+            if any(d.fenced[i] or d.folded[i] for i in range(a, b + 1)):
+                continue
+            first = d.lines[a - 1].strip()
+            if (first.startswith(">") or first.startswith("#")
+                    or od.STAMP_LINE_RE.match(d.lines[a - 1])
+                    or od.CHECKED_BOX_RE.match(d.lines[a - 1])):
+                continue
+            unit = "\n".join(d.lines[a - 1:b])
+            if od.NOTE_MARK in unit:
+                continue
+            live = STRUCK_SPAN_RE.sub(" ", HTML_COMMENT_RE.sub(" ", unit))
+            if ruling_mark_re(od).search(live):
+                continue
+            if plate_ids & set(PROSE_ID_RE.findall(INLINE_CODE_RE.sub(" ", live))):
+                continue
+            m = _human_ask(live.replace("\n", " "), od)
+            if m:
+                out.append(od.Finding(
+                    "W-TITLEHIDESASK", e["line"],
+                    "%s asks something of the human ('%s', line %d), and its title does not say so: %s"
+                    % (e["id"], m.group(0), a, _snip(e["title"], 80)),
+                    "the human navigates by title. Name the ask in the title (what the human is deciding), "
+                    "or lift the ask into its own §2 entry"))
+                break
+    return out
+
+
+def _name_title(od, title):
+    """"""
+    n = _name(od)
+    return n if n.lower() in title.lower() else ""
+
+
+# A code claim rots visibly; this one reads as true forever. Advisory only (never auto-resolve):
+# add `**Rechecked:** <date> - <command and output>` after looking, and it stays quiet for
+# EXTERNAL_RECHECK_DAYS days.
+EXTERNAL_RECHECK_DAYS = 7
+EXTERNAL_SERVICE_RE = re.compile(
+    r"(?i)\b(?:github actions|github|stripe|meta|resend"
+    r"|vercel|cloudflare|slack|google|anthropic|openai)\b.{0,60}?"
+    r"\b(?:is down|outage|stopped running|stopped|failing|billing (?:failure|problem|issue|lapse)|suspended|not running"
+    r"|rate-?limited|quota|expired|revoked|unavailable)\b")
+EXTERNAL_BLOCK_RE = re.compile(
+    r"(?i)\b(?:nothing can|cannot|can't|blocked|until the human|waiting|needs? The human)\b")
+RECHECKED_RE = re.compile(r"(?i)\*\*Re-?checked:?\*\*:?\s*(\d{4}-\d{2}-\d{2})")
+OPENED_DATE_RE = re.compile(r"\*\*Opened:\*\*\s*(\d{4}-\d{2}-\d{2})")
+
+
+def check_external_claim(d, today=None):
+    import datetime
+    od, out = d.od, []
+    today = today or datetime.date.today()
+
+    def _d(s):
+        try:
+            return datetime.date.fromisoformat(s)
+        except ValueError:
+            return None
+
+    for e in d.entries:
+        if not _is_live(e, od):
+            continue
+        dates = [_d(x) for x in RECHECKED_RE.findall(e["body"])]
+        mo = OPENED_DATE_RE.search(e["body"])
+        dates.append(_d(mo.group(1)) if mo else None)
+        newest = max([x for x in dates if x], default=None)
+        if newest and (today - newest).days <= EXTERNAL_RECHECK_DAYS:
+            continue
+
+        def _flag(line, m):
+            return od.Finding(
+                "W-EXTERNALCLAIM", line,
+                "%s says an outside service is failing and blocks work ('%s'), and nothing "
+                "has re-checked it in %d days (last dated %s)"
+                % (e["id"], _snip(m.group(0), 60), EXTERNAL_RECHECK_DAYS,
+                   newest.isoformat() if newest else "never"),
+                "look at the service now, then add `**Rechecked:** %s - <command and its "
+                "output>` to the entry, or strike the claim if it no longer holds"
+                % today.isoformat())
+
+        m = EXTERNAL_SERVICE_RE.search(e["title"])
+        if m and EXTERNAL_BLOCK_RE.search(e["title"]) and not e["title"].rstrip().endswith("?"):
+            out.append(_flag(e["line"], m))
+            continue
+        lo = e["line"] + 1
+        hi = e["line"] + len(e["body"].splitlines()) - 1
+        for a, b in _units(d, lo, hi):
+            if any(d.fenced[i] or d.folded[i] for i in range(a, b + 1)):
+                continue
+            if (d.lines[a - 1].strip().startswith(">") or od.CHECKED_BOX_RE.match(d.lines[a - 1])
+                    or od.STAMP_LINE_RE.match(d.lines[a - 1])):
+                continue
+            unit = " ".join(d.lines[a - 1:b])
+            unit = INLINE_CODE_RE.sub(" ", STRUCK_SPAN_RE.sub(" ", HTML_COMMENT_RE.sub(" ", unit)))
+            m = EXTERNAL_SERVICE_RE.search(unit)
+            if m and EXTERNAL_BLOCK_RE.search(unit):
+                out.append(_flag(a, m))
+                break
+    return out
+
+
+# =============================================================================================
 # entry point
 # =============================================================================================
 
@@ -1027,7 +1122,9 @@ CHECKS = (
     ("P9a", check_no_subitems),
     ("P9b", check_unidentified),
     ("P9c", check_unnumbered),
-    ("W76", check_sweep_open),
+    ("sweep-open", check_sweep_open),
+    ("title-hides-ask", check_title_hides_ask),
+    ("external-claim", check_external_claim),
 )
 
 
@@ -1037,17 +1134,22 @@ def check(path, lines, entries, od):
     A check that raises is reported as W-UPKEEPCRASH and the rest still run: an advisory
     check must never be the reason the commit gate falls over.
     """
+    global _NAME_MEMO
+    _NAME_MEMO = {}
     try:
-        d = _Doc(path, lines, entries, od)
-    except Exception as ex:                      # noqa: BLE001 - reported, not swallowed
-        return [od.Finding("W-UPKEEPCRASH", 0, "orchdoc_upkeep could not read the doc: %r"
-                           % ex)]
-    findings = []
-    for label, fn in CHECKS:
         try:
-            findings.extend(fn(d))
+            d = _Doc(path, lines, entries, od)
         except Exception as ex:                  # noqa: BLE001 - reported, not swallowed
-            findings.append(od.Finding(
-                "W-UPKEEPCRASH", 0, "orchdoc_upkeep %s (%s) raised %r"
-                % (label, fn.__name__, ex)))
-    return findings
+            return [od.Finding("W-UPKEEPCRASH", 0, "orchdoc_upkeep could not read the doc: %r"
+                               % ex)]
+        findings = []
+        for label, fn in CHECKS:
+            try:
+                findings.extend(fn(d))
+            except Exception as ex:              # noqa: BLE001 - reported, not swallowed
+                findings.append(od.Finding(
+                    "W-UPKEEPCRASH", 0, "orchdoc_upkeep %s (%s) raised %r"
+                    % (label, fn.__name__, ex)))
+        return findings
+    finally:
+        _NAME_MEMO = None

@@ -2,10 +2,9 @@ r"""Does the shell you are typing into mangle path arguments? Run it FROM that s
 
 <!-- subject: claude-tooling -->
 
-WHY THIS EXISTS. An orchestrator was warned that `git show <ref>:<path>` gets mangled here.
-They tested it, saw nothing, concluded the warning was wrong - and then spent real time chasing
-16 "missing" files that were all present. Their words: *"I dismissed it because I tested it with
-a path that had no slashes in it."*
+WHY THIS EXISTS. An orchestrator was warned that `git show <ref>:<path>` gets mangled here. They
+tested it, saw nothing, concluded the warning was wrong - and then spent real time chasing 16
+"missing" files that were all present.
 
 ⛔ THEIR TEST OMITTED THE TRIGGER, so it came back clean and DISPROVED A TRUE WARNING. That is
 worse than no test: it does not merely fail to confirm, it licenses ignoring the thing.
@@ -46,9 +45,8 @@ correctly ignored by someone doing their job properly.** Both parties behaved we
 paths are untouched, which is why this appears when you inspect infrastructure and never when
 you inspect application code.
 
-EXTENDED 2026-08-08, after a fifth session was about to adopt an over-broad form of the rule
-("never use a slashed path in a rev string"). Full matrix, every path verified to exist on the
-ref first so a missing file could not be mistaken for a mangle:
+Full matrix, every path verified to exist on the ref first so a missing file could not be
+mistaken for a mangle:
 
     origin/main:.shared/scripts/x.py    leading dot, slashes     MANGLED
     origin/main:.gitignore              leading dot, NO slash    MANGLED   <- slashes irrelevant
@@ -98,9 +96,9 @@ CONTROLS = [
     ("slashes, no dot after the colon", "HEAD:some/dir/file.md"),
     ("both sides paths, no dot", "a/b:c/d"),
     ("dot on the LEFT only", ".a/b:c/d"),
-    # Added 2026-08-08. This one is a control and not a trigger, which is the whole objection to
-    # the over-broad "no slashed paths" rule: forbidding it costs a working command, and one
-    # session testing it will disprove the rule and discard the real warning with it.
+    # This one is a control and not a trigger, which is the whole objection to the over-broad
+    # "no slashed paths" rule: forbidding it costs a working command, and one session testing it
+    # will disprove the rule and discard the real warning with it.
     ("slashes but no leading dot - WORKS", "origin/main:x/y.md"),
     ("explicit ./ prefix - the workaround", "origin/main:./.shared/scripts/x.py"),
 ]
