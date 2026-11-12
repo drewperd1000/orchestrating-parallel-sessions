@@ -1,0 +1,5 @@
+{
+  "name": "orchestration",
+  "description": "Orchestrate parallel Claude Code sessions on any work, audit the decision doc that tracks it, and trim a CLAUDE.md without losing a rule. Surfaces as /orchestration:<name>.",
+  "version": "1.2.0+2026.10.01"
+}
