@@ -7281,6 +7281,22 @@ def behind_canonical(cwd, fetch=True):
     return ("current" if n == 0 else "behind"), n, detail
 
 
+def _every_line_present(canon, mine):
+    """True when every line of `canon` appears in `mine`, as a whole line or inside a longer one (a
+    line that grew still counts). Same answer as `all(l in "\\n".join(mine) for l in
+    canon)`."""
+    have = set(mine)
+    joined = None
+    for l in canon:
+        if l in have:
+            continue
+        if joined is None:
+            joined = "\n".join(mine)
+        if l not in joined:
+            return False
+    return True
+
+
 def doc_holds_every_canonical_change(doc):
     """True when nothing landed in this one file is missing from the copy at `doc`.
 
@@ -7310,8 +7326,7 @@ def doc_holds_every_canonical_change(doc):
                      else _authored_form(l) for i, l in enumerate(lines))
             return [f for f in forms if f]
         mine, canon = authored(mine_txt), authored(out)
-        joined = "\n".join(mine)
-        if any(l not in joined for l in canon):
+        if not _every_line_present(canon, mine):
             return False
         rc, base, _ = git(["merge-base", "HEAD", CANONICAL_REF], cwd=doc.parent)
         if rc != 0:

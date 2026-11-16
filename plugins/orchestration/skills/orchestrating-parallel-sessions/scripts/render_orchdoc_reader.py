@@ -2011,7 +2011,8 @@ details.note-fold>summary.note-h:hover .note-caret{color:var(--fg)}
 
 .note-ack{font-weight:700;letter-spacing:0;text-transform:none;font-size:.7rem}
 .note-ack.hit{color:var(--done)}
-.note-ack.wait{color:var(--mut);font-weight:400;font-style:italic}
+.note-ack.wait{color:var(--open);font-weight:650}
+.note-rec{color:var(--done);font-weight:700;font-size:.7rem;letter-spacing:0;text-transform:none}
 /* The button that opens it. Outlined in the loud colour at rest and filled on hover, so
    it reads as the consequential one next to the quiet "Add a note". */
 .nbtn.act{color:var(--open);border-color:var(--open);font-weight:650}
@@ -2026,10 +2027,6 @@ details.note-fold>summary.note-h:hover .note-caret{color:var(--fg)}
    server writes a line to a document; it does not notify anybody, and it must not say it
    did. What it can honestly report is that the line is there and nobody has acknowledged
    it yet, plus where the acknowledgement will show up when it comes. */
-.note-done{font-size:.82rem;line-height:1.6}
-.note-done p{margin:.25em 0}
-.note-done .miss{color:var(--open);font-weight:650}
-.note-done .hit{color:var(--done);font-weight:650}
 
 .xref{white-space:nowrap}
 a.xref{color:var(--goldink);text-decoration:none;border-bottom:1px solid var(--gold);
@@ -2265,6 +2262,9 @@ body.wide .rail{display:none}
 .se-banner .nbtn{margin:0 0 0 .4rem}
 .kb.k-approved{color:var(--done);border-color:var(--done);background:var(--wash);
   font-size:.74rem;padding:.2rem .5rem}
+.kb.k-prod{color:var(--done);border-color:var(--done);background:var(--wash);
+  font-size:.74rem;padding:.2rem .5rem}
+.prod-bulk{margin:.4rem 0 .6rem}
 
 .kb.k-final{color:var(--goldink);border:3px double var(--gold);background:var(--sel);
   font-size:.74rem;padding:.12rem .5rem;text-transform:uppercase;letter-spacing:.08em}
@@ -2423,7 +2423,8 @@ def render_notes_html(it, xref=None):
                     '<span class="note-ack wait">not acknowledged yet</span>')
         _fold = instruct and bool(n.get("ack"))
         head = ('<span class="note-id">%s</span><span class="note-who">%s</span>'
-                '<span class="note-when">%s</span>%s'
+                '<span class="note-when">%s</span>'
+                '<span class="note-rec">Recorded</span>%s'
                 % (_esc(n["nid"]),
                    ("Instruction to %s from %s" % (_esc(it["doc"]), _esc(n["who"])))
                    if instruct else ("Note from %s" % _esc(n["who"])),
@@ -2904,7 +2905,9 @@ def owner_options(index):
 
 
 SCRIPTS_VIEW = "__scripts__"
-_KB = {"draft": ("D", "agent draft"), "rewrite": ("R", "the human rewrite"),
+PROD_BULK_BAR = ('<div class="prod-bulk"><button type="button" class="nbtn" data-prod-bulk>'
+                 'Approve all final scripts for Production&hellip;</button></div>')
+_KB ={"draft": ("D", "agent draft"), "rewrite": ("R", "the human rewrite"),
        "log": ("L", "process log"), "note": ("N", "note")}
 
 
@@ -3550,9 +3553,207 @@ def render_done_page():
            SIZE_WIRE_JS))
 
 
+PERF_WORKER_SRC = r"""
+var origin="", hb=Date.now(), T9900=Date.now(), stack=[], done=[], info=null, view={}, hidden=false, stall=null;
+function post(rec){
+  try{
+    rec.doc=view.doc||""; rec.entry=view.id||""; rec.hidden=hidden;
+    rec.storage=info; rec.open_s=Math.round((Date.now()-T9900)/1000);
+    fetch(origin+"/client-perf",{method:"POST",body:JSON.stringify(rec),keepalive:true}).catch(function(){});
+  }catch(x){}
+}
+onmessage=function(ev){
+  var m=ev.data||{};
+  if(m.init!==undefined){ origin=m.init; return; }
+  if(m.view){ view=m.view; return; }
+  if(m.info){ info=m.info; return; }
+  if(m.hidden!==undefined){ hidden=!!m.hidden; hb=Date.now(); return; }
+  if(m.start){ stack.push(m.start); if(stack.length>50){ stack.shift(); } return; }
+  if(m.end){
+    var i=stack.lastIndexOf(m.end); if(i>=0){ stack.splice(i,1); }
+    done.push(m.end+":"+m.ms); if(done.length>10){ done.shift(); }
+    return;
+  }
+  if(m.hb){
+    var now=Date.now();
+    if(stall){
+      post({kind:"stall-end",total_ms:now-stall.t0,last_ended:done.slice()});
+      stall=null;
+    }
+    hb=now;
+  }
+};
+setInterval(function(){
+  var now=Date.now(), gap=now-hb;
+  if(gap>=3000&&!stall&&!hidden){
+    stall={t0:hb};
+    post({kind:"stall",ms_since_heartbeat:gap,open_stack:stack.slice(),last_ended:done.slice()});
+  }
+},500);
+"""
+
+PERF_JS_TEMPLATE = r"""
+(function(){
+try{
+if(window.__perf){ return; }
+var P=window.__perf={calls:[],depth:0,lastPost:0,pending:null,timer:null,t0:performance.now()};
+var LIMIT=1000, KEEP=300;
+
+var WK=null;
+function W(m){ try{ if(WK){ WK.postMessage(m); } }catch(x){} }
+function storeSum(st){
+  var o={keys:0,chars:0,prefixes:{},largest:[]};
+  try{
+    var n=st.length, all=[];
+    for(var i=0;i<n;i++){
+      var k=st.key(i)||"", v=st.getItem(k), len=v?v.length:0;
+      o.keys++; o.chars+=len;
+      var pre=k.split(/[|:]/)[0].replace(/[-_]?[0-9a-fA-F]{8,}.*$/,"").slice(0,60)||"(none)";
+      var q=o.prefixes[pre]||(o.prefixes[pre]={count:0,chars:0});
+      q.count++; q.chars+=len;
+      all.push([k.slice(0,60),len]);
+    }
+    all.sort(function(a,b){ return b[1]-a[1]; });
+    o.largest=all.slice(0,5).map(function(a){ return {key:a[0],len:a[1]}; });
+    var ps=Object.keys(o.prefixes);
+    if(ps.length>40){ ps.sort(function(a,b){ return o.prefixes[b].chars-o.prefixes[a].chars; });
+      var keep={}; ps.slice(0,40).forEach(function(k){ keep[k]=o.prefixes[k]; }); o.prefixes=keep; }
+  }catch(x){ o.error=String(x).slice(0,80); }
+  return o;
+}
+function summary(){
+  var r={local:storeSum(window.localStorage),session:null,hash:(location.hash||"").slice(0,80)};
+  try{ r.session=storeSum(window.sessionStorage); }catch(x){}
+  try{ if(window.__perf&&typeof window.__perf.state==="function"){ r.state=window.__perf.state(); } }catch(x){}
+  return r;
+}
+P.summary=summary;
+function sendInfo(){ try{ W({info:summary()}); }catch(x){} }
+P.sendInfo=sendInfo;
+function view0(){
+  var h=(location.hash||"").replace(/^#/,"").split("/");
+  return {doc:(h[0]||"").slice(0,40), id:(h[1]||"").slice(0,40)};
+}
+var WSRC=__WORKER_SRC__;
+try{
+  if(typeof Worker==="function"&&typeof Blob==="function"&&window.URL&&URL.createObjectURL){
+    WK=new Worker(URL.createObjectURL(new Blob([WSRC],{type:"text/javascript"})));
+    WK.postMessage({init:location.origin});
+    W({view:view0()});
+    sendInfo();
+    setInterval(function(){ W({hb:1}); },250);
+    setInterval(sendInfo,30000);
+    setTimeout(sendInfo,5000);
+    window.addEventListener("hashchange",function(){ W({view:view0()}); });
+    document.addEventListener("visibilitychange",function(){ W({hidden:!!document.hidden}); });
+    W({hidden:!!document.hidden});
+  }
+}catch(x){ WK=null; }
+P.wrap=function(name,f){
+  if(typeof f!=="function"){ return f; }
+  return function(){
+    var t=performance.now(), d=P.depth++;
+    W({start:name});
+    try{ return f.apply(this,arguments); }
+    finally{
+      P.depth=d;
+      try{
+        var e=performance.now();
+        W({end:name,ms:Math.round(e-t)});
+        if(e-t>=20){ P.calls.push({n:name,s:t,e:e,d:d}); if(P.calls.length>KEEP){ P.calls.splice(0,KEEP/2); } }
+      }catch(x){}
+    }
+  };
+};
+function view(){
+  var h=(location.hash||"").replace(/^#/,"").split("/");
+  return {doc:(h[0]||"").slice(0,40), id:(h[1]||"").slice(0,40)};
+}
+function names(s,e){
+  var hit=[];
+  for(var i=0;i<P.calls.length;i++){ var c=P.calls[i];
+    if(c.e>=s&&c.s<=e){ hit.push({name:c.n,ms:Math.round(c.e-c.s),depth:c.d}); } }
+  hit.sort(function(a,b){ return b.ms-a.ms; });
+  return hit;
+}
+function activity(hit,dur){
+  /* The innermost call that still covers half the task, else the longest call. */
+  var best=null;
+  for(var i=0;i<hit.length;i++){ if(hit[i].ms>=dur*0.5&&(!best||hit[i].depth>best.depth)){ best=hit[i]; } }
+  return best?best.name:(hit.length?hit[0].name:"");
+}
+function build(kind,en){
+  var dur=Math.round(en.duration), s=en.startTime, e=s+en.duration;
+  var hit=names(s-50,e+50), v=view(), r;
+  r={kind:kind,duration_ms:dur,start_ms:Math.round(s),end_ms:Math.round(e),
+     doc:v.doc,entry:v.id,hidden:!!document.hidden,
+     open_s:Math.round(performance.now()/1000),
+     activity:activity(hit,dur),activities:hit.slice(0,6).map(function(h){ return h.name+":"+h.ms; })};
+  try{ r.entries=document.querySelectorAll("article.entry").length; r.elements=document.getElementsByTagName("*").length; }catch(x){}
+  try{ if(performance.memory){ r.heap_bytes=performance.memory.usedJSHeapSize; } }catch(x){}
+  if(en.scripts&&en.scripts.length){
+    r.scripts=en.scripts.slice(0,5).map(function(sc){
+      return {invoker:String(sc.invoker||"").slice(0,120),fn:String(sc.sourceFunctionName||"").slice(0,80),
+              type:String(sc.invokerType||"").slice(0,30),ms:Math.round(sc.duration||0)}; });
+  }
+  return r;
+}
+function overlaps(a,b){ return a.start_ms<=b.end_ms+100&&b.start_ms<=a.end_ms+100; }
+function send(){
+  P.timer=null;
+  var rec=P.pending; if(!rec){ return; }
+  var wait=5000-(Date.now()-P.lastPost);
+  if(wait>0){ P.timer=setTimeout(send,wait+20); return; }
+  P.pending=null; P.lastPost=Date.now();
+  try{
+    
+    sendInfo();
+    try{ rec.storage=summary(); }catch(x){}
+    navigator.sendBeacon("/client-perf",JSON.stringify(rec));
+  }catch(x){}
+}
+function note(rec){
+  if(P.pending&&overlaps(P.pending,rec)){
+    /* The longtask and the long-animation-frame of one stall: one record with both. */
+    var p=P.pending;
+    if(rec.scripts&&!p.scripts){ p.scripts=rec.scripts; }
+    if(rec.duration_ms>p.duration_ms){ p.duration_ms=rec.duration_ms; }
+    p.kind=p.kind===rec.kind?p.kind:"longtask+loaf";
+  }else if(!P.pending||rec.duration_ms>=P.pending.duration_ms){ P.pending=rec; }
+  if(!P.timer){ P.timer=setTimeout(send,1500); }
+}
+function watch(type,kind){
+  try{
+    var o=new PerformanceObserver(function(list){
+      list.getEntries().forEach(function(en){
+        try{ if(en.duration>LIMIT){ note(build(kind,en)); } }catch(x){}
+      });
+    });
+    o.observe({type:type,buffered:true});
+  }catch(x){}
+}
+watch("longtask","longtask");
+watch("long-animation-frame","loaf");
+}catch(x){}
+})();
+"""
+
+PERF_JS = PERF_JS_TEMPLATE.replace("__WORKER_SRC__", json.dumps(PERF_WORKER_SRC))
+
 JS = r"""
 (function(){
 var cache={}, view="__plate__", cur=null, obs=null, spyHash=null;
+
+var PW=window.__perf?window.__perf.wrap:function(n,f){return f;};
+load=PW("load",load); route=PW("route",route); noteReload=PW("noteReload",noteReload);
+entryPatch=PW("entryPatch",entryPatch); entryInsert=PW("entryInsert",entryInsert);
+revCheck=PW("revCheck",revCheck); apply=PW("apply",apply); obShowAll=PW("obShowAll",obShowAll);
+nsPaint=PW("nsPaint",nsPaint); markPaint=PW("markPaint",markPaint); mark=PW("mark",mark);
+spy=PW("spy",spy); draftRestore=PW("draftRestore",draftRestore); starPaint=PW("starPaint",starPaint);
+todayRefresh=PW("todayRefresh",todayRefresh); noteWire=PW("noteWire",noteWire);
+obShow=PW("obShow",obShow); obSend=PW("obSend",obSend); obDone=PW("obDone",obDone);
+obPut=PW("obPut",obPut); todayBadge=PW("todayBadge",todayBadge); nsTag=PW("nsTag",nsTag);
+entrySettled=PW("entrySettled",entrySettled);
 var railE=document.getElementById("rail-entries"),
     pane=document.getElementById("pane"),
     railD=document.getElementById("rail-docs"),
@@ -3876,37 +4077,9 @@ function instructEditor(sec,quiet){
   return box;
 }
 
-function instructDone(box,j){
-  var who=esc(j.role||"that orchestrator");
-  var h='<div class="note-done">';
-  h+='<p><span class="hit">Recorded</span> in '+esc(j.doc||"")+' as '+esc(j.nid||"")+
-     '. It is in the document whether or not anything is running.</p>';
-  h+='<p><span class="miss">Not acknowledged yet.</span> '+who+'\u2019s session is shown '+
-     'this at its next turn boundary and cannot finish a round until it acknowledges it. '+
-     'Nothing was sent anywhere, and nothing had to be running for that to work.</p>';
-  h+='<p>This block will read <b>seen by '+who+'</b> once they have. If it still says not '+
-     'acknowledged tomorrow, that session has not run a turn.</p>';
-  
-  if(j.landed===false){
-    h+='<p class="note-err note-unlanded">Saved on this computer but NOT on main: '+
-       esc(j.land_detail||"no reason was given")+'  A session working from main will not '+
-       'see it until it lands.</p>';
-  } else if(j.landed===true){
-    h+='<p class="note-hint">It is on main ('+esc(j.land_detail||"")+').</p>';
-  } else if(j.queued){
-    h+='<p class="note-hint">It is being saved to GitHub in the background. The tag on '+
-       esc(j.nid||"the instruction")+' above reads <b>saved</b> now and changes to '+
-       '<b>landed</b> once it is on main, or says why not yet. The box at the bottom left of '+
-       'the page shows the same for every save.</p>';
-  }
-  if(j.stuck&&j.stuck.length){
-    h+='<p class="note-err note-stuck">Still on this computer only, NOT on main: '+
-       esc(j.stuck.map(function(x){ return (x.nid||"?")+" ("+(x.why||"no reason given")+")"; })
-         .join("; "))+'</p>';
-  }
-  h+='</div><div class="note-acts">'+
-     '<button type="button" class="nbtn primary" data-instruct-done>Close</button></div>';
-  box.innerHTML=h;
+function instructDone(box,j,forId){
+  if(box&&box.parentNode){ box.parentNode.removeChild(box); }
+  noteLandingWarnings(forId,(j&&j.nid)||"",j,"Sent");
 }
 function esc(t){ var d=document.createElement("div"); d.textContent=t==null?"":t;
   return d.innerHTML; }
@@ -3967,17 +4140,6 @@ function notePost(body,onOk,onErr,path,onWait){
       if(cid){ if(onWait){onWait();}
         sentWait(cid,ok,err,"could not reach the reader's server: "+e); }
       else{ err("could not reach the reader's server: "+e); } });
-}
-
-function instructReceipt(sec){
-  /* Only an old receipt goes. This removed the first box of any kind, which after the reload
-     could be a note draft just restored into this section. */
-  dropReceipts(sec);
-  var box=document.createElement("div");
-  box.className="note-edit instruct";
-  var tools=sec.querySelector("[data-note-tools]");
-  if(tools){ sec.insertBefore(box,tools); } else { sec.appendChild(box); }
-  return box;
 }
 
 function noteReload(dom,then){
@@ -4123,7 +4285,7 @@ function obDone(r,j){
     return; }
   afterWrite(r.doc,r.id,r.forId,function(){
     if(r.path==="/instruct"){ var s=secFor(pane,r.forId);
-      if(s){ instructDone(instructReceipt(s),j); } }
+      if(s){ instructDone(null,j,r.forId); } }
     else { noteLandingWarnings(r.forId,(j&&j.nid)||"",j,"Saved"); }
     obShowAll(); nsPaint(); });
 }
@@ -4185,7 +4347,7 @@ function entryPatch(slug,id,cb0){
   if(!pane.querySelector(obEntrySel(slug,id))){ cb(false); return; }
   fetchWithin("/entry/"+encodeURIComponent(slug)+"/"+encodeURIComponent(id)+
     (view===slug?"":"?show_doc=1"),{cache:"no-store"},FETCH_LOAD_MS)
-  .then(function(j){ try{ (function(){
+  .then(PW("entryPatch.then",function(j){ try{ (function(){
     var old=pane.querySelector(obEntrySel(slug,id));
     if(!old||!j||!j.ok||!j.html){ cb(false); return; }
     var t=document.createElement("template"); t.innerHTML=String(j.html).trim();
@@ -4228,7 +4390,7 @@ function entryPatch(slug,id,cb0){
     if(r0.bottom<=pr.top){ pane.scrollTop+=(pane.querySelector(obEntrySel(slug,id)).offsetHeight-h0); }
     pane.style.overflowAnchor=oa;
     entrySettled(boxOpen?old:fresh); cb(true,boxOpen,j.h);
-  })(); }catch(e){ if(called){ throw e; } cb(false); } },function(){ cb(false); });
+  })(); }catch(e){ if(called){ throw e; } cb(false); } }),function(){ cb(false); });
 }
 
 function entryInsert(slug,id,cb0){
@@ -5424,6 +5586,8 @@ LANDING_CSS = r"""
 LANDING_JS = r"""
 (function(){
 if(typeof NOTE_TOKEN==="undefined"||!NOTE_TOKEN){return;}
+var PW=window.__perf?window.__perf.wrap:function(n,f){return f;};
+show=PW("landing.show",show); poll=PW("landing.poll",poll);
 var box=document.createElement("div");
 box.id="landing-ind"; box.hidden=true;
 box.setAttribute("role","status"); box.setAttribute("aria-live","polite");
@@ -5618,6 +5782,8 @@ DOC_COUNTS_JS = r"""
 (function(){
 var railD=document.getElementById("rail-docs"), inflight=false, asked=0;
 if(!railD){ return; }
+var PW=window.__perf?window.__perf.wrap:function(n,f){return f;};
+put=PW("docCounts.put",put); syncDocs=PW("docCounts.syncDocs",syncDocs); refresh=PW("docCounts.refresh",refresh);
 
 var COUNTS_LIMIT_MS=15000;
 function setBadge(b,cls,label,title){
@@ -5973,8 +6139,18 @@ function paintRead(j){
       h+='<button type="button" class="nbtn primary" data-script-edit>Edit</button>'; }
     
     if(j.approve&&j.approve.show){
-      h+='<button type="button" class="nbtn" data-script-approve>Approve as Final</button>'+
+      
+      var pr0=j.production||{}, apb='<button type="button" class="nbtn" data-script-approve>Approve as Final</button>',
+          pmb=pr0.show_approve_mark?'<button type="button" class="nbtn'+(pr0.approve_mark_default?' primary':'')+
+            '" data-script-prod="approve-mark">Approve + Production</button>':'';
+      h+=(pr0.approve_mark_default?pmb+apb:apb+pmb)+
          '<button type="button" class="nbtn" data-script-review>Approve &amp; Review</button>'; }
+    
+    if(j.production&&j.production.show_mark){
+      h+='<button type="button" class="nbtn'+(j.production.stale?' primary':'')+
+         '" data-script-prod="mark">Approve for Production</button>'; }
+    if(j.production&&j.production.show_unmark){
+      h+='<button type="button" class="nbtn" data-script-prod="unmark">Remove from Production approval</button>'; }
     h+='<span class="sv-hint">'+esc(e.editable?saveSays(j):e.why)+'</span>';
     
     if(j.approve&&!j.approve.show&&j.approve.why){
@@ -5984,6 +6160,9 @@ function paintRead(j){
   
   if(j.approve&&j.approve.final){
     h+='<span class="kb k-final" data-final-badge>Final</span>'; }
+  if(j.production&&j.production.status){
+    h+='<span class="kb k-prod" data-prod-status data-prod-state="'+esc(j.production.state||"")+'">'+
+       esc(j.production.status)+'</span>'; }
   h+='</div>'+notesHtml(j)+((NOTE_TOKEN&&j.approve&&j.approve.show)?
      '<div class="sv-rvnote" data-review-note role="status" aria-live="polite"></div>':'')+
      '<div class="sv-compare"></div><div class="md sv-body">'+j.html+'</div></div>';
@@ -6055,8 +6234,94 @@ function rvRequest(){
     say(r.message||"Sent for a review.",false);
   },function(why){ say("Not sent: "+why,true); });
 }
+
+var PD_TEXT={
+  "mark":{title:"Approve this script for Production?",go:"Approve for Production",
+    say:"It will be sent to the production app on its own once the checks pass. The mark covers this exact text: a later version needs its own."},
+  "approve-mark":{title:"Approve and send to Production?",go:"Approve + Production",
+    say:"It is approved, then marked Approved for Production, in one step. If the mark is refused, the approval stays."},
+  "unmark":{title:"Remove Production approval?",go:"Remove approval",
+    say:"No further sends. The text already on production is not changed or hidden."}};
+function pdShell(){
+  var ov=document.createElement("div"); ov.className="ap-ov"; ov.setAttribute("data-ap-ov","1");
+  ov.innerHTML='<div class="ap-box" role="dialog" aria-modal="true" aria-labelledby="ap-title"></div>';
+  document.body.appendChild(ov);
+  AP={el:ov,box:ov.firstChild,busy:false,id:null,reopen:null,pd:null};
+  document.addEventListener("keydown",apKey,true);
+}
+function pdOpen(action){
+  var j=SV.cur; if(!j||!j.production||!NOTE_TOKEN||AP||!PD_TEXT[action]){return;}
+  var T=PD_TEXT[action]; pdShell(); AP.id=j.id; AP.pd=action;
+  apPaint(T.title,'<p class="ap-wait">Checking what this would do…</p>',
+          '<button type="button" class="nbtn" data-ap-cancel>Cancel</button>');
+  post("/script/production-plan",{token:NOTE_TOKEN,id:j.id,action:action},function(r){
+    if(!AP||AP.id!==j.id){return;}
+    var nm=apName(r);
+    if(r.refused){
+      apPaint("This cannot be done",'<p><b>'+nm+'</b></p><p class="ap-no" data-ap-reason>'+
+        esc(r.reason||"The command refused it.")+'</p>',
+        '<button type="button" class="nbtn primary" data-ap-close>Close</button>'); return; }
+    var b='<p><b>'+nm+'</b></p>';
+    if(r.file){ b+='<p>File: <code data-ap-file>'+esc(r.file)+'</code></p>'; }
+    b+='<p>'+esc(T.say)+'</p>';
+    apPaint(T.title,b,'<button type="button" class="nbtn primary" data-ap-confirm>'+esc(T.go)+
+      '</button><button type="button" class="nbtn" data-ap-cancel>Cancel</button>');
+  },function(why){
+    if(!AP){return;}
+    apPaint("Not possible",'<p class="ap-no" data-ap-reason>'+esc(why)+'</p>',
+      '<button type="button" class="nbtn primary" data-ap-close>Close</button>'); });
+}
+function pdDone(my,r,title){
+  my.busy=false; if(AP!==my){return;}
+  my.reopen=r.new_id||my.id||null; refreshNav();
+  var b='<p><b>'+esc((r.name||"").replace(/\.md$/i,""))+'</b></p>';
+  if(r.production_error){ b+='<p class="ap-no" data-ap-reason>'+(r.approved?'Approved, but NOT marked for Production - ':'NOT marked - ')+
+    esc(r.production_error)+'</p>'; }
+  else if(r.reason){ b+='<p>'+esc(r.reason)+'</p>'; }
+  if(r.results){ var bad=r.results.filter(function(x){return !x.ok;});
+    b+='<p>'+esc(String(r.marked))+' marked, '+esc(String(r.refused))+' refused.</p>';
+    if(bad.length){ b+='<ul data-pd-refused>'+bad.map(function(x){ return '<li>'+esc(x.name)+': '+esc(x.reason)+'</li>'; }).join("")+'</ul>'; } }
+  b+=(r.changed?'<p class="se-land" data-ap-land>'+landText(r.landing)+'</p>':'<p>Nothing needed to change on disk.</p>');
+  apPaint(title,b,'<button type="button" class="nbtn primary" data-ap-close>Close</button>');
+  if(r.landing&&r.landing.id){ apPoll(r.landing.id,my); }
+}
+function pdConfirm(){
+  var my=AP; my.busy=true;
+  apPaint("Working…",'<p class="ap-wait">Running it, then saving to git…</p>',"");
+  function bad(why){ my.busy=false; if(AP!==my){return;}
+    apPaint("NOT done",'<p class="ap-no" data-ap-reason>'+esc(why)+'</p><p>Nothing was written.</p>',
+      '<button type="button" class="nbtn primary" data-ap-close>Close</button>'); }
+  if(my.pdBulk){
+    post("/script/production-bulk",{token:NOTE_TOKEN,ids:my.ids},function(r){ pdDone(my,r,"Production approval recorded"); },bad);
+    return; }
+  post("/script/production",{token:NOTE_TOKEN,id:my.id,action:my.pd},function(r){
+    pdDone(my,r,my.pd==="unmark"?"Production approval removed":"Approved for Production"); },bad);
+}
+function pdBulkOpen(){
+  if(!NOTE_TOKEN||AP){return;}
+  pdShell(); AP.pdBulk=true;
+  apPaint("Mark every final script for Production?",'<p class="ap-wait">Listing the scripts…</p>',
+          '<button type="button" class="nbtn" data-ap-cancel>Cancel</button>');
+  post("/script/production-bulk-plan",{token:NOTE_TOKEN},function(r){
+    if(!AP||!AP.pdBulk){return;}
+    AP.ids=r.scripts.map(function(x){return x.id;});
+    if(!r.count){
+      apPaint("Nothing to mark",'<p data-pd-none>Every final script is already Approved for Production.</p>',
+        '<button type="button" class="nbtn primary" data-ap-close>Close</button>'); return; }
+    var b='<p><b data-pd-count>'+esc(String(r.count))+'</b> final script(s) have no Production approval that covers their text'+
+      (r.more?' (this click marks the first '+esc(String(r.scripts.length))+'; click again for the rest)':'')+
+      '. Each will go to the production app on its own once the checks pass.</p><ul data-pd-list>'+
+      r.scripts.map(function(x){ return '<li>'+esc(x.name)+'</li>'; }).join("")+'</ul>';
+    apPaint("Mark every final script for Production?",b,'<button type="button" class="nbtn primary" data-ap-confirm>'+
+      'Approve '+esc(String(r.scripts.length))+' for Production</button><button type="button" class="nbtn" data-ap-cancel>Cancel</button>');
+  },function(why){
+    if(!AP){return;}
+    apPaint("Not possible",'<p class="ap-no" data-ap-reason>'+esc(why)+'</p>',
+      '<button type="button" class="nbtn primary" data-ap-close>Close</button>'); });
+}
 function apConfirm(){
   if(!AP||AP.busy){return;}
+  if(AP.pd||AP.pdBulk){ pdConfirm(); return; }
   var my=AP; my.busy=true;
   apPaint("Approving…",'<p class="ap-wait">Approving, then saving to git…</p>',"");
   post("/script/approve",{token:NOTE_TOKEN,id:my.id},function(r){
@@ -6541,6 +6806,9 @@ document.addEventListener("click",function(ev){
   if(t.closest("[data-script-edit]")){ openEditor(); return; }
   if(t.closest("[data-script-approve]")){ apOpen(); return; }
   if(t.closest("[data-script-review]")){ rvRequest(); return; }
+  var pdb=t.closest("[data-script-prod]");
+  if(pdb){ pdOpen(pdb.getAttribute("data-script-prod")); return; }
+  if(t.closest("[data-prod-bulk]")){ pdBulkOpen(); return; }
   if(t.closest("[data-script-note-save]")){ noteSave(); return; }
   if(t.closest("[data-ap-confirm]")){ apConfirm(); return; }
   if(t.closest("[data-ap-close]")){ apClose(); return; }
@@ -6854,7 +7122,7 @@ def render_page(index, boot_nav, boot_body, active="__plate__", token="", script
         "<script>%s</script><script>%s</script>"
         "<script>%s</script>"
         "</body></html>"
-        % (CSS, THEME_BOOT_JS + SIZE_BOOT_JS + NOTE_BOOT_JS, sizer, themer, mob,
+        % (CSS, PERF_JS + THEME_BOOT_JS + SIZE_BOOT_JS + NOTE_BOOT_JS, sizer, themer, mob,
            render_doc_rail(index, active, scripts), filters, owner_options(index),
            boot_nav, boot_body,
            json.dumps(flat, ensure_ascii=False), json.dumps(token or ""),
@@ -6886,7 +7154,11 @@ _SCRIPT_KEYS = {"/script/preview": {"token", "text", "base"},
                 "/script/why": {"token", "id", "k", "text"},
                 "/script/note": {"token", "id", "text"},
                 "/script/approve-plan": {"token", "id"},
-                "/script/approve": {"token", "id"}}
+                "/script/approve": {"token", "id"},
+                "/script/production-plan": {"token", "id", "action"},
+                "/script/production": {"token", "id", "action"},
+                "/script/production-bulk-plan": {"token"},
+                "/script/production-bulk": {"token", "ids"}}
 
 
 INLINE_LANDING = "inline"
@@ -6943,6 +7215,46 @@ def reader_log_path(workspace):
     import shared_state
     tag = hashlib.sha1(str(ws.resolve()).lower().encode("utf-8")).hexdigest()[:12]
     return shared_state.home_state_dir() / "reader-log" / tag / "reader.log"
+
+
+CLIENT_PERF_MAX_BYTES = 2 * 1024 * 1024
+CLIENT_PERF_BODY_MAX = 32 * 1024
+_CLIENT_PERF_LOCK = threading.Lock()
+
+
+def client_perf_file():
+    import shared_state
+    return shared_state.home_state_dir() / "reader-client-perf.jsonl"
+
+
+def client_perf_append(raw, path=None, max_bytes=None):
+    """Append one JSON record (bytes) as one line. Returns True if a line was written.
+
+    The page's long-task reports. Nothing here raises: a bad body is dropped. When the file
+    passes `max_bytes` (2 MB) the oldest half of its lines is cut, so it never grows without
+    limit. The record holds counts and function names only, never entry text.
+    """
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+        if not isinstance(rec, dict):
+            return False
+        rec["server_time"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        line = json.dumps(rec, ensure_ascii=True, separators=(",", ":")) + "\n"
+        f = Path(path) if path else client_perf_file()
+        limit = max_bytes or CLIENT_PERF_MAX_BYTES
+        with _CLIENT_PERF_LOCK:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with open(f, "a", encoding="utf-8", newline="\n") as fh:
+                fh.write(line)
+            if f.stat().st_size > limit:
+                lines = f.read_text(encoding="utf-8", errors="replace").splitlines(True)
+                keep = lines[len(lines) // 2:]
+                tmp = f.with_name(f.name + ".tmp")
+                tmp.write_text("".join(keep), encoding="utf-8", newline="\n")
+                os.replace(str(tmp), str(f))
+        return True
+    except Exception:
+        return False
 
 
 def log_time(at=None):
@@ -7092,6 +7404,40 @@ class Reader:
         self._flight = None
         self._flight_seq = 0
         self._home_cache = None
+        self._doc_mx = threading.Lock()
+        self._doc_cache = {}
+        self._revs_cache = {}
+
+    DOC_CACHE_MAX = 12
+
+    def doc_view_kept(self, slug):
+        """The kept /doc/<slug> text when every input is unchanged, else None."""
+        hit = self._doc_cache.get(slug)
+        if hit is None:
+            return None
+        with self._doc_mx:
+            hit = self._doc_cache.get(slug)
+            if hit is not None and hit[0] == self.home_key() and self._images_unchanged(hit[2]):
+                return hit[1]
+        return None
+
+    def doc_view_json(self, slug, build):
+        with self._doc_mx:
+            key = self.home_key()
+            hit = self._doc_cache.get(slug)
+            if hit is not None and hit[0] == key and self._images_unchanged(hit[2]):
+                return 200, hit[1]
+            _IMG_SEEN.rec = {}
+            try:
+                code, text = build()
+                seen = _IMG_SEEN.rec
+            finally:
+                _IMG_SEEN.rec = None
+            if code == 200:
+                if len(self._doc_cache) >= self.DOC_CACHE_MAX and slug not in self._doc_cache:
+                    self._doc_cache.pop(next(iter(self._doc_cache)))
+                self._doc_cache[slug] = (key, text, seen)
+            return code, text
 
     def single_flight(self, build):
         arrived = self._flight_seq       # one int read; renders bump it only under the mutex
@@ -7377,8 +7723,13 @@ class Reader:
             rev = "%x-%x" % (st.st_mtime_ns, st.st_size)
         except OSError:
             return None
+        hit = self._revs_cache.get(slug)
+        if hit is not None and hit[0] == rev:
+            return rev, dict(hit[1])
         model = build_doc_model_cached(slug, path)
-        return rev, dict((i["id"], entry_hash(i)) for i in model.get("entries") or ())
+        ids = dict((i["id"], entry_hash(i)) for i in model.get("entries") or ())
+        self._revs_cache[slug] = (rev, ids)
+        return rev, dict(ids)
 
     def sent_status(self, cids):
         """{client id: {"state": "sending" | "done" | "saved" | "unknown", "reply"}}.
@@ -7813,10 +8164,14 @@ def make_handler(reader):
                     return
                 if path.startswith("/doc/"):
                     slug = path[5:]
+                    kept = reader.doc_view_kept(slug)
+                    if kept is not None:
+                        self._send(kept, "application/json; charset=utf-8", 200)
+                        return
                     idx = reader.index()
                     with _timed("render"):
                         xref = XrefTargets(idx)
-                        code, obj = 200, None
+                        code, obj, raw = 200, None, None
                         if slug in ("__plate__", "plate"):
                             nav, body = render_plate_view(idx, xref)
                             obj = {"nav": nav, "body": render_today_strip(idx) + body}
@@ -7831,15 +8186,20 @@ def make_handler(reader):
                                 reader.scripts.annotate_provenance(reader.scripts.discover()),
                                 fr_marks=reader.fr_marks, workspace=reader.workspace)
                             obj = {"nav": nav, "body": RUNNER.status_line_html(
-                                reader.runner.status(), html.escape) + body}
+                                reader.runner.status(), html.escape) + PROD_BULK_BAR + body}
                         else:
                             d = next((d for d in idx if d["slug"] == slug), None)
                             if d is not None:
-                                nav, body = render_doc_view(d, xref)
-                                obj = {"nav": nav, "body": render_today_strip(idx) + body}
+                                def _doc_text():
+                                    nav, body = render_doc_view(d, xref)
+                                    return 200, json.dumps(
+                                        {"nav": nav, "body": render_today_strip(idx) + body},
+                                        ensure_ascii=False)
+                                code, raw = reader.doc_view_json(slug, _doc_text)
                             else:
                                 code, obj = 404, {"nav": "", "body": "not found"}
-                        raw = json.dumps(obj, ensure_ascii=False)
+                        if raw is None:
+                            raw = json.dumps(obj, ensure_ascii=False)
                     self._send(raw, "application/json; charset=utf-8", code)
                     return
                 self._send("not found", "text/plain; charset=utf-8", 404)
@@ -7970,6 +8330,17 @@ def make_handler(reader):
                            "application/json; charset=utf-8", 503)
                 return
             path = urllib_path(self.path)
+            if path == "/client-perf":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    n = 0
+                body = self.rfile.read(n) if 0 < n <= CLIENT_PERF_BODY_MAX else b""
+                if n > CLIENT_PERF_BODY_MAX:
+                    self.close_connection = True
+                client_perf_append(body)
+                self._send_bytes(b"", "text/plain; charset=utf-8", 204)
+                return
             if not HAS_SCRIPTS and path.startswith(SCRIPT_ROUTES):
                 self._send(json.dumps({"ok": False, "error": "this Reader has no script features"}),
                            "application/json; charset=utf-8", 404)
@@ -8156,7 +8527,10 @@ def make_handler(reader):
             payload, err = _reader_gate(
                 self.headers, self.rfile, reader.token, reader.port,
                 max_body=WHY_MAX_BODY if path in ("/script/why", "/script/approve-plan",
-                                                  "/script/approve", "/script/note")
+                                                  "/script/approve", "/script/note",
+                                                  "/script/production-plan", "/script/production",
+                                                  "/script/production-bulk-plan",
+                                                  "/script/production-bulk")
                 else SCRIPT_MAX_BODY,
                 host=HOST)
             if err:
@@ -8181,6 +8555,9 @@ def make_handler(reader):
                 return
             if path == "/script/note":
                 self._script_note_post(payload)
+                return
+            if path.startswith("/script/production"):
+                self._production_post(path, payload)
                 return
             text = payload.get("text")
             if not isinstance(text, str) or len(text) > SCRIPT_MAX_CHARS:
@@ -8343,6 +8720,47 @@ def make_handler(reader):
                     jid = reader.lander.submit_approve(result["adds"], result["removes"],
                                                        result["opened_rel"], result["name"],
                                                        prior=prior, start_runner=moved)
+                    result["landing"] = reader.lander.status(jid)
+            self._json(result)
+
+        def _production_post(self, path, payload):
+            """The gate ran in _script_post.
+            """
+            if path == "/script/production-bulk-plan":
+                self._json(reader.scripts.production_bulk_plan())
+                return
+            if path == "/script/production-bulk":
+                ids = payload.get("ids")
+                if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                    self._json({"ok": False, "error": "bad request shape"}, 400)
+                    return
+                result = reader.scripts.production_bulk_apply(ids)
+            else:
+                sid, action = payload.get("id"), payload.get("action")
+                if not isinstance(sid, str) or not isinstance(action, str):
+                    self._json({"ok": False, "error": "bad request shape"}, 400)
+                    return
+                if path == "/script/production-plan":
+                    result = reader.scripts.production_plan(sid, action)
+                    code = result.pop("code", 200)
+                    self._json(result, code if not result.get("ok") else 200)
+                    return
+                result = reader.scripts.production_apply(sid, action)
+            code = result.pop("code", 200)
+            prior = result.pop("prior", None)
+            if not result.get("ok"):
+                self._json(result, code)
+                return
+            if result.get("changed"):
+                if reader.lander is None:
+                    result["landing"] = {
+                        "state": "disabled", "branch": "",
+                        "reason": "this reader was started with landing turned off "
+                                  "(--no-land), so the change was NOT committed or pushed."}
+                else:
+                    jid = reader.lander.submit_production(result["adds"], result["removes"],
+                                                          result["opened_rel"], result["name"],
+                                                          prior=prior)
                     result["landing"] = reader.lander.status(jid)
             self._json(result)
 

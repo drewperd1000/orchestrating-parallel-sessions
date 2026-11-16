@@ -90,6 +90,22 @@ Python **stdlib only**, so there is nothing to install. `orchdoc-audit` drives t
 rather than shipping its own copies. At runtime, `PROTOCOL-template.md` and `watch_mailbox.py`
 are copied next to a `mailboxes/` directory to wire up the hands-off relay.
 
+## OrchDoc Reader freezing or sticking? Check your browser extensions first
+
+If the OrchDoc Reader freezes ("Page Unresponsive"), lags after a click or a save, or lets you
+scroll but not click or type, the first suspect is a browser extension, a password manager
+above all. Password managers scan the whole page whenever it holds a form field, and a Reader
+page holds many. On a large OrchDoc one such scan was measured blocking the tab for 12 to 34
+seconds, while the Reader's own code took a few milliseconds.
+
+- **Test:** open the Reader in a Guest window, which runs no extensions, and repeat what froze.
+  Incognito is not a fair test, because extensions allowed in Incognito still run there.
+- **Fix:** at `chrome://extensions`, open the extension's Details and set Site access to "On
+  click". It then runs only on a site where you click its toolbar icon. Reload the Reader tabs.
+
+The page measured had about 66,000 elements. Marking the form fields with LastPass's own "ignore
+this field" attribute (`data-lpignore`) did not stop the scan.
+
 ## Found something wrong? Please say so
 
 The most valuable report is **a check that told you something untrue**, or **a finding whose
