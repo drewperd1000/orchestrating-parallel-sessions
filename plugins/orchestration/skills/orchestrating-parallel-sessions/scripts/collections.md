@@ -16,9 +16,12 @@ Collections are for reading and reviewing. They are read-only.
   stage, publishing, the phone export, and any other write to your files. To move a document to
   another stage, move the file into that stage's folder yourself. The Reader picks up the change
   the next time you open the page.
-- **No search yet.** The search box does not look inside collections. The config key `views`
-  accepts the words `tree`, `new`, `compare` and `search`, but the collection pages ignore it, so
-  leave it out.
+- **Search in the list.** Each collection's list has a "Find by id or title" box above it. It
+  narrows the list as you type, matching the document's id (its name without the version and
+  author), its file name and path, and its first `#` heading, all words at once, any case.
+  The Reader's main search box still does not look inside collections. The config key `views`
+  controls the box: leave `search` out of it to hide the box. Of the other words `views`
+  accepts (`tree`, `new`, `compare`), the collection pages ignore them.
 - **Notes and Compare are optional parts of the Reader.** Notes work only on `.md` files, and
   only in a Reader that has the note store and the Compare module installed. A copy of the Reader
   without them shows the document pages and the tree and leaves out the notes box and the Compare
@@ -63,9 +66,10 @@ Only `id` and `root` are required. Any key not listed here is refused, and the m
 | `kinds` | The words shown for each kind of file: `draft`, `rewrite`, `log`, `note`. | draft, edit, log, note |
 | `final_rule` | A header line that marks a document final. See "Stages". | `Approved-By` |
 | `why_notes` | `{"suffix": ".something.json"}`: the ending of the reasons file that Compare reads next to a draft. It must start with `.` and end with `.json`; any other value is ignored and the default is used. | `.why-notes.json` |
+| `views` | A list of the words `tree`, `new`, `compare` and `search`. The collection pages read only `search`: with it, the list has the "Find by id or title" box; without it, no box. | `["tree", "search"]` |
 
-The keys `type_labels`, `note_syntax`, `extensions`, `editable` and `views` are accepted so that
-a config does not fail, and the collection pages ignore them today.
+The keys `type_labels`, `note_syntax`, `extensions` and `editable` are accepted so that a config
+does not fail, and the collection pages ignore them today.
 
 ### Limits
 

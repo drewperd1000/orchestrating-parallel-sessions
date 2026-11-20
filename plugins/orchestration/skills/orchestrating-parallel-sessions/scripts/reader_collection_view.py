@@ -18,8 +18,9 @@ Routes (the Reader serves them, this module draws them), as `/doc/<slug>` slugs:
     c/<id>/p/<rel>       one document, <rel> being its path under the collection root
     c/<id>/cmp/<rel>     a draft beside its rewrite
 
-The reserved id `library` belongs to the document library and is never drawn here: a configured
-collection with that id is refused with a message.
+The reserved id `library` is kept for a built-in collection that the host page draws with its
+own view, so this module never draws it: a configured collection with that id is refused with a
+message.
 """
 import hashlib
 import hmac
@@ -146,6 +147,25 @@ class CollectionCorpus:
         self._facts[k] = (stamp, got)
         return got
 
+    def title_of(self, path, stamp):
+        """The first `# ` heading in the first 4 KB of a text file, or "" (cached by stamp)."""
+        if not str(path).lower().endswith((".md", ".markdown", ".txt")):
+            return ""
+        k = "t:" + str(path)
+        hit = self._facts.get(k)
+        if hit and hit[0] == stamp:
+            return hit[1]
+        title = ""
+        try:
+            with open(path, "rb") as fh:
+                head = fh.read(4096).decode("utf-8-sig", "replace")
+            m = re.search(r"(?m)^#[ \t]+(.+?)[ \t#\r]*$", head)
+            title = m.group(1).strip()[:200] if m else ""
+        except OSError:
+            pass
+        self._facts[k] = (stamp, title)
+        return title
+
     def discover(self):
         """{"exists", "root_rel", "files": [...], "by_id": {id: file}, "by_rel": {rel: file}}.
 
@@ -214,6 +234,7 @@ class CollectionCorpus:
                  "stage_id": stage["id"] if stage else "",
                  "kind": parts.kind or "draft", "version": parts.version, "author": parts.author,
                  "name_key": parts.name_key, "pair": None, "mtime": st.st_mtime,
+                 "title": self.title_of(child, (st.st_mtime_ns, st.st_size)),
                  "final": bool(stage and stage.get("approved"))
                  or self.header_final(child, (st.st_mtime_ns, st.st_size))}
             out["files"].append(f)
@@ -279,6 +300,8 @@ CSS = """<style>
 .cl-notes textarea{width:100%;min-height:4rem}.cl-n{border-top:1px solid rgba(128,128,128,.3);padding:.3rem 0}
 .cl-n small{opacity:.65;margin-left:.5rem}.cl-chg{border:1px solid rgba(128,128,128,.35);border-radius:4px;margin:.5rem 0;padding:.4rem .6rem}
 .cl-chg ins{background:rgba(46,125,50,.2);text-decoration:none}.cl-chg del{background:rgba(183,28,28,.18)}
+.cl-row[hidden],.cl-grp[hidden],.cl-stage[hidden],.cl-none[hidden]{display:none}
+.cl-q{width:100%;box-sizing:border-box;margin:.3rem 0}.cl-none{opacity:.7;padding:.3rem .4rem}
 .cl-tag{font-size:.7rem;opacity:.7;text-transform:uppercase;margin-right:.4rem}
 </style>"""
 
@@ -286,6 +309,15 @@ CSS = """<style>
 def _href(cid, kind, rel):
     from urllib.parse import quote
     return "#c/%s/%s/%s" % (cid, kind, "/".join(quote(s, safe="") for s in rel.split("/")))
+
+
+def find_text(m):
+    """What the tree's search box matches a document against: its id (the name without the
+    version and author), its file name, its path and its first heading, lower-cased with
+    `str.lower`, which agrees with the page script's `toLowerCase` (`casefold` would turn "ß"
+    into "ss" here but not in the typed text)."""
+    return " ".join(str(x) for x in (m.get("name_key"), m.get("stem"), m.get("rel"),
+                                     m.get("title")) if x).lower()
 
 
 def _kind_label(c, kind):
@@ -422,6 +454,10 @@ class Views:
         names = {s["id"] for s in stages}
         if c.stages and any(f["stage_id"] not in names for f in files):
             stages.append({"id": "", "folder": None, "label": "No stage"})
+        if "search" in (c.views or ()) and files:
+            out.append('<input type="search" class="cl-q" data-coll-q autocomplete="off" '
+                       'placeholder="Find by id or title" aria-label="Find a document by id or '
+                       'title"><div class="cl-none" data-coll-none hidden>No document matches.</div>')
         out.append('<div class="cl-tree">')
         for st in stages:
             if c.stages:
@@ -462,11 +498,11 @@ class Views:
         stage = (' <span class="cl-badge%s">%s</span>' % (
             " cl-final" if m["final"] else "", _e(m["stage"]["label"])) if m["stage"] else (
             ' <span class="cl-badge cl-final">final</span>' if m["final"] else ""))
-        return ('<a class="cl-row" href="%s" aria-current="%s"><span class="nm">%s</span>%s'
+        return ('<a class="cl-row" href="%s" aria-current="%s" data-find="%s"><span class="nm">%s</span>%s'
                 '<span class="kb k-%s">%s</span>%s</a>' % (
                     _e(_href(c.id, "p", m["rel"])),
                     "true" if sel is not None and sel["rel"] == m["rel"] else "false",
-                    _e(m["stem"]), ver, _e(m["kind"]), _e(label), stage))
+                    _e(find_text(m)), _e(m["stem"]), ver, _e(m["kind"]), _e(label), stage))
 
     def _intro(self, ent, listing, errors):
         c = ent.collection
@@ -610,6 +646,26 @@ function reveal(){
 }
 new MutationObserver(reveal).observe(document.getElementById("pane"),{childList:true});
 reveal();
+var collQ="";
+function collFilter(){
+  var rail=document.getElementById("rail-entries"), box=rail&&rail.querySelector("[data-coll-q]");
+  if(!box){ return; }
+  if(box.value!==collQ){ box.value=collQ; }
+  var words=collQ.toLowerCase().split(/\s+/).filter(Boolean), shown=0;
+  rail.querySelectorAll(".cl-row").forEach(function(a){
+    var t=a.getAttribute("data-find")||"", ok=words.every(function(w){ return t.indexOf(w)>=0; });
+    a.hidden=!ok; if(ok){ shown++; } });
+  rail.querySelectorAll(".cl-grp").forEach(function(g){
+    g.hidden=!g.querySelector(".cl-row:not([hidden])"); });
+  rail.querySelectorAll(".cl-stage").forEach(function(s){
+    s.hidden=!s.querySelector(".cl-row:not([hidden])"); });
+  var none=rail.querySelector("[data-coll-none]"); if(none){ none.hidden=!(words.length&&!shown); }
+}
+document.addEventListener("input",function(ev){
+  var b=ev.target.closest&&ev.target.closest("[data-coll-q]"); if(!b){return;}
+  collQ=b.value; collFilter(); });
+(function(){ var r=document.getElementById("rail-entries");
+  if(r){ new MutationObserver(function(){ if(collQ){ collFilter(); } }).observe(r,{childList:true}); } })();
 document.addEventListener("click",function(ev){
   var b=ev.target.closest&&ev.target.closest("[data-coll-save]"); if(!b){return;}
   var box=b.closest("[data-coll-notes]"), ta=box.querySelector("[data-coll-text]"),

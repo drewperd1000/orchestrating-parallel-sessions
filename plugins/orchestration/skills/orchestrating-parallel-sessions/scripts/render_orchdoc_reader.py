@@ -171,10 +171,6 @@ def documents_folders():
 
 
 try:
-    import reader_emails as EMAILS
-except ImportError:  # a partial delivery must not take the reader down: the view says so
-    EMAILS = None
-try:
     import done_feed as DONE  # noqa: E402  - the /done page; read-only, from git history
 except Exception:  # a partial delivery must not take the reader down; /done says so instead
     DONE = None
@@ -3621,97 +3617,6 @@ _EMAIL_HIDDEN_WHY = {
 }
 
 
-def render_emails_view(workspace):
-    """`#emails`: the email series in the emails folder, as (nav, body). Read-only."""
-    if EMAILS is None:
-        return ('<div class="count">emails</div>',
-                '<div class="empty">The Emails view is not installed: '
-                "<code>reader_emails.py</code> is missing.</div>")
-
-    def _ok(rel):
-        p, _r, _k = resolve_viewable(rel, workspace)
-        return p is not None
-
-    def _why(rel):
-        _p, _r, w = resolve_viewable(rel, workspace)
-        if "outside the workspace" in (w or ""):
-            return "outside"
-        if "secret" in (w or ""):
-            return "name"
-        return "unreadable"
-    got = EMAILS.discover(workspace, accept=_ok, why=_why)
-    folder = got["folder"]
-    nav, body = [], []
-    if not got["ok"]:
-        nav.append('<div class="count">no emails folder</div>')
-        body.append(
-            '<p class="hint">The emails folder <code>%s</code> is not available (%s). To '
-            "show emails, create it inside the workspace with one sub-folder per series, "
-            "for example <code>%s/01-welcome-onboarding/series.md</code> and "
-            "<code>%s/01-welcome-onboarding/01-welcome.md</code>, or name another folder "
-            "with <code>python orchdoc_config.py set emails_folder &lt;folder&gt;</code>. "
-            "Each file starts with front matter: <code>subject, preview_text, send, "
-            "status, source</code> for an email; <code>title, order, trigger, "
-            "description</code> for series.md.</p>"
-            % (_esc(folder), _esc(got["why"]), _esc(folder), _esc(folder)))
-        return "".join(nav), "".join(body)
-    nav.append('<div class="count">%d emails in %d series</div>'
-               % (got["total"], len(got["series"])))
-    body.append('<p class="hint">Read-only. The emails folder is <code>%s</code>; the number '
-                "in brackets after a series name is how many emails it has.</p>" % _esc(folder))
-    if not got["series"]:
-        body.append('<div class="empty">The emails folder has no series folders yet.</div>')
-    for si, s in enumerate(got["series"]):
-        hid = s.get("hidden") or []
-        head = ("%s (%d shown, %d hidden)" % (s["title"], s["count"], len(hid)) if hid
-                else "%s (%d)" % (s["title"], s["count"]))
-        sid = "entry-emails-s%d" % si
-        nav.append('<div class="sec">%s</div>' % _esc(head))
-        body.append('<h2 class="grouphead" id="%s">%s</h2>' % (sid, _esc(head)))
-        if s["trigger"]:
-            body.append('<p class="dnote"><b>Trigger:</b> %s</p>' % _esc(s["trigger"]))
-        if s["description"]:
-            body.append('<p class="dnote">%s</p>' % _esc(s["description"]))
-        for h in hid:
-            body.append('<p class="dnote"><b>%s</b> is not shown: %s</p>'
-                        % (_esc(h["file"]), _esc(_EMAIL_HIDDEN_WHY.get(
-                            h["reason"], _EMAIL_HIDDEN_WHY["unreadable"]))))
-        if not s["emails"]:
-            body.append('<p class="dnote">This series has no emails yet.</p>')
-            continue
-        if s["count"] > len(s["emails"]):
-            body.append('<p class="dnote">Showing the first %d of the %d emails in this '
-                        "series.</p>" % (len(s["emails"]), s["count"]))
-        for ei, e in enumerate(s["emails"]):
-            dom = "entry-emails-s%d-e%d" % (si, ei)
-            subj = e["subject"] or e["title"]
-            nav.append('<button type="button" class="ebtn" data-goto="%s"><span class="dot">'
-                       '</span><span class="etitle">%s</span></button>' % (dom, _esc(subj)))
-            tags = []
-            if e["status"]:
-                tags.append('<span class="tag">%s</span>' % _esc(e["status"]))
-            if e["send"]:
-                tags.append('<span class="tag">send: %s</span>' % _esc(e["send"]))
-            if e["source"]:
-                tags.append('<span class="tag">source: %s</span>' % _esc(e["source"]))
-            pv = ('<div class="meta">Preview text: %s</div>' % _esc(e["preview_text"])
-                  if e["preview_text"] else "")
-            text = ('<p class="dnote">This file is too large to show here; open it with '
-                    'the link.</p>' if e["too_big"] else md_to_html(e["body"]))
-            body.append(
-                '<article class="entry emailbox" id="%s" data-doc="emails" data-id="%s">'
-                '<h3 class="et"><span>%s</span></h3><div class="meta">%s</div>%s'
-                '<div class="md">%s</div>'
-                '<div class="meta"><a href="%s" target="_blank" rel="noopener">Open the file</a>'
-                ' (%s)</div></article>'
-                % (dom, dom, _esc(subj), "".join(tags), pv, text,
-                   _esc(file_href(e["rel"])), _esc(e["rel"])))
-    if got["more"]:
-        body.append('<p class="dnote">%d more series are in the folder and not shown here.</p>'
-                    % got["more"])
-    return "".join(nav), "".join(body)
-
-
 
 DONE_WINDOWS = ("6h", "24h", "48h", "7d")
 
@@ -5301,7 +5206,7 @@ var DIK="claude-orchdoc-reader-docins|";
 function docInsWire(){
   var old=document.getElementById("docins"); if(old){old.remove();}
   pane.style.removeProperty("--docins-h");
-  if(!NOTE_TOKEN||!view||view===PLATE||view===SCRIPTS||view===TODAY||view==="rule"||view==="emails"){return;}
+  if(!NOTE_TOKEN||!view||view===PLATE||view===SCRIPTS||view===TODAY||view==="rule"){return;}
   var d=view, w=document.createElement("div"); w.id="docins"; w.className="docins";
   w.innerHTML='<div class="docins-row"><textarea rows="1" '+
     'placeholder="Instruction for '+d+' - not about any one item"></textarea>'+
@@ -6424,8 +6329,7 @@ function setBadge(b,cls,label,title){
 function syncDocs(docs){
   var want=Object.keys(docs), byName={}, cur=(location.hash||"").replace(/^#/,"").split("/")[0];
   var btns=[].slice.call(railD.querySelectorAll(".dbtn[data-doc]")).filter(function(b){
-    return b.getAttribute("data-doc").indexOf("__")!==0&&b.getAttribute("data-doc")!=="rule"&&
-           b.getAttribute("data-doc")!=="emails"; });
+    return b.getAttribute("data-doc").indexOf("__")!==0&&b.getAttribute("data-doc")!=="rule"; });
   if(want.join(" ")===btns.map(function(b){ return b.getAttribute("data-doc"); }).join(" ")){
     return; }
   var head=btns.length?btns[0].previousSibling:null;
@@ -8926,9 +8830,6 @@ def make_handler(reader):
                         elif slug in (TODAY_VIEW, "today"):
                             nav, body = render_today_view(idx, xref)
                             obj = {"nav": nav, "body": body, "count": today_count(idx)}
-                        elif slug == "emails":
-                            nav, body = render_emails_view(reader.workspace)
-                            obj = {"nav": nav, "body": body}
                         elif slug == "rule":
                             nav, body = render_rules_view(xref)
                             obj = {"nav": nav, "body": body}
