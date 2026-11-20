@@ -13281,11 +13281,10 @@ PHONE_SYNC = True
 
 
 def _start_phone_drive_sync(doc):
-    """After an OrchDoc landing, START the phone Reader's Drive sync and return at once.
+    """After an OrchDoc landing, START the workspace's optional sync script and return at once.
 
-    It runs only for a real workspace: the script must exist in PROJECTS' own .shared/scripts (a
-    selftest or test fixture workspace has none, so no fixture landing ever starts a Drive upload),
-    and only when the landed doc is an ORCHESTRATOR-DECISIONS-o<N>.md.
+    It runs only when the script exists (a workspace without it, a selftest or a test fixture
+    workspace starts nothing) and only when the landed doc is an ORCHESTRATOR-DECISIONS-o<N>.md.
     """
     if not PHONE_SYNC or os.environ.get("ORCHDOC_NO_PHONE_SYNC") == "1":
         return
@@ -13302,7 +13301,7 @@ def _start_phone_drive_sync(doc):
     else:
         kw["start_new_session"] = True
     subprocess.Popen([sys.executable, str(script)], cwd=str(script.parent), **kw)
-    print("  phone Drive sync started in the background (reader_phone_sync_bg.py)")
+    print("  background sync started (reader_phone_sync_bg.py)")
 
 
 def _republish_mirrors(landed):

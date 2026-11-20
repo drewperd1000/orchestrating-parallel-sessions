@@ -78,11 +78,12 @@ def citable_repos():
     return _REPOS["citable"]
 
 
-# The real machine has about 80 repos one or two levels under the main checkout (about 265
-# with linked worktrees). When discovery fails, orchdoc still returns its roots (the calling
-# tree and the main checkout) and its external repos (the skills marketplace and the memory
-# clone), so a failed call from a worktree gives up to 5 distinct paths with this workspace.
-# 20 is well above that and well below a real list.
+# When discovery fails, orchdoc still returns its roots (the calling tree and the main
+# checkout) and any external repos the workspace names, so a failed call from a worktree gives
+# a handful of distinct paths. A workspace whose discovery works has many more, because every
+# repo and linked worktree under the main checkout counts. 20 sits between the two. A workspace
+# with fewer than 20 in all still works: it walks the main checkout itself on every call
+# instead of caching the list.
 MIN_CITABLE = 20
 
 
