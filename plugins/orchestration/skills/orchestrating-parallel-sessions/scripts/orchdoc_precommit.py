@@ -482,6 +482,34 @@ def install_all():
     return 0
 
 
+def install_missing():
+    """Install the hook into every repo `--check-hook --all` reports as `[missing]`, then re-check.
+
+    Returns check_hook(all_repos=True) after the installs: 1 if a repo is still missing its hook
+    (or is broken, as before), else 0.
+    """
+    found, installed = [], []
+    for repo, body in _rows():
+        status, _ = _audit_one(repo, body)
+        if status != "missing":
+            continue
+        found.append(repo.name)
+        got, detail = install_one(repo, body)
+        print("  [%-8s] %-42s %s" % (got, repo.name, detail))
+        if got == "written":
+            installed.append(repo.name)
+    if not found:
+        print("[installed] no repo was missing its pre-commit hook.")
+    else:
+        print("[installed] pre-commit hook added to %d repo(s): %s"
+              % (len(installed), ", ".join(installed) or "none"))
+        failed = [n for n in found if n not in installed]
+        if failed:
+            print("[failed] could not install the hook in: %s" % ", ".join(failed))
+    print()
+    return check_hook(all_repos=True)
+
+
 def install():
     rc, gitdir, _ = git(["rev-parse", "--git-dir"])
     if rc != 0:
@@ -587,6 +615,8 @@ if __name__ == "__main__":
             rc_all = install_all()
             install_prepush()
             sys.exit(rc_all)
+        if arg == "--install-missing":
+            sys.exit(install_missing())
         if arg == "--install-prepush":
             sys.exit(install_prepush())
         if arg == "--check-hook":

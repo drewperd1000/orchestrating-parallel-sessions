@@ -59,13 +59,23 @@ TOOLS = ["orchdoc.py", "pause_cues.py", "reader_full_rewrite.py", "script_note_s
          "orchdoc_ids.py",
          "reader_library_runner.py",
          "checkout_lookup.py",
-         "mentions.py", "facets.py", "corpus.py", "memory_index.py", "sweep_read.py"]
+         "mentions.py", "facets.py", "corpus.py", "memory_index.py", "sweep_read.py",
+         "batch_approval.py", "git_guard.py", "orchdoc_config.py", "reader_docs.py", "reader_emails.py",
+         "reader_text.py",
+         "publish_scrub.py", "generated_writes.py"]
 
 COMPANIONS = {"mentions.py": ["route.py", "knowledge_gate.py", "knowledge_pages.py"],
               "facets.py": ["route.py", "knowledge_gate.py", "knowledge_pages.py"],
               "corpus.py": ["route.py", "knowledge_pages.py"],
               "memory_index.py": ["route.py"],
-              "sweep_read.py": ["orchdoc_sweep.py"]}
+              "sweep_read.py": ["orchdoc_sweep.py"],
+              "reader_text.py": ["render_orchdoc_reader.py", "reader_scripts.py"],
+              "reader_docs.py": ["render_orchdoc_reader.py"],
+              "reader_emails.py": ["render_orchdoc_reader.py"],
+              "batch_approval.py": ["render_orchdoc_reader.py"],
+              "git_guard.py": ["orchdoc.py"],
+              "publish_scrub.py": ["orchdoc_publish.py"],
+              "generated_writes.py": ["knowledge_pages.py"]}
 
 PARTS = {"orchdoc.py": "orchdoc_parts"}
 

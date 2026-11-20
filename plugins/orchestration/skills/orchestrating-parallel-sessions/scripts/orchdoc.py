@@ -216,6 +216,20 @@ def _main_worktree():
     return None
 
 
+CITABLE_ERRORS = []   # (path, "ExcType: message") for each folder citable_repos() could not read
+_CITABLE_PRINTED = set()   # paths already reported on stderr in this process
+
+
+def _citable_failed(path, ex):
+    msg = "%s: %s" % (type(ex).__name__, str(ex)[:160])
+    CITABLE_ERRORS.append((str(path), msg))
+    # citable_repos() runs several times in one check; say each folder's failure once.
+    if str(path) not in _CITABLE_PRINTED:
+        _CITABLE_PRINTED.add(str(path))
+        print("orchdoc: citable_repos could not read %s (%s); the repo list may be short"
+              % (path, msg), file=sys.stderr)
+
+
 def citable_repos():
     """
     Every repo an OrchDoc may cite. DISCOVERED, not listed.
@@ -230,15 +244,24 @@ def citable_repos():
     if main is not None and main != PROJECTS:
         roots.append(main)
     found = list(roots)
-    try:
-        for root in roots:
-            for g in root.glob("*/.git"):
-                found.append(g.parent)
-            for g in root.glob("*/*/.git"):
-                if "node_modules" not in str(g):
-                    found.append(g.parent)
-    except Exception:
-        pass
+    del CITABLE_ERRORS[:]
+    for root in roots:
+        try:
+            kids = list(root.iterdir())
+        except Exception as ex:
+            _citable_failed(root, ex)
+            continue
+        for d in kids:
+            try:
+                if d.name == "node_modules" or not d.is_dir():
+                    continue
+                if (d / ".git").exists():
+                    found.append(d)
+                for g in d.glob("*/.git"):
+                    if "node_modules" not in str(g):
+                        found.append(g.parent)
+            except Exception as ex:
+                _citable_failed(d, ex)
     found.extend(r for r in _EXTERNAL_REPOS if (r / ".git").exists())
     seen, out = set(), []
     for r in found:
@@ -510,6 +533,58 @@ def first_open_subitem(body, stopsign_means_open=False):
     return None
 
 
+_OPEN_BOX_RE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s+\[ \]\s+\S")
+_REPLY_BOX_RE = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)\[ \](\s+(?:\*\*)?the human(?:\*\*)?\s*:)", re.I)
+
+
+def open_boxes(body):
+    """[(offset-in-body, raw line)] for every unticked `- [ ]` box outside a fence."""
+    out = []
+    for off, raw in enumerate(prose_only(body).splitlines()):
+        if _OPEN_BOX_RE.match(re.sub(r"~~.*?~~", "", raw)):
+            out.append((off, raw))
+    return out
+
+
+def archive_holds(body, stopsign_means_open=False, eid=""):
+    box = open_boxes(body)
+    if box:
+        return box[0]
+    if eid and eid[:1] not in ("D", "T", "W", "A"):
+        return None
+    pb = prose_only(body).splitlines()
+    skip = {k for k, raw in enumerate(pb) if _DESCRIPTION_BULLET_RE.match(raw)}
+    if not skip:
+        return first_open_subitem(body, stopsign_means_open)
+    kept = "\n".join("" if k in skip else raw for k, raw in enumerate(pb))
+    return first_open_subitem(kept, stopsign_means_open)
+
+
+_DESCRIPTION_BULLET_RE = re.compile(r"\s*(?:[-*+]|\d+[.)])\s+\*\*[^*\n]{1,60}?[.:]\*\*\s")
+
+
+def tick_reply_boxes(lines, start, end):
+    """Tick each `- [ ] the human: ...` box in lines[start:end] outside a fence. -> how many."""
+    pb = prose_only("\n".join(lines[start:end])).splitlines()
+    n = 0
+    for k, ln in enumerate(pb):
+        if _REPLY_BOX_RE.match(ln):
+            lines[start + k] = _REPLY_BOX_RE.sub(r"\1[x]\2", lines[start + k], count=1)
+            n += 1
+    return n
+
+
+def open_box_refusal(eid, status, boxes, first_line):
+    """The text `resolve` (and every other terminal-status write) prints for open boxes."""
+    rows = "\n".join("         line %d: %s" % (first_line + off, raw.strip()[:160])
+                     for off, raw in boxes)
+    return ("[REFUSE] %s still has %d open box%s, so it cannot be marked %s ("
+            "an item with an unticked box is never marked resolved):\n%s\n"
+            "         Tick each box that is done (`- [x]`) or strike it, and leave the entry "
+            "open while any box is still owed." % (eid, len(boxes), "" if len(boxes) == 1
+                                                   else "es", status, rows))
+
+
 _OPEN_SUBITEM_RE = re.compile(
     r"⏳|(?<![A-Za-z_-])(?:NOT DONE|NOT YET|NOT STARTED|OUTSTANDING|STILL NEED"
     r"|STILL TO|TODO|PENDING|UNBUILT|AWAITING)(?![A-Za-z_-])", re.I)
@@ -728,9 +803,14 @@ def parse_notes(text):
     """[{nid, who, when, text, line}] for every note in `text`, 1-indexed by line.
     """
     out = []
-    rows = text.split("\n")
-    for n, (raw, (fenced, _open)) in enumerate(zip(rows, fence_states(rows)), start=1):
-        if fenced:
+    if NOTE_MARK not in text:
+        return out
+    inside = False
+    for n, raw in enumerate(text.split("\n"), start=1):
+        if is_fence_line(raw):
+            inside = not inside
+            continue
+        if inside or NOTE_MARK not in raw:
             continue
         m = NOTE_LINE_RE.match(raw)
         if m:
@@ -3252,6 +3332,8 @@ ADVISORY = {"W-STALLED", "W-DEADCITE", "W-SHACITE", "W-LINECITE", "W-BADLINEREF"
             "W-WALLOFTEXT", "W-PICTURENOTSHOWN", "W-CLOUDREF"}
 BLOCKING |= {"E-COPYBYLINK", "E-IMAGEBYPATH", "E-PRELABEL", "E-BURIEDASK", "E-WORDSELSEWHERE"}
 ADVISORY |= {"W-PASTEDRIFT", "W-PICUNTRACKED"}
+BLOCKING |= {"E-DONEOPENBOX"}
+ADVISORY |= {"W-ASKNOTBOX", "W-ASKNOREC"}
 ADVISORY |= {"W-ORCHNOTE"}
 
 
@@ -3334,12 +3416,13 @@ def fence_states(lines):
     inserted straight under it would be inside that fence.
     """
     out, inside = [], False
+    add = out.append
     for raw in lines:
         if is_fence_line(raw):
             inside = not inside
-            out.append((True, inside))
+            add((True, inside))
         else:
-            out.append((inside, inside))
+            add((inside, inside))
     return out
 
 
@@ -3365,16 +3448,22 @@ def scan_structure(lines):
         elif in_att and not raw.strip():
             in_att = False
         if not in_att:
-            low = re.sub(r"<!--.*?-->", "", raw.lower())
-            low = re.sub(r"`[^`]*`", "", low)
-            if "<details" in low:
-                depth += 1
-                opens = 1
-            if "</details>" in low:
-                depth = max(0, depth - 1)
-                closes = 1
+            low = raw.lower()
+            if "<details" in low or "</details>" in low or "<!--" in low \
+                    or ("`" in low and "<" in low):
+                low = re.sub(r"<!--.*?-->", "", low)
+                low = re.sub(r"`[^`]*`", "", low)
+                if "<details" in low:
+                    depth += 1
+                    opens = 1
+                if "</details>" in low:
+                    depth = max(0, depth - 1)
+                    closes = 1
         out.append((False, depth, opens, closes))
     return out
+
+
+_HEAD_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
 def parse_entries(lines):
@@ -3389,9 +3478,9 @@ def parse_entries(lines):
     # the parser and `archive` share one scan.
     for i, (raw, (fenced, depth, _o, _c)) in enumerate(
             zip(lines, scan_structure(lines)), start=1):
-        if fenced:
+        if fenced or not raw.startswith("#"):
             continue
-        m = re.match(r"^(#{1,6})\s+(.*)$", raw)
+        m = _HEAD_RE.match(raw)
         if m:
             heads.append((i, len(m.group(1)), m.group(2).rstrip(), depth > 0))
 
@@ -3644,6 +3733,7 @@ PICTURES_HEAD_RE = re.compile(
 PICTURES_LINE_RE = re.compile(
     r'^!\[[^\]\n]*\]\([^)\s]+(?:\s+(?:"[^"\n]*"|&quot;(?:(?!&quot;).)*&quot;))?\)$')
 PICTURE_TYPES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}   # the Reader's raster list
+AUDIO_EMBED_TYPES = {".mp3", ".wav", ".m4a", ".ogg"}
 _PAGE_URL_RE = re.compile(r"\b(?!file:)[a-z][a-z0-9+.-]*://\S+", re.I)
 _PAGE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/])?[\w.@~+%-]+(?:[\\/][\w.@~+% -]*?[\w.@~+%-])*\.html?(?![\w.])", re.I)
@@ -4550,7 +4640,7 @@ def image_ext(raw):
     return None
 
 
-def reader_shows(raw, roots=None):
+def reader_shows(raw, roots=None, types=None):
     """(Path, None) when the Reader would show `![alt](raw)` as a picture, else (None, why).
     The Reader's `resolve_asset`, tried against each root: a picture saved in a worktree has
     the same relative path in the shared checkout the Reader serves."""
@@ -4560,9 +4650,10 @@ def reader_shows(raw, roots=None):
     if u.startswith(("/", "//", "#")) or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", u):
         return None, "only a path relative to the workspace is allowed, not %r" % u
     ext = os.path.splitext(u)[1].lower()
-    if ext not in PICTURE_TYPES:
+    types = PICTURE_TYPES if types is None else types
+    if ext not in types:
         return None, "%s is not one of %s" % (ext or "no extension",
-                                              ", ".join(sorted(PICTURE_TYPES)))
+                                              ", ".join(sorted(types)))
     why = "no file at that path"
     for r in (roots if roots is not None else _picture_roots()):
         r = Path(r).resolve()
@@ -4720,6 +4811,12 @@ def _image_mentions(rows, notes, roots):
             continue
         cut = list(r)
         for m in _EMBED_SRC_RE.finditer(masked[i]):
+            if os.path.splitext(m.group(2).strip())[1].lower() in AUDIO_EMBED_TYPES:
+                p, why = reader_shows(m.group(2), roots, AUDIO_EMBED_TYPES)
+                if p is None:
+                    found.append((i, "embed-bad", m.group(2), None, why))
+                cut[m.start():m.end()] = " " * (m.end() - m.start())
+                continue
             p, why = reader_shows(m.group(2), roots)
             if p is not None:
                 shown.add(p)
@@ -5033,6 +5130,13 @@ def image_findings(doc_name, entries, lines, force_open=(), roots=None, only=Non
                 f = p if kind == "path" else _local_file(raw, roots)
                 if f is not None:
                     reported.setdefault(e["line"], set()).add(os.path.normcase(str(f)))
+            if kind == "embed-bad" and os.path.splitext(raw.strip())[1].lower() in AUDIO_EMBED_TYPES:
+                out.append(Finding("E-IMAGEBYPATH", line,
+                                   "%s embeds %s, which the Reader cannot play: %s"
+                                   % (e["id"], raw, why),
+                                   "put the audio file inside the workspace and embed it by its "
+                                   "path relative to the workspace, as ![](folder/track.mp3)"))
+                continue
             if kind == "embed-bad":
                 local = _local_file(raw, roots)
                 if local is not None:
@@ -5956,6 +6060,137 @@ def _selftest_words_elsewhere():
     return bool(words_sent_elsewhere(bad)) and not words_sent_elsewhere(good)
 
 
+ASK_SHAPE = "- [ ] (1) <the question>. **Recommend:** <your recommendation>"
+_AS_ITEM_RE = re.compile(r"^(\s*)[-*+]\s+(?!\[[ xX]\]\s)(.*)$")
+_AS_BOX_RE = re.compile(r"^(\s*)[-*+]\s+\[ \]\s+(.*)$")
+_AS_ANY_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+_AS_MARKER_RE = re.compile(r"^(?:\(\s*(?:\d{1,2}|[a-z])\s*\)|(?:\d{1,2}|[a-z])[.)])(?=\s|\*|$)", re.I)
+_AS_ASKWORD_RE = re.compile(
+    r"\b(?:approve|choose|decide|your call|yes or no|recommends?|recommendation)\b", re.I)
+_AS_REC_RE = re.compile(r"\brecommend(?:ation)?\s*:", re.I)
+_AS_DATED_RE = re.compile(r"^[\s*_~]*\d{4}-\d{2}-\d{2}(?!\d)")
+_AS_CHOICE_RE = re.compile(
+    r"\b(?:approve|choose|decide|your call|yes or no|which|whether|should)\b", re.I)
+_AS_RULED_RE = re.compile(
+    r"^\W*(?:%s)\W{0,3}(?:ruled|said|answered|approved|replied|chose|decided|rejected|wrote|"
+    r"asked|could not|did not|was|has|had)\b")
+
+
+def _as_bare(text):
+    """`text` with quoted spans, code spans and HTML comments blanked, for the "?" and word tests."""
+    return _BA_QUOTE_RE.sub(" ", re.sub(r"<!--.*?-->|https?://\S+", " ", text))
+
+
+def _as_items(lines, a, b, fz):
+    """[(row, kind, text)] for each list item in rows a..b-1: kind is "box" for an unchecked
+    `- [ ]`, "plain" for a `-` bullet that is not a box. `text` joins the item's continuation
+    lines (indented, not a list item of their own). Fenced and `>` rows are skipped."""
+    out, i = [], a
+    while i < b:
+        ln = lines[i]
+        if i in fz or ln.lstrip().startswith(">"):
+            i += 1
+            continue
+        mb = _AS_BOX_RE.match(ln)
+        mp = None if mb else _AS_ITEM_RE.match(ln)
+        if not (mb or mp):
+            i += 1
+            continue
+        m = mb or mp
+        parts, j = [m.group(2).strip()], i + 1
+        while j < b and j not in fz:
+            nxt = lines[j]
+            if (not nxt.strip() or not nxt.startswith(" ") or _AS_ANY_ITEM_RE.match(nxt)
+                    or nxt.lstrip().startswith(">")):
+                break
+            parts.append(nxt.strip())
+            j += 1
+        # A box's own nested lines (deeper than its marker, blank lines between) belong to it, so
+        # a **Recommend:** written under its nested wording still counts for W-ASKNOREC.
+        nested, k, ind = [], j, len(m.group(1).expandtabs(4))
+        while mb and k < b and k not in fz:
+            nxt = lines[k]
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= ind:
+                break
+            nested.append(nxt.strip())
+            k += 1
+        out.append((i, "box" if mb else "plain", " ".join(parts), " ".join(nested)))
+        i = j
+    return out
+
+
+def _as_names_owner(sentence):
+    names = "|".join(re.escape(n) for n in sorted(human_owner_names(), key=len, reverse=True))
+    rx = r"\b(?:you|your)\b" + (r"|(?<!\w)(?:%s)(?!\w)" % names if names else "")
+    return re.search(rx, sentence, re.I) is not None
+
+
+def ask_not_box(text):
+    """True when the plain bullet `text` asks the human something (W-ASKNOTBOX)."""
+    bare = _as_bare(text)
+    lead = bare.lstrip().lstrip("*_ ").lstrip()
+    if _AS_MARKER_RE.match(lead) and ("?" in bare or _AS_ASKWORD_RE.search(bare)):
+        return True
+    return any(_as_names_owner(s) for s in re.findall(r"[^.!;?]*\?", bare))
+
+
+def ask_no_rec(text, nested=""):
+    """True when the unchecked box `text` asks the human something and carries no Recommend: (W-ASKNOREC).
+    `nested`: the box's own nested lines, which may hold the Recommend:."""
+    if _AS_REC_RE.search(text) or _AS_REC_RE.search(nested):
+        return False
+    bare = _as_bare(text)
+    names = "|".join(re.escape(n) for n in sorted(human_owner_names(), key=len, reverse=True))
+    if names and re.match(_AS_RULED_RE.pattern % names, bare, re.I):
+        return False
+    if _AS_DATED_RE.match(bare):
+        return False
+    return "?" in bare or _AS_CHOICE_RE.search(bare) is not None
+
+
+def ask_shape_findings(entries, lines, fz=None):
+    """W-ASKNOTBOX and W-ASKNOREC for one doc's lines (see the block comment above)."""
+    fz = fenced_lines(lines) if fz is None else fz
+    starts = sorted(x["line"] - 1 for x in entries)
+    out = []
+    for e in entries:
+        if not _guard_open(e) or not _human_acts(e):
+            continue
+        a, b = _own_span(e, starts, len(lines))
+        for row, kind, text, nested in _as_items(lines, a + 1, b, fz):
+            if kind == "plain" and ask_not_box(text):
+                out.append(Finding(
+                    "W-ASKNOTBOX", row + 1,
+                    "%s asks the human something in a plain bullet, so the Reader gives it no Approve "
+                    "button: %s" % (e["id"], text[:160]),
+                    "make each ask its own unticked box with your recommendation: %s" % ASK_SHAPE))
+            elif kind == "box" and ask_no_rec(text, nested):
+                out.append(Finding(
+                    "W-ASKNOREC", row + 1,
+                    "%s has an unticked box asking the human with no **Recommend:**, so Approve has "
+                    "nothing to approve: %s" % (e["id"], text[:160]),
+                    "add your recommendation to the box: %s" % ASK_SHAPE))
+    return out
+
+
+def _selftest_ask_shape():
+    """Fixture for the selftest: a numbered ask as a plain bullet, and a box with no
+    recommendation, fire; the same asks as boxes with **Recommend:** do not."""
+    who = human_name().title()
+    head = ("## DECISIONS\n\n### Q9998 - two calls\n**Status:** OPEN - **Owner:** %s - "
+            "**Opened:** 2026-11-18\n\n" % who)
+    bad = head + ("- **(1) The new wording.** Approve, or give changes.\n"
+                  "- [ ] %s: keep invite sign-ups signed in?\n" % who)
+    good = head + ("- [ ] (1) Approve the new wording? **Recommend:** approve.\n"
+                   "- [ ] (2) Keep invite sign-ups signed in? **Recommend:** yes.\n")
+
+    def codes(t):
+        ls = t.split("\n")
+        ents, _s = parse_entries(ls)
+        return sorted(f.code for f in ask_shape_findings(ents, ls))
+    return codes(bad) == ["W-ASKNOREC", "W-ASKNOTBOX"] and codes(good) == []
+
+
 def check_doc(path):
     """Run every invariant against one doc. Returns a list of Finding."""
     try:
@@ -6394,11 +6629,25 @@ def check_doc(path):
         in_live = is_active_section(e["section"])
         if not in_live and governing and governing.split(".")[0] in ("2", "3"):
             in_live = True
+        _boxes = (open_boxes(e["body"]) if st in TERMINAL_STATUS
+                  and not (governing or "").startswith("99") else [])
+        if _boxes:
+            findings.append(Finding(
+                "E-DONEOPENBOX", e["line"] + _boxes[0][0],
+                "'%s' is %s while %d box%s still open: %s"
+                % (e["id"], st, len(_boxes), " is" if len(_boxes) == 1 else "es are",
+                   _boxes[0][1].strip()[:120]),
+                "tick each box that is done (`- [x]`), or reopen the entry with orchdoc.py "
+                "resolve --doc <doc> <id> --status OPEN"))
         if st in TERMINAL_STATUS and in_live:
+            _held = archive_holds(e["body"], _stopsign_ok, e["id"]) is not None
             findings.append(Finding(
                 "E-DONEINACTIVE", e["line"],
                 "'%s' is %s but sits under '%s', which promises live items"
                 % (e["id"], st, (e["section"] or "")[:40]),
+                ("archive will hold it back: tick or strike its open sub-items, or reopen it "
+                 "with orchdoc.py resolve --doc <doc> <id> --status OPEN")
+                if _held else
                 "move it to a resolved section: orchdoc.py archive --doc <doc>"))
 
         # The heading marker is DERIVED from the field, so it cannot contradict it.
@@ -6551,6 +6800,8 @@ def check_doc(path):
             continue
         tok = m.group(1)
         if ID_RE.match(tok) or not re.match(r"^[A-Z]{1,3}[-\d]", tok):
+            continue
+        if ARCHIVED_ID_RE.search(ln):
             continue
         findings.append(Finding(
             "E-BADID", i + 1,
@@ -7087,6 +7338,13 @@ def check_doc(path):
                 "the PR or file may follow as the source. A document with its own Reader page is the exception: "
                 "link that page instead"))
 
+    if _wants("W-ASKNOTBOX", "W-ASKNOREC"):
+        try:
+            findings.extend(ask_shape_findings(entries, lines_live, fz=fenced_lines(lines)))
+        except Exception as _e:
+            sys.stderr.write("[orchdoc] W-ASKNOTBOX could not run on %s: %s\n"
+                             % (path.name, str(_e)[:160]))
+
     if _wants("W-PICUNTRACKED"):
         try:
             _by_line = sorted(entries, key=lambda x: x["line"])
@@ -7494,7 +7752,74 @@ def report(path, findings, quiet=False, strict=False):
     return 1 if blocking else 0
 
 
+def split_unedited_stale(doc, findings, canon_txt):
+    """
+
+    A landing answers only for the entries IT edited. An entry whose cited facts moved because
+    other work landed is stale whether or not this landing touches it, so refusing for it made
+    every landing a fight over someone else's entry and the override routine. Those findings
+    come back as `deferred` and are listed for their owner; `check` and `check --stale-sweep`
+    still report all of them.
+
+    EDITED = the entry's body differs from the canonical copy, or it is not on it yet. If either
+    copy cannot be parsed, nothing is deferred (refuse rather than guess).
+    """
+    if not any(f.code == "E-STALEPROSE" for f in findings):
+        return findings, []
+    try:
+        mine = parse_entries(doc.read_text(encoding="utf-8").splitlines())[0]
+        canon = {}
+        for e in parse_entries(canon_txt.splitlines())[0]:
+            if e.get("id"):
+                # A duplicated id is never "unedited": its copies cannot be told apart.
+                canon[e["id"]] = None if e["id"] in canon else (e.get("body") or "").strip()
+    except Exception:
+        return findings, []
+    unedited_lines = set()
+    for e in mine:
+        if not e.get("id") or canon.get(e["id"]) is None:
+            continue
+        if canon[e["id"]] == (e.get("body") or "").strip():
+            unedited_lines.add(e["line"])
+    kept, deferred = [], []
+    for f in findings:
+        if f.code == "E-STALEPROSE" and f.line in unedited_lines:
+            deferred.append(f)
+        else:
+            kept.append(f)
+    return kept, deferred
+
+
+def cmd_stale_sweep(args):
+    """
+    Never blocks (exit 0). A scheduled task runs `orchdoc.py check --stale-sweep`.
+    """
+    docs = resolve_docs(args)
+    if not docs:
+        print("no OrchDocs found", file=sys.stderr)
+        return 2
+    total = 0
+    print("orchdoc stale-sweep - %d doc(s); E-STALEPROSE only, not blocking" % len(docs))
+    for d in docs:
+        hits = [f for f in check_doc(d) if f.code == "E-STALEPROSE"]
+        if not hits:
+            continue
+        total += len(hits)
+        print()
+        print("  %s: %d stale entr%s - owner walks and re-attests" % (
+            d.name, len(hits), "y" if len(hits) == 1 else "ies"))
+        for f in hits:
+            m = re.search(r"entry '([^']+)'", f.msg)
+            print("    %-6s line %-6s %s" % (m.group(1) if m else "?", f.line,
+                                            (f.detail or "")[:110]))
+    print()
+    print("stale entries: %d" % total)
+    return 0
+
+
 def cmd_check(args):
+    if getattr(args, "stale_sweep", False):
+        return cmd_stale_sweep(args)
     docs = resolve_docs(args)
     if not docs:
         print("no OrchDocs found", file=sys.stderr)
@@ -7679,6 +8004,9 @@ def cmd_selftest(args):
         ("E-DONEINACTIVE",
          "## DECISIONS - need your call\n\n### D9901 - already decided\n"
          "**Status:** RESOLVED - **Owner:** the human\n\nbody\n"),
+        ("E-DONEOPENBOX",
+         "## DECISIONS - need your call\n\n### Q9901 - asked and closed too early\n"
+         "**Status:** RESOLVED - **Owner:** the human\n\n- [ ] the human: reply with a choice\n"),
         ("W-NOBLOCKER",
          "## ON CLAUDE'S PLATE\n\n### W9901 - blocked on nothing anyone can name\n"
          "**Status:** BLOCKED - **Owner:** o99 - **Opened:** 2026-08-01\n\nbody\n"),
@@ -7711,6 +8039,7 @@ def cmd_selftest(args):
         ("E-PRELABEL", None),
         ("E-BURIEDASK", None),
         ("E-WORDSELSEWHERE", None),
+        ("W-ASKNOTBOX", None),
         ("E-AMBIGUOUSDATE",
          "## DECISIONS\n\n### D9901 - verdict\n"
          "**Status:** OPEN - **Reviewed:** 2026-08-05\n**Depends:** F9902\n\nbody\n\n"
@@ -7818,6 +8147,14 @@ def cmd_selftest(args):
             ok &= good
             print("  [%s] %-12s -> a pointer to a PR or file for words fires; the words quoted "
                   "in the entry do not" % ("OK" if good else "FAIL", want))
+            continue
+
+        if body is None and want == "W-ASKNOTBOX":
+            good = _selftest_ask_shape()
+            ok &= good
+            print("  [%s] %-12s -> a numbered ask as a plain bullet fires, and a box with no "
+                  "Recommend: fires W-ASKNOREC; both as boxes with **Recommend:** do not"
+                  % ("OK" if good else "FAIL", want))
             continue
 
         if body is None and want == "E-WAKESOTHERS":
@@ -8008,7 +8345,7 @@ def cmd_selftest(args):
                 _g("update-ref", "refs/remotes/origin/main", "HEAD")
 
                 _real_git = globals()["git"]
-                globals()["git"] = lambda a, cwd=None, _r=_real_git, _p=_repo: _r(a, cwd=_p)
+                globals()["git"] = lambda a, cwd=None, keep_ws=False, _r=_real_git, _p=_repo: _r(a, cwd=_p, keep_ws=keep_ws)
                 _ROLE_CACHE.clear()
                 try:
                     _codes = [f for f in check_doc(_repo / _name)
@@ -8931,6 +9268,8 @@ def cmd_add(args):
             % (owner, today),
             "",
             "_Stub captured at decision time. Enrich when load is low: paths, why it matters,",
+            ("the recommendation (each ask its own box: `%s`), and what is blocked until it is "
+             "answered._" % ASK_SHAPE) if args.kind in ("decision", "question") else
             "the recommendation, and what is blocked until it is answered._",
             "",
         ]
@@ -9544,6 +9883,7 @@ def _note_onto_canonical(canon, mine, op, landed_before=frozenset(), avoid=(), s
                             block=[new_head if k == 1 else l for k, l in enumerate(t_op["block"])])
 
     # 1. Earlier stuck notes first, so the new one lands after them, as it was written.
+    by_nid, lines_moved = None, False
     for k, dn in enumerate(d_notes):
         if dn["nid"] == own_nid:
             continue                                  # the operation itself, below
@@ -9558,7 +9898,11 @@ def _note_onto_canonical(canon, mine, op, landed_before=frozenset(), avoid=(), s
                           "why": "its entry %s lands as %s, and the note is not on main yet"
                                  % (entries[0][0], entries[0][1])})
             continue
-        here = [c for c in parse_notes("\n".join(lines)) if c["nid"] == dn["nid"]]
+        if by_nid is None:
+            by_nid = {}
+            for c in parse_notes("\n".join(lines)):
+                by_nid.setdefault(c["nid"], []).append(c)
+        here = by_nid.get(dn["nid"], [])
         same = [c for c in here if c["text"] == dn["text"]]
         acts = not same or (dn["ack"] and not any(c["ack"] for c in same))
         if acts and d_eid[k] in filed:
@@ -9574,9 +9918,17 @@ def _note_onto_canonical(canon, mine, op, landed_before=frozenset(), avoid=(), s
                 continue
         if same:
             if dn["ack"] and not any(c["ack"] for c in same):
+                if lines_moved:
+                    # Line numbers held in `by_nid` predate a placement: read them again.
+                    lines_moved = False
+                    by_nid = {}
+                    for c in parse_notes("\n".join(lines)):
+                        by_nid.setdefault(c["nid"], []).append(c)
+                    same = [c for c in by_nid.get(dn["nid"], []) if c["text"] == dn["text"]]
                 i = same[0]["line"] - 1
                 removed.append(lines[i])
                 lines[i] = d_lines[dn["line"] - 1]
+                by_nid = None
                 carried.append(dn["nid"] + " (ack)")
             continue
         if (dn["nid"], dn["text"]) in landed_before:
@@ -9602,8 +9954,19 @@ def _note_onto_canonical(canon, mine, op, landed_before=frozenset(), avoid=(), s
                                [d_notes[j]["nid"] for j in sib[:pos]],
                                [d_notes[j]["nid"] for j in sib[pos + 1:]])
         if why:
+            by_nid = None                             # `lines` may have changed: read again
             stuck.append({"nid": dn["nid"], "text": dn["text"], "why": why})
             continue
+        # The line is on `lines` now. Its note is added to `by_nid` without a parse, so a run of
+        # carried notes does not read the document once each; the line numbers already held
+        # are stale from here, which only the ack branch above uses (`lines_moved`).
+        lines_moved = True
+        _placed = parse_notes(line)
+        if by_nid is not None and _placed:
+            _placed[0]["line"] = None
+            by_nid.setdefault(_placed[0]["nid"], []).append(_placed[0])
+        else:
+            by_nid = None
         carried.append(new_id if new_id == dn["nid"] else "%s (as %s)" % (dn["nid"], new_id))
         avoid.add(new_id)
         if new_id != dn["nid"]:
@@ -11282,6 +11645,10 @@ def _move_to_completed(lines, eid, status, label, dest=None):
     if len(e) != 1:
         return "entry %s is not a live entry here" % eid
     start, end = e[0]["line"] - 1, _entry_end(e[0])
+    if status != WITHDRAWN_STATUS:
+        _boxes = open_boxes("\n".join(lines[start:end]))
+        if _boxes:
+            return open_box_refusal(eid, status, _boxes, e[0]["line"]).replace("[REFUSE] ", "")
     blk = lines[start:end]
     for k, ln in enumerate(blk):
         if STATUS_RE.search(ln) and "**Status:**" in ln:
@@ -12554,6 +12921,14 @@ def apply_resolve(lines, eid, status, ruling, depends=None, adopt=False, who="or
     e = match[0]
 
     status = status.upper()
+    if status in TERMINAL_STATUS:
+        _s, _t = e["line"] - 1, _entry_end(e)
+        if eid[:1] == "Q" and status in ("RESOLVED", "ANSWERED"):
+            tick_reply_boxes(lines, _s, _t)
+        _boxes = open_boxes("\n".join(lines[_s:_t]))
+        if _boxes:
+            return open_box_refusal(eid, status, _boxes, e["line"])
+        e = [x for x in parse_entries(lines)[0] if x["id"] == eid][0]
     changed = False
     end = e["line"] + len(e["body"].splitlines())
     for i in range(e["line"], min(end, len(lines))):
@@ -12902,6 +13277,34 @@ def cmd_refresh_meta(args):
     return 0
 
 
+PHONE_SYNC = True
+
+
+def _start_phone_drive_sync(doc):
+    """After an OrchDoc landing, START the phone Reader's Drive sync and return at once.
+
+    It runs only for a real workspace: the script must exist in PROJECTS' own .shared/scripts (a
+    selftest or test fixture workspace has none, so no fixture landing ever starts a Drive upload),
+    and only when the landed doc is an ORCHESTRATOR-DECISIONS-o<N>.md.
+    """
+    if not PHONE_SYNC or os.environ.get("ORCHDOC_NO_PHONE_SYNC") == "1":
+        return
+    if not re.match(r"ORCHESTRATOR-DECISIONS-o\d+\.md$", Path(str(doc)).name):
+        return
+    script = Path(PROJECTS) / ".shared" / "scripts" / "reader_phone_sync_bg.py"
+    if not script.is_file():
+        return
+    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
+          "close_fds": True}
+    if os.name == "nt":
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS
+        kw["creationflags"] = 0x08000000 | 0x00000200 | 0x00004000
+    else:
+        kw["start_new_session"] = True
+    subprocess.Popen([sys.executable, str(script)], cwd=str(script.parent), **kw)
+    print("  phone Drive sync started in the background (reader_phone_sync_bg.py)")
+
+
 def _republish_mirrors(landed):
     """After a landing that touched a mirrored tool or skill, write the copies from the ref.
     """
@@ -12943,6 +13346,9 @@ def non_markdown_doc_refusal(doc):
             "comments and would break a code or data file. Land it with `--also %s` next to "
             "its OrchDoc, and put the attestation in the commit message."
             % (Path(doc).name, Path(doc).name))
+
+
+EXIT_REJECTED = 3
 
 
 def cmd_commit(args):
@@ -12997,6 +13403,18 @@ def cmd_commit(args):
     print()
 
     findings = [f for f in check_doc(doc) if f.code in BLOCKING]
+
+    _rc_w, _canon_w, _ = git(["show", "%s:%s" % (pinned, rel)])
+    findings, _deferred_stale = split_unedited_stale(
+        doc, findings, _canon_w if _rc_w == 0 else "")
+    if _deferred_stale:
+        _ids = []
+        for _f in _deferred_stale:
+            _m = re.search(r"entry '([^']+)'", _f.msg)
+            _ids.append(_m.group(1) if _m else "line %s" % _f.line)
+        print("  [note] E-STALEPROSE on %d entr%s this landing did not edit (not blocking; "
+              "owner re-reads: `orchdoc.py check --stale-sweep`): %s"
+              % (len(_ids), "y" if len(_ids) == 1 else "ies", ", ".join(_ids)))
 
     override_codes = [c.strip().upper() for c in (args.override or "").split(",") if c.strip()]
 
@@ -13588,11 +14006,11 @@ def cmd_commit(args):
             print("  [REJECTED] auth, not a race: %s" % blob[:150])
             print("             `gh auth login` in an interactive shell, then re-run.")
             print("             Nothing was clobbered.")
-            return 1
+            return EXIT_REJECTED
         if attempt == 5:
             print("  [REJECTED] main is moving faster than this can rebuild. Re-run.")
             print("             Nothing was clobbered.")
-            return 1
+            return EXIT_REJECTED
         print("  [race] main moved; re-parenting onto the fresh tip (attempt %d)" % attempt)
         git(["fetch", "--quiet", "origin"])
         _rc_new, _new, _ = git(["rev-parse", "--verify", "%s^{commit}" % ref])
@@ -13617,6 +14035,18 @@ def cmd_commit(args):
             print("           file(s). Reconcile rather than overwrite:")
             for ln in others.splitlines()[:5]:
                 print("             %s" % ln[:92])
+            _rcg, _grp, _ = git(["log", "--format=%H%x09%(trailers:key=" + LANDER_TRAILER
+                                 + ",valueonly,separator=%x2C)%x09%s",
+                                 "%s..%s" % (pinned, _new), "--"] + wanted)
+            _rows = [r.split("\t", 2) for r in (_grp or "").splitlines() if r.strip()]
+            if _rcg == 0 and _rows and all(
+                    len(r) == 3 and _commit_origin(
+                        r[2], [x for x in r[1].split(",") if x.strip()], _lander) == "own"
+                    for r in _rows):
+                print("           NOTE: the commit(s) above, %s, were this group's own landing"
+                      " (%s)." % (", ".join(r[0][:10] for r in _rows[:3]), _lander))
+                print("           Your earlier push may have succeeded: re-check the ref"
+                      " (git log %s -- <doc>) rather than retrying." % ref)
             return 1
         pinned = _new
         commit = build_on(pinned)
@@ -13630,20 +14060,32 @@ def cmd_commit(args):
                   % _why_parent)
             return 1
 
-    git(["fetch", "--quiet", "origin"])
-    rc2, _, _ = git(["merge-base", "--is-ancestor", commit, ref])
-    if rc2 != 0:
-        print("  [FAILED] %s is NOT an ancestor of %s after the push. Do not trust the"
-              " push output; inspect by hand." % (commit[:10], ref), file=sys.stderr)
-        return 1
-    print("  [ok] gate 3 - verified: %s is an ancestor of %s" % (commit[:10], ref))
     print()
-    print("  LANDED. %s is now current on %s." % (doc.name, ref))
-    _report_delivery(doc)
-    # Every OTHER landed file too - another group's landing from ten minutes ago included.
-    # Only reached after gate 3 verified this landing; it cannot turn it into a failure.
-    _deliver_landed_files()
-    _republish_mirrors(touched)
+    print("  LANDED. %s is now current on %s (commit %s)." % (doc.name, ref, commit[:10]),
+          flush=True)
+    _anc = False
+    for _try in range(3):
+        git(["fetch", "--quiet", "origin"])
+        rc2, _, _ = git(["merge-base", "--is-ancestor", commit, ref])
+        if rc2 == 0:
+            _anc = True
+            break
+    if _anc:
+        print("  [ok] gate 3 - verified: %s is an ancestor of %s" % (commit[:10], ref))
+    else:
+        print("  [WARN] post-push verification (fetch + ancestry) could not confirm %s on %s"
+              " - the push itself succeeded, so this is still a landing. Re-check with"
+              " `git fetch origin` and `git log %s`." % (commit[:10], ref, ref),
+              file=sys.stderr, flush=True)
+    for _step_name, _step in (("report-delivery", lambda: _report_delivery(doc)),
+                              ("deliver-landed-files", _deliver_landed_files),
+                              ("republish-mirrors", lambda: _republish_mirrors(touched)),
+                              ("phone-drive-sync", lambda: _start_phone_drive_sync(doc))):
+        try:
+            _step()
+        except Exception as _e:  # noqa: BLE001 - a landed commit must not become exit 1
+            print("  [WARN] post-push step %s failed (%s: %s); the landing above stands."
+                  % (_step_name, type(_e).__name__, str(_e)[:150]), file=sys.stderr, flush=True)
     return 0
 
 
@@ -14249,7 +14691,8 @@ def cmd_archive(args):
             _live = is_active_section(e["section"]) or bool(
                 _gov and _gov.split(".")[0] in ("2", "3", "4"))
             if st in TERMINAL_STATUS and _live:
-                if has_open_subitems(e["body"], follows_stopsign_convention(entries)):
+                if archive_holds(e["body"], follows_stopsign_convention(entries),
+                                 e["id"]) is not None:
                     held.append(e["id"])
                     continue
                 movers.append(e)
@@ -16130,6 +16573,9 @@ def main():
     c.add_argument("--codes", help="comma-separated codes, e.g. E-STALEPROSE,E-IDORDER: report "
                                    "only these, and skip the slow checks that cannot emit them "
                                    "(the blanket-override hook uses it)")
+    c.add_argument("--stale-sweep", action="store_true",
+                   help="list every E-STALEPROSE entry per doc for its owner; never blocks "
+                        "(for a scheduled task)")
     c.set_defaults(func=cmd_check)
 
     f = sub.add_parser("freshness",
@@ -16434,6 +16880,10 @@ def main():
                          "finding. Use --override CODE[,CODE...] --because to land anyway.")
     cm.add_argument("--commit", dest="dry_run", action="store_false", default=True,
                     help="actually push (default is a dry run)")
+    cm.epilog = ("exit codes: 0 landed (or dry run ok); 1 a gate refused; 2 bad usage; "
+                 "3 push REJECTED (auth, or main moved too fast to rebuild; nothing pushed). "
+                 "Once LANDED has printed the exit is 0, even if a later fetch or delivery step "
+                 "only warns")
     cm.set_defaults(func=cmd_commit)
 
     nz = sub.add_parser("normalize",

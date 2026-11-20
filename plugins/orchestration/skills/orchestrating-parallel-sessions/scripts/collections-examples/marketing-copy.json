@@ -1,0 +1,17 @@
+{
+  "collections": [
+    {
+      "id": "copy",
+      "name": "Marketing copy",
+      "root": "copy",
+      "glob": "**/*.*",
+      "version_rule": {"type": "folder", "folder": "versions"},
+      "stages": [
+        {"id": "draft", "folder": "drafts", "label": "Drafts"},
+        {"id": "final", "folder": "approved", "label": "Approved", "approved": true},
+        {"id": "killed", "folder": "killed", "label": "Killed", "hidden": true}
+      ],
+      "final_rule": {"header_field": "Approved-By", "value_prefix": ""}
+    }
+  ]
+}

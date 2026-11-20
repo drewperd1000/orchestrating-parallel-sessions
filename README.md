@@ -90,6 +90,24 @@ Python **stdlib only**, so there is nothing to install. `orchdoc-audit` drives t
 rather than shipping its own copies. At runtime, `PROTOCOL-template.md` and `watch_mailbox.py`
 are copied next to a `mailboxes/` directory to wire up the hands-off relay.
 
+## Reading your own folders of documents (collections)
+
+Besides the orchestration documents, the Reader can show any folder of text documents you name
+in a config file. Each folder is a "collection": its documents are listed by stage (for example
+Drafting, Review, Filed) and the versions of one document are grouped, newest first.
+
+To try it, copy one of the files in
+`plugins/orchestration/skills/orchestrating-parallel-sessions/scripts/collections-examples/`
+(legal briefs, marketing copy, or a plain notes folder) to `.shared/state/reader/collections.json`
+in your workspace, change the folder names to yours, and start the Reader. The full guide is
+`collections.md` in the same `scripts/` folder.
+
+What to expect: collections are read-only. You cannot edit, approve or publish from them, and
+they have no search yet. A document moves between stages when you move its file into another stage
+folder. Collection notes and Compare need the optional note store and Compare modules, which the
+public copy of this tooling does not include. Only text files are listed, never keys or files
+named like secrets, and links that lead out of the collection folder are not followed.
+
 ## OrchDoc Reader freezing or sticking? Check your browser extensions first
 
 If the OrchDoc Reader freezes ("Page Unresponsive"), lags after a click or a save, or lets you

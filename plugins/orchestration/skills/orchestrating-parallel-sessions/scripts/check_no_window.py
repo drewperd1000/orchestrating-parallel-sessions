@@ -285,12 +285,28 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":
+def entry(argv=None):
     try:
-        sys.exit(main())
+        return main(argv)
     except SystemExit:
         raise
     except Exception as ex:           # a crash must never read as a refusal
         print("check_no_window: CRASHED, nothing was checked: %s: %s"
               % (type(ex).__name__, ex), file=sys.stderr)
-        sys.exit(2)
+        try:
+            import traceback
+            import hook_mode
+            frames = traceback.extract_tb(ex.__traceback__)
+            where = frames[-1]
+            own = [f for f in frames if os.path.basename(f.filename) == os.path.basename(__file__)]
+            hook_mode.warn("check_no_window", {
+                "crashed": True, "error": ("%s: %s" % (type(ex).__name__, ex))[:500],
+                "at": "%s:%d" % (os.path.basename(where.filename), where.lineno),
+                "in_check": ("%s:%d" % (os.path.basename(own[-1].filename), own[-1].lineno)) if own else ""})
+        except Exception:
+            pass                       # the record is a help, never a second crash
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(entry())

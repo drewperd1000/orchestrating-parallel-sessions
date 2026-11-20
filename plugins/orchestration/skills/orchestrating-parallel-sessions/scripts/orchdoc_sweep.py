@@ -1281,6 +1281,8 @@ def write_run(seed, run_dir, text):
         (run_dir / brief_name).write_text(b["brief"], encoding="utf-8")
         manifest["batches"].append({"n": i, "brief": brief_name, "log": log_name,
                                     "keys": [x["key"] for x in b["boxes"]], "lane": None,
+                                    "open_children": {x["key"]: x["kids"] for x in b["boxes"]
+                                                      if x.get("kids")},
                                     "status": "pending", "kept": [], "error": None})
     save_manifest(run_dir, manifest)
     return manifest
@@ -1382,6 +1384,33 @@ def keys_missing(keys, output):
     return [k for k in keys if k not in named]
 
 
+def done_with_open_children(output, open_children):
+    """Keys whose table row says DONE while the box has open children, as `[(key, n)]`.
+    `open_children` maps a box key to its open sub-box count (the manifest's batch records
+    it)."""
+    if not open_children:
+        return []
+    found, col = [], None
+    for ln in (output or "").split("\n"):
+        s = ln.strip()
+        if not s.startswith("|"):
+            col = None
+            continue
+        cells = [c.strip().strip("*`_ ").upper() for c in s.strip("|").split("|")]
+        if "VERDICT" in cells:
+            col = cells.index("VERDICT")
+            continue
+        if col is None or col >= len(cells) or not re.match(r"DONE\b", cells[col]):
+            continue
+        # The row's own key is its first one, as in count_action_rows; a key cited in the
+        # evidence column is another box and must not be flagged for this row's verdict.
+        m = BOX_KEY_RE.search(s)
+        k = m.group(1) if m else None
+        if k in open_children and (k, open_children[k]) not in found:
+            found.append((k, open_children[k]))
+    return found
+
+
 def build_report(manifest, outputs, now=None):
     """(text, counts) for the report `land` commits. `outputs` is one lane stdout per batch."""
     at = (now if isinstance(now, _dt.datetime) else _dt.datetime.now()).astimezone()
@@ -1389,8 +1418,11 @@ def build_report(manifest, outputs, now=None):
     named = sum(len(b["keys"]) - len(keys_missing(b["keys"], out))
                 for b, out in zip(manifest["batches"], outputs))
     action = sum(count_action_rows(out) for out in outputs)
+    bad_done = []
+    for b, out in zip(manifest["batches"], outputs):
+        bad_done += done_with_open_children(out, b.get("open_children"))
     counts = {"boxes_given": given, "boxes_named": named, "action_rows": action,
-              "lanes": len(outputs)}
+              "lanes": len(outputs), "done_with_open_children": len(bad_done)}
     # `seeded` is when the doc was read; `at` is when the report landed. A run can resume over
     # days (5 lanes per run), so the two can differ, and the doc may have moved in between.
     seeded = manifest.get("seeded_at") or "unknown"
@@ -1418,6 +1450,10 @@ def build_report(manifest, outputs, now=None):
         "action rows, then cite this file's path in the entry that records what you did; until "
         "an entry cites it, `orchdoc.py check` warns W-SWEEPOPEN.",
     ]
+    if bad_done:
+        lines += ["", "**FLAG - DONE with open children (the sweep's own rule forbids it):** " +
+                  "; ".join("`%s` has %d open child box(es)" % kn for kn in bad_done) +
+                  ". Treat each of these verdicts as unproven until the children are read."]
     if not manifest["batches"]:
         lines += ["", "No unticked box was picked, so no lane ran."]
     for b, out in zip(manifest["batches"], outputs):

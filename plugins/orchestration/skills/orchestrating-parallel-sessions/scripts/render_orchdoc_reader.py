@@ -57,13 +57,15 @@ try:
     import reader_library_runner as RUNNER  # noqa: E402
     import reader_compare as COMPARE
     from script_notes import strike_spans
+    import reader_collections_library
     HAS_SCRIPTS = True
 except ModuleNotFoundError as _missing:  # the script files are not installed
     # Only a file of the group being absent counts. Any other failure, in a file that IS here,
     # still stops the Reader with its own message, as it did before the group was optional.
     _SCRIPT_GROUP = ("reader_scripts", "reader_full_rewrite", "script_note_store",
                      "reader_library_runner", "reader_compare", "script_notes", "training_header",
-                     "file_script", "check_script", "script_git_dates", "pause_cues")
+                     "file_script", "check_script", "script_git_dates", "pause_cues",
+                     "reader_collections_library")
     if (_missing.name or "") not in set(_SCRIPT_GROUP):
         raise
     # A tree with none of the group's files is the public copy and starts without the features.
@@ -76,6 +78,86 @@ except ModuleNotFoundError as _missing:  # the script files are not installed
 
     def strike_spans(s):
         return [m.span() for m in re.finditer(r"~~[^~\n]+~~", s)]
+try:
+    import reader_collection_view as CVIEW  # noqa: E402
+except ModuleNotFoundError as _cv_missing:
+    if (_cv_missing.name or "") != "reader_collection_view":
+        raise
+    CVIEW = None
+_CV_JS = {}
+
+
+def _collection_page_js():
+    """(page script with the collection route, notes script), or None when the page script no
+    longer takes the collection patches. ⛔ A PATCH THAT NO LONGER MATCHES MUST NOT TAKE THE
+    PAGE DOWN: an edit to the page script that moves the patched text would otherwise make every
+    home render raise on a workspace with collections. It is said once on stderr, and the page is
+    served without the collection rail and route, as if there were no collections."""
+    if "v" not in _CV_JS:
+        try:
+            _CV_JS["v"] = (CVIEW.patch_js(JS), "\n" + CVIEW.COLL_JS)
+        except Exception as ex:
+            sys.stderr.write("reader: the collection pages are off: %s (%s). The rest of the "
+                             "page is unchanged; fix JS_PATCHES in reader_collection_view.py.\n"
+                             % (str(ex)[:200], type(ex).__name__))
+            _CV_JS["v"] = None
+    return _CV_JS["v"]
+
+
+_NEUTRAL_KINDS = {"draft": "draft", "rewrite": "edit", "log": "log", "note": "note"}
+_KIND_LETTER = {"draft": "D", "rewrite": "R", "log": "L", "note": "N"}
+
+
+def collection_labels(collection=None):
+    """The page's label words from `collection` (a reader_collections.Collection), or the
+    neutral words when there is none. Never raises."""
+    kinds, final = dict(_NEUTRAL_KINDS), "Final"
+    try:
+        if collection is not None:
+            for k in collection.kinds:
+                kinds[k["id"]] = k["label"]
+            for st in collection.stages:
+                if st.get("approved"):
+                    final = st["label"]
+                    break
+    except Exception:  # a malformed collection must not take the page down
+        pass
+    return {"kinds": kinds, "final": final,
+            "draft_head": kinds["draft"][:1].upper() + kinds["draft"][1:],
+            "rewrite_head": kinds["rewrite"][:1].upper() + kinds["rewrite"][1:]}
+
+
+def _library_collection(warn=False):
+    try:
+        import reader_collections as _rc
+        got = _rc.default_collection(None)
+        if got is None and warn:
+            sys.stderr.write("reader: the script features are installed but the library "
+                             "collection did not load (the preset is missing), so the page "
+                             "uses neutral labels.\n")
+        return got
+    except Exception as _ex:  # the public copy has no preset; any failure means neutral words
+        if warn:
+            sys.stderr.write("reader: the library collection did not load (%s: %s), so the "
+                             "page uses neutral labels.\n" % (type(_ex).__name__, str(_ex)[:160]))
+        return None
+
+
+LABELS = collection_labels(_library_collection(warn=HAS_SCRIPTS))
+
+
+def _js_text(t):
+    """`t` safe inside a single-quoted JS string that is also HTML text."""
+    bs = chr(92)
+    return (t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace(bs, bs + bs).replace("'", bs + "'"))
+
+
+def _js_literal(t):
+    """`t` as a double-quoted JS string literal that cannot close a script tag."""
+    return json.dumps(t).replace("<", "\\u003c")
+
+
 RULECODES = None
 try:
     import reader_docs as DOCS  # noqa: E402 - the folders the user chose for document review
@@ -88,6 +170,10 @@ def documents_folders():
     return DOCS.folders() if DOCS is not None else []
 
 
+try:
+    import reader_emails as EMAILS
+except ImportError:  # a partial delivery must not take the reader down: the view says so
+    EMAILS = None
 try:
     import done_feed as DONE  # noqa: E402  - the /done page; read-only, from git history
 except Exception:  # a partial delivery must not take the reader down; /done says so instead
@@ -287,6 +373,7 @@ def build_doc_model(slug, path):
         _ins = {}
     seen = {}
     items = []
+    _govmap = None
     for e in entries:
         eid = e["id"]
         seen[eid] = seen.get(eid, 0) + 1
@@ -306,6 +393,13 @@ def build_doc_model(slug, path):
             _rank, _why, _mine = [9, 0, 0, eid], "", False
         title = orchdoc.strip_decoration(e["title"])
         title = re.sub(r"^%s\s*[-:\u2013\u2014]\s*" % re.escape(eid), "", title).strip()
+        _nbox = (len(orchdoc.open_boxes(e["body"]))
+                 if (status or "") in orchdoc.TERMINAL_STATUS and not e.get("archived") else 0)
+        if _nbox:
+            if _govmap is None:
+                _govmap = orchdoc._governing_outside_fences(lines)
+            if (_govmap[e["line"] - 1] or "").startswith("99"):
+                _nbox = 0
         items.append({
             "id": eid,
             "dom": dom,
@@ -313,7 +407,8 @@ def build_doc_model(slug, path):
             "title": title,
             "raw_title": e["title"],
             "status": status,
-            "sclass": status_class(status),
+            "sclass": "open" if _nbox else status_class(status),
+            "open_boxes": _nbox,
             "owner": orchdoc.owner_text(e["body"]) or "",
             "plate": on_humans_plate(e),
             "archived": bool(e.get("archived")),
@@ -377,6 +472,7 @@ def build_doc_model_cached(slug, path):
 SEARCH_MAX_HITS = 200
 SEARCH_MAX_RULES = 60
 SEARCH_MAX_SCRIPTS = 60
+LAZY_BATCH_MAX = 40
 
 _HAY = {}
 
@@ -826,7 +922,11 @@ IMG_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
              ".gif": "image/gif", ".webp": "image/webp"}
 
 
-def resolve_asset(rel, root=None):
+AUDIO_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+               ".ogg": "audio/ogg"}
+
+
+def resolve_asset(rel, root=None, types=None, deny=False):
     """A workspace-relative image path -> (absolute Path, posix relpath, content-type), or a
     (None, None, reason) triple saying why not.
     """
@@ -839,10 +939,13 @@ def resolve_asset(rel, root=None):
     # a scheme, a UNC path, a drive letter, or a server-absolute path: all refused
     if u.startswith(("/", "//", "#")) or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", u):
         return None, None, "only a path relative to the workspace is allowed, not %r" % u
+    if ":" in u or "\x00" in u:
+        return None, None, "a colon or NUL is not allowed in the path"
+    types = types if types is not None else IMG_TYPES
     ext = os.path.splitext(u)[1].lower()
-    if ext not in IMG_TYPES:
+    if ext not in types:
         return None, None, "%s is not one of %s" % (ext or "no extension",
-                                                    ", ".join(sorted(IMG_TYPES)))
+                                                    ", ".join(sorted(types)))
     root = Path(root).resolve()
     try:
         p = (root / u).resolve()
@@ -850,9 +953,57 @@ def resolve_asset(rel, root=None):
         return None, None, "unreadable path (%s)" % type(ex).__name__
     if not p.is_relative_to(root):
         return None, None, "resolves outside the workspace"
+    if deny:
+        relp = p.relative_to(root)
+        folders = [part.lower() for part in relp.parts[:-1]]
+        if any(part in _VIEW_DENY_DIRS for part in folders) \
+                or _VIEW_DENY_NAME.search(relp.name) \
+                or (".claude" in folders and _VIEW_DENY_CLAUDE_SETTINGS.match(relp.name)):
+            return None, None, "refused: that path is, or is named like, a secret"
     if not p.is_file():
         return None, None, "no file at that path"
-    return p, p.relative_to(root).as_posix(), IMG_TYPES[ext]
+    return p, p.relative_to(root).as_posix(), types[ext]
+
+
+def resolve_audio(rel, root=None):
+    return resolve_asset(rel, root, types=AUDIO_TYPES, deny=True)
+
+
+def _is_audio_path(url):
+    u = html.unescape(url or "").strip().replace("\\", "/")
+    return os.path.splitext(u)[1].lower() in AUDIO_TYPES
+
+
+def resolve_media(url):
+    """Image or audio, by extension. What `_safe_img_src` and the home cache both call."""
+    return resolve_audio(url) if _is_audio_path(url) else resolve_asset(url)
+
+
+def _audio_src_from_code(code_html):
+    """An absolute path counts only when it is under the workspace, decided by a string comparison
+    BEFORE anything is resolved (the `FileLinks.target` rule); then `resolve_audio` decides
+    as it does for `![](x.mp3)`. A refusal adds nothing: a code span is text, not a request
+    to embed."""
+    u = html.unescape(code_html or "").strip()
+    if ASSET_ROOT is None or not _is_audio_path(u) or len(u) > 400 or "\n" in u:
+        return None
+    if re.match(r"^[A-Za-z]:[\\/]", u):
+        norm = os.path.normcase(os.path.normpath(u))
+        rootn = os.path.normcase(os.path.normpath(str(ASSET_ROOT)))
+        if not norm.startswith(rootn + os.sep):
+            return None
+        u = os.path.relpath(norm, rootn).replace(os.sep, "/")
+    elif not looks_like_path(u):
+        return None
+    src, _why = _safe_img_src(u)
+    return src
+
+
+def _audio_player(src):
+    name = urllib.parse.unquote(src.rsplit("/", 1)[-1])
+    return ('<span class="audio-embed"><audio controls preload="none" src="%s"></audio>'
+            '<span class="audio-name">%s</span></span>'
+            % (html.escape(src, quote=True), html.escape(name)))
 
 
 _IMG_SEEN = threading.local()
@@ -860,13 +1011,13 @@ _IMG_SEEN = threading.local()
 
 def _safe_img_src(url):
     """(url, None) for an image that exists, or (None, the reason it does not render)."""
-    p, relp, ctype_or_why = resolve_asset(url)
+    p, relp, ctype_or_why = resolve_media(url)
     rec = getattr(_IMG_SEEN, "rec", None)
     if rec is not None:
         rec[url] = relp if p is not None else None
     if p is None:
         return None, ctype_or_why
-    return "/img/" + urllib.parse.quote(relp), None
+    return ("/audio/" if _is_audio_path(url) else "/img/") + urllib.parse.quote(relp), None
 
 
 PASTE_DIR = "orchdoc-images"
@@ -1128,6 +1279,12 @@ def _inline(s, xref=None, dd=False):
     if dd:
         s = _dd_find(s)
 
+    def _unhole(text):
+        """Put each code span back, as the backticks it was written with.
+        """
+        return re.sub(r"\x00(\d+)\x00",
+                      lambda mm: ("`%s`" % holes[int(mm.group(1))]) if int(mm.group(1)) < len(holes) else "", text)
+
     def path_link(t, text_html):
         """Markup for a resolved path. The href is stashed with `keep`, so no later inline
         rule can read an underscore in `/file/a_b_c.py` as the start of italics."""
@@ -1142,6 +1299,13 @@ def _inline(s, xref=None, dd=False):
 
     def link(m):
         href = _safe_href(m.group(2))
+        if not href and _is_audio_path(m.group(2)):
+            asrc, awhy = _safe_img_src(m.group(2))
+            if not asrc:
+                return keep('<span class="noimg">%s<span class="noimg-why">%s</span></span>'
+                            % (_unhole(m.group(0)), html.escape(awhy or "not shown")))
+            return '<a href="%s" target="_blank" rel="noopener">%s</a> %s' % (
+                keep(html.escape(asrc, quote=True)), m.group(1), keep(_audio_player(asrc)))
         if not href:
             if files is not None:
                 t = files.target(m.group(2), is_link=True)
@@ -1157,7 +1321,9 @@ def _inline(s, xref=None, dd=False):
         if not src:
             return keep('<span class="noimg">%s<span class="noimg-why">%s</span>'
                         '</span>'
-                        % (m.group(0), html.escape(why or "not shown")))
+                        % (_unhole(m.group(0)), html.escape(why or "not shown")))
+        if src.startswith("/audio/"):
+            return keep(_audio_player(src))
         alt = m.group(1) or "screenshot"
         return keep('<a class="shot" href="%s" target="_blank" rel="noopener" title="%s">'
                     '<img src="%s" alt="%s" loading="lazy"></a>'
@@ -1179,6 +1345,10 @@ def _inline(s, xref=None, dd=False):
                 code = path_link(t, code)
             elif t:
                 code = _copyable(c, t[1])
+        if i not in consumed:
+            asrc = _audio_src_from_code(c)
+            if asrc:
+                code = code + " " + _audio_player(asrc)
         s = s.replace("\x00%d\x00" % i, code)
     # Spans can nest (a path link's stashed href lives inside a stashed fragment), so restore
     # until none are left - bounded by the number of spans, since each pass restores at least one.
@@ -1187,6 +1357,9 @@ def _inline(s, xref=None, dd=False):
             break
         for i, frag in enumerate(spans):
             s = s.replace("\x01%d\x01" % i, frag)
+    if "\x00" in s:
+        s = re.sub(r"\x00(\d+)\x00",
+                   lambda mm: ("<code>%s</code>" % holes[int(mm.group(1))]) if int(mm.group(1)) < len(holes) else "", s)
     return _dd_paint(s) if dd else s
 
 
@@ -1336,6 +1509,10 @@ def _render_md_block(lines, xref=None, line0=None, dd=False):
     starts. `dd` turns on dropdown painting. Both default off, which is the OrchDoc render."""
     out, stack, para, i, blank = [], [], [], 0, False
     pstart = [0]
+    sub = [None, ""]
+
+    def submark(t):
+        return '<span class="subap" data-sub="%s"></span>' % t
 
     def at(k):
         return _src_attr(line0 + k if line0 is not None else None)
@@ -1441,9 +1618,14 @@ def _render_md_block(lines, xref=None, line0=None, dd=False):
                 text = ('<span class="box">%s</span> %s'
                         % ("&#10003;" if checked else "&#9744;",
                            inl(b.group(2))))
+                mark = not checked and not dd and b.group(2).strip()
             else:
-                text = inl(text)
+                text, mark = inl(text), ""
             out.append("<li%s%s>%s" % (cls, at(i), text))
+            sub[0] = None
+            if mark:
+                out.append(submark(mark))
+                sub[0], sub[1] = len(out) - 1, mark
             i += 1
             continue
 
@@ -1455,7 +1637,14 @@ def _render_md_block(lines, xref=None, line0=None, dd=False):
                 para.append(ln.strip())
                 i += 1
                 continue
-            out.append(" " + inl(ln.strip()))
+            if sub[0] is not None and sub[0] == len(out) - 1:
+                # Still the open sub-item's own text: in before its marker, and into its text.
+                out.insert(sub[0], " " + inl(ln.strip()))
+                sub[0] += 1
+                sub[1] += " " + ln.strip()
+                out[sub[0]] = submark(sub[1])
+            else:
+                out.append(" " + inl(ln.strip()))
             i += 1
             continue
 
@@ -1844,6 +2033,8 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 
 .md{font-size:.9rem;line-height:1.6;color:var(--mut)}
 
+.lazy-note{font-style:italic;opacity:.75}
+
 .md strong,.md b{color:var(--ink)}
 
 .md>p,.md>ul,.md>ol,.md>blockquote,.md>h3,.md>h4,.md>h5,.md>h6,.md>details,.md>.cmt{
@@ -1900,6 +2091,10 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .md .noimg{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;
   color:var(--mut);word-break:break-word}
 .md .noimg-why{color:var(--faint);font-style:italic;margin-left:.45rem}
+.md .audio-embed{display:block;margin:.4rem 0}
+.md .audio-embed audio{display:block;width:100%;max-width:520px}
+.md .audio-name{display:block;font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:.75rem;color:var(--mut);word-break:break-all}
 
 .md details.pics{border-left:3px solid var(--gold);border-radius:0 8px 8px 0;padding:0}
 .md details.pics>summary{padding:.55em .8em;font-weight:400;list-style:none;user-select:none}
@@ -1922,6 +2117,7 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .notes.empty:not(.live){display:none}
 .note{border-left:3px solid var(--gold);background:var(--sel);border-radius:0 8px 8px 0;
   padding:.65em .9em;margin:0 0 .6em}
+.note[data-dup]{display:none}
 .note-h{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap;font-size:.72rem;
   font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--goldink);
   margin:0 0 .35em}
@@ -1941,6 +2137,12 @@ pre code{background:none;border:0;padding:0;font-size:.85em;overflow-wrap:normal
 .nbtn.primary{background:var(--gold);border-color:var(--gold);color:#241d0c;font-weight:650}
 .nbtn.danger{color:var(--open);border-color:var(--openline)}
 .nbtn[disabled]{opacity:.55;cursor:default}
+
+.subap .nbtn{margin-left:.5rem;padding:.1rem .45rem;font-size:.68rem;vertical-align:baseline}
+@media (max-width:600px){
+  .subap .nbtn{padding:.1rem .35rem;font-size:.64rem;margin-left:.3rem}
+  .note-acts .nbtn[data-approve-all]{font-size:.68rem;padding:.2rem .4rem}
+}
 .note-edit{margin:0 0 .6em}
 .note-edit textarea{width:100%;min-height:5em;font:inherit;font-size:.9rem;line-height:1.6;
   padding:.55em .75em;border:1px solid var(--line);border-radius:8px;background:var(--panel);
@@ -2375,7 +2577,7 @@ body.wide .rail{display:none}
      be too - a body pinned to 100% makes the sticky bar below stop sticking one screen in,
      which is exactly where it starts being useful. */
   html,body{height:auto}
-  .app{grid-template-columns:1fr;height:auto;flex:none}
+  .app{grid-template-columns:minmax(0,1fr);height:auto;flex:none}
   .rail{border-right:0;border-bottom:1px solid var(--line);max-height:48vh}
   
   .top{position:static}
@@ -2525,6 +2727,9 @@ def render_entry_html(it, show_doc=False, xref=None):
             tags.append('<span class="tag pwhy">%s</span>' % _esc(it["prio_why"]))
     if it["status"]:
         tags.append('<span class="tag %s">%s</span>' % (it["sclass"], _esc(it["status"])))
+        if it.get("open_boxes"):
+            tags.append('<span class="tag open">%d BOX%s STILL OPEN</span>'
+                        % (it["open_boxes"], "" if it["open_boxes"] == 1 else "ES"))
     else:
         tags.append('<span class="tag">no status field</span>')
     if it["owner"]:
@@ -2564,6 +2769,64 @@ def render_entry_html(it, show_doc=False, xref=None):
            _esc(it["id"]), title_html or "<em>(untitled)</em>",
            "".join(tags), render_today_buttons(it), render_notes_html(it, xref),
            copy_fenced_blocks(fold_attestations(md_to_html(it["md"], xref)))))
+
+
+def is_lazy_entry(it):
+    """Whether the doc view sends this entry as its heading only."""
+    return bool(it.get("archived")) or bool(re.match(r"^\W*§\s*99\b", it.get("section") or ""))
+
+
+def render_entry_stub(it, show_doc=False):
+    """`render_entry_html` without the text and the notes: what the doc view sends for an entry
+    that `is_lazy_entry`. `data-lazy` tells the page to fetch the rest."""
+    full_head = render_entry_html(dict(it, md="", notes=[]), show_doc=show_doc)
+    cut = full_head.find('<div class="md">')
+    head = full_head[:cut] if cut >= 0 else full_head
+    # The notes block of an entry with no notes, which `render_entry_html` made, is dropped too:
+    # its Add-note and Instruct buttons come with the full entry.
+    nb = head.find('<section class="notes')
+    if nb >= 0:
+        head = head[:nb]
+    head = head.replace('<article class="entry" ', '<article class="entry lazy" data-lazy="1" ', 1)
+    return (head + '<div class="md lazy-md"><p class="lazy-note">Loading the text of this '
+            "entry...</p></div></article>")
+
+
+def lazy_plain(text):
+    """The text of an entry's markdown as the page would show it, roughly: lower case, runs of
+    white space as one, and the marks of bold, code and links taken out, for `/match`."""
+    t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text or "")
+    t = re.sub(r"\*\*|__|`|^#+\s*|^\s*[-*]\s+|^\s*>\s?", " ", t, flags=re.M)
+    return re.sub(r"\s+", " ", t).lower()
+
+
+def lazy_match(d, term):
+    """Ids of the lazily sent entries of doc model `d` whose text holds `term` (as typed, lower
+    case), so the page's filter can show them though it does not hold their text."""
+    t = re.sub(r"\s+", " ", (term or "").strip().lower())
+    if not t:
+        return []
+    return [eid for eid, raw, plain in _lazy_hays(d) if t in raw or t in plain]
+
+
+_PLAIN = {}
+
+
+def _lazy_hays(d):
+    got = _PLAIN.get(id(d))
+    if got is not None and got[0] is d:
+        return got[1]
+    rows = []
+    for i, (hay, _lc) in zip(d["entries"], _doc_hays(d)):
+        if not is_lazy_entry(i):
+            continue
+        notes = " ".join(orchdoc.note_display(n) for n in i.get("notes") or ())
+        rows.append((i["id"], hay.lower(),
+                     lazy_plain("%s %s %s %s" % (i["id"], i["title"], i["md"], notes))))
+    for k in [k for k, v in list(_PLAIN.items()) if v[0].get("slug") == d.get("slug")]:
+        _PLAIN.pop(k, None)
+    _PLAIN[id(d)] = (d, rows)
+    return rows
 
 
 def render_nav_item(it, show_doc=False):
@@ -2624,8 +2887,11 @@ def render_status_legend():
             '<span class="lg-lab">Status colors</span>%s</div>' % "".join(pills))
 
 
-def render_doc_view(model, xref=None):
-    """The middle rail and reading pane for ONE doc. Returns (nav_html, body_html)."""
+def render_doc_view(model, xref=None, lazy=False):
+    """The middle rail and reading pane for ONE doc. Returns (nav_html, body_html).
+
+    `lazy`: entries in §99 are sent as their heading only (see `is_lazy_entry`). The server's
+    `/doc/<slug>` asks for it; the phone export and the tests that read a whole doc do not."""
     nav, body = [], []
     lnav, lbody = render_links_block(model, xref)
     if lnav:
@@ -2664,7 +2930,8 @@ def render_doc_view(model, xref=None):
                         % (" keep" if is_today else "", _esc(cur),
                            form if is_today and has_today else ""))
         nav.append(render_nav_item(it))
-        body.append(render_entry_html(it, xref=xref))
+        body.append(render_entry_stub(it) if lazy and is_lazy_entry(it)
+                    else render_entry_html(it, xref=xref))
     return "".join(nav), "".join(body)
 
 
@@ -2851,7 +3118,7 @@ def rail_counts(index):
             "today": today_count(index)}
 
 
-def render_doc_rail(index, active, scripts=None):
+def render_doc_rail(index, active, scripts=None, collections=None):
     """`scripts` is the number of script folders, or None to leave the Scripts entry out -
     which is what a caller with no corpus (a test fixture, `--once`) gets."""
     out = ['<button type="button" class="dbtn" data-doc="__plate__" aria-current="%s">'
@@ -2894,6 +3161,8 @@ def render_doc_rail(index, active, scripts=None):
                    '<span class="badge zero" title="%d scripts">%d</span></button>'
                    % (SCRIPTS_VIEW, "true" if active == SCRIPTS_VIEW else "false",
                       scripts, scripts))
+    if collections and CVIEW is not None:
+        out.append(CVIEW.rail_html(collections))
     return "".join(out)
 
 
@@ -2907,8 +3176,7 @@ def owner_options(index):
 SCRIPTS_VIEW = "__scripts__"
 PROD_BULK_BAR = ('<div class="prod-bulk"><button type="button" class="nbtn" data-prod-bulk>'
                  'Approve all final scripts for Production&hellip;</button></div>')
-_KB ={"draft": ("D", "agent draft"), "rewrite": ("R", "the human rewrite"),
-       "log": ("L", "process log"), "note": ("N", "note")}
+_KB = {k: (_KIND_LETTER.get(k, v[:1].upper()), v) for k, v in LABELS["kinds"].items()}
 
 
 def _srel_key(relroot):
@@ -3090,9 +3358,10 @@ def render_scripts_view(listing, fr_marks=None, workspace=None):
         node["html"] += "".join(nav)
         body.append('<h3>%s</h3>' % _esc(fo["name"]))
         if rows:
-            body.append('<div class="tw"><table><thead><tr><th>Agent draft</th>'
-                        "<th>the human rewrite</th></tr></thead><tbody>%s</tbody></table></div>"
-                        % "".join(rows))
+            body.append('<div class="tw"><table><thead><tr><th>%s</th>'
+                        "<th>%s</th></tr></thead><tbody>%s</tbody></table></div>"
+                        % (_esc(LABELS["draft_head"]), _esc(LABELS["rewrite_head"]),
+                           "".join(rows)))
         if logs:
             body.append('<p class="slogs">Process log%s: %s</p>'
                         % ("" if len(logs) == 1 else "s",
@@ -3213,9 +3482,29 @@ btn.addEventListener("click",function(){ box.hidden=!box.hidden; if(!box.hidden)
 send.addEventListener("click",function(){
   var t=ta.value.trim(); if(!t){out.textContent="Write something first.";return;}
   send.disabled=true; out.textContent="Sending...";
-  fetch("/file-note",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({token:bar.getAttribute("data-token"),file:bar.getAttribute("data-file"),text:t})})
-  .then(function(r){return r.json();}).then(function(j){
+  
+  function tokenFrom(h){ var m=/var NOTE_TOKEN=("(?:[^"\\]|\\.)*");/.exec(h||"");
+    if(!m){return "";} try{var v=JSON.parse(m[1]); return typeof v==="string"?v:"";}catch(e){return "";} }
+  function fresh(stale,ok,bad){
+    var cur=bar.getAttribute("data-token");
+    if(cur&&cur!==stale){ ok(cur); return; }
+    var left=window.__tokenTries||7, gap=window.__tokenGapMs||3000;
+    function ask(){ fetch("/",{cache:"no-store"}).then(function(r){return r.text();})
+      .then(function(h){ var v=tokenFrom(h); if(v){ ok(v); } else{ again(); } },function(){ again(); }); }
+    function again(){ if(--left<=0){ bad(); return; } setTimeout(ask,gap); }
+    ask();
+  }
+  function post(tok,retried){
+    return fetch("/file-note",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token:tok,file:bar.getAttribute("data-file"),text:t})})
+    .then(function(r){return r.json();}).then(function(j){
+      if(!retried&&j&&!j.ok&&/bad or missing token/.test(j.error||"")){
+        return new Promise(function(res){ fresh(tok,function(v){ bar.setAttribute("data-token",v);
+          res(post(v,true)); },function(){ res(j); }); }); }
+      return j; });
+  }
+  post(bar.getAttribute("data-token"),false)
+  .then(function(j){
     send.disabled=false;
     if(j&&j.ok){ ta.value=""; out.textContent="Sent to "+(j.role||"the orchestrator")+
       (j.id?" as "+j.id:"")+". It will see this note."; }
@@ -3322,6 +3611,105 @@ def render_documents_page(workspace):
         "<script>%s</script><script>%s</script></body></html>"
         % (CSS, DOCUMENTS_CSS, THEME_BOOT_JS + SIZE_BOOT_JS, "".join(parts), THEME_WIRE_JS,
            SIZE_WIRE_JS))
+
+
+_EMAIL_HIDDEN_WHY = {
+    "name": "its name looks like a secret file. Rename it without password, secret, token, "
+            "key or credential.",
+    "outside": "it is a link that leaves the workspace.",
+    "unreadable": "the Reader could not open it.",
+}
+
+
+def render_emails_view(workspace):
+    """`#emails`: the email series in the emails folder, as (nav, body). Read-only."""
+    if EMAILS is None:
+        return ('<div class="count">emails</div>',
+                '<div class="empty">The Emails view is not installed: '
+                "<code>reader_emails.py</code> is missing.</div>")
+
+    def _ok(rel):
+        p, _r, _k = resolve_viewable(rel, workspace)
+        return p is not None
+
+    def _why(rel):
+        _p, _r, w = resolve_viewable(rel, workspace)
+        if "outside the workspace" in (w or ""):
+            return "outside"
+        if "secret" in (w or ""):
+            return "name"
+        return "unreadable"
+    got = EMAILS.discover(workspace, accept=_ok, why=_why)
+    folder = got["folder"]
+    nav, body = [], []
+    if not got["ok"]:
+        nav.append('<div class="count">no emails folder</div>')
+        body.append(
+            '<p class="hint">The emails folder <code>%s</code> is not available (%s). To '
+            "show emails, create it inside the workspace with one sub-folder per series, "
+            "for example <code>%s/01-welcome-onboarding/series.md</code> and "
+            "<code>%s/01-welcome-onboarding/01-welcome.md</code>, or name another folder "
+            "with <code>python orchdoc_config.py set emails_folder &lt;folder&gt;</code>. "
+            "Each file starts with front matter: <code>subject, preview_text, send, "
+            "status, source</code> for an email; <code>title, order, trigger, "
+            "description</code> for series.md.</p>"
+            % (_esc(folder), _esc(got["why"]), _esc(folder), _esc(folder)))
+        return "".join(nav), "".join(body)
+    nav.append('<div class="count">%d emails in %d series</div>'
+               % (got["total"], len(got["series"])))
+    body.append('<p class="hint">Read-only. The emails folder is <code>%s</code>; the number '
+                "in brackets after a series name is how many emails it has.</p>" % _esc(folder))
+    if not got["series"]:
+        body.append('<div class="empty">The emails folder has no series folders yet.</div>')
+    for si, s in enumerate(got["series"]):
+        hid = s.get("hidden") or []
+        head = ("%s (%d shown, %d hidden)" % (s["title"], s["count"], len(hid)) if hid
+                else "%s (%d)" % (s["title"], s["count"]))
+        sid = "entry-emails-s%d" % si
+        nav.append('<div class="sec">%s</div>' % _esc(head))
+        body.append('<h2 class="grouphead" id="%s">%s</h2>' % (sid, _esc(head)))
+        if s["trigger"]:
+            body.append('<p class="dnote"><b>Trigger:</b> %s</p>' % _esc(s["trigger"]))
+        if s["description"]:
+            body.append('<p class="dnote">%s</p>' % _esc(s["description"]))
+        for h in hid:
+            body.append('<p class="dnote"><b>%s</b> is not shown: %s</p>'
+                        % (_esc(h["file"]), _esc(_EMAIL_HIDDEN_WHY.get(
+                            h["reason"], _EMAIL_HIDDEN_WHY["unreadable"]))))
+        if not s["emails"]:
+            body.append('<p class="dnote">This series has no emails yet.</p>')
+            continue
+        if s["count"] > len(s["emails"]):
+            body.append('<p class="dnote">Showing the first %d of the %d emails in this '
+                        "series.</p>" % (len(s["emails"]), s["count"]))
+        for ei, e in enumerate(s["emails"]):
+            dom = "entry-emails-s%d-e%d" % (si, ei)
+            subj = e["subject"] or e["title"]
+            nav.append('<button type="button" class="ebtn" data-goto="%s"><span class="dot">'
+                       '</span><span class="etitle">%s</span></button>' % (dom, _esc(subj)))
+            tags = []
+            if e["status"]:
+                tags.append('<span class="tag">%s</span>' % _esc(e["status"]))
+            if e["send"]:
+                tags.append('<span class="tag">send: %s</span>' % _esc(e["send"]))
+            if e["source"]:
+                tags.append('<span class="tag">source: %s</span>' % _esc(e["source"]))
+            pv = ('<div class="meta">Preview text: %s</div>' % _esc(e["preview_text"])
+                  if e["preview_text"] else "")
+            text = ('<p class="dnote">This file is too large to show here; open it with '
+                    'the link.</p>' if e["too_big"] else md_to_html(e["body"]))
+            body.append(
+                '<article class="entry emailbox" id="%s" data-doc="emails" data-id="%s">'
+                '<h3 class="et"><span>%s</span></h3><div class="meta">%s</div>%s'
+                '<div class="md">%s</div>'
+                '<div class="meta"><a href="%s" target="_blank" rel="noopener">Open the file</a>'
+                ' (%s)</div></article>'
+                % (dom, dom, _esc(subj), "".join(tags), pv, text,
+                   _esc(file_href(e["rel"])), _esc(e["rel"])))
+    if got["more"]:
+        body.append('<p class="dnote">%d more series are in the folder and not shown here.</p>'
+                    % got["more"])
+    return "".join(nav), "".join(body)
 
 
 
@@ -3740,6 +4128,32 @@ watch("long-animation-frame","loaf");
 
 PERF_JS = PERF_JS_TEMPLATE.replace("__WORKER_SRC__", json.dumps(PERF_WORKER_SRC))
 
+SUB_APPROVE_SHARED_JS = r"""function subKey(t){ return String(t||"").replace(/\s+/g," ").trim(); }
+function subApproveMarks(ent,skip){
+  var marks=[], seen={}, nth={};
+  ent.querySelectorAll(".subap[data-sub]").forEach(function(m){
+    if(skip&&skip(m)){return;}
+    var k=subKey(m.getAttribute("data-sub")); seen[k]=(seen[k]||0)+1; marks.push(m); });
+  return marks.map(function(m){
+    var raw=m.getAttribute("data-sub"), k=subKey(raw), txt=raw;
+    nth[k]=(nth[k]||0)+1;
+    if(seen[k]>1){ txt=raw+" (copy "+nth[k]+" of "+seen[k]+" of this sub-item)"; }
+    return {m:m, raw:raw, txt:txt};
+  });
+}
+function subApproveBtn(m,txt,on){
+  m.setAttribute("data-send","APPROVED: "+txt);
+  var btn=m.querySelector("button");
+  if(!btn){
+    btn=document.createElement("button"); btn.type="button";
+    btn.className="nbtn act sub-approve"; btn.setAttribute("data-approve-sub","1");
+    m.appendChild(btn);
+  }
+  btn.disabled=on; btn.textContent=on?"Approved \u2713":"Approve";
+  btn.setAttribute("aria-label",(on?"Approved: ":"Approve: ")+txt);
+  return btn;
+}"""
+
 JS = r"""
 (function(){
 var cache={}, view="__plate__", cur=null, obs=null, spyHash=null;
@@ -3817,6 +4231,11 @@ function noteWire(root){
     ins.textContent="Instruct "+sec.getAttribute("data-notes-doc");
     row.appendChild(ins);
     
+    var apa=document.createElement("button");
+    apa.type="button"; apa.className="nbtn act"; apa.setAttribute("data-approve-all","1");
+    apa.textContent="Approve all recommendations";
+    row.appendChild(apa);
+    
     var ent=sec.closest(".entry");
     if(docInsItem(ent)){
       var live=sec.querySelector('.note[data-kind="instruction"]');
@@ -3827,7 +4246,34 @@ function noteWire(root){
       row.appendChild(wd);
     }
     sec.appendChild(row);
+    subPaint(sec.closest(".entry"));
   });
+}
+
+__SUB_APPROVE_SHARED__
+function subPaint(ent){
+  if(!ent||!NOTE_TOKEN){return;}
+  var sec=ent.querySelector(".notes[data-wired]");
+  if(!sec){return;}
+  var done={};
+  sec.querySelectorAll('.note[data-kind="instruction"] .note-b').forEach(function(b){
+    var k=subKey(b.getAttribute("data-raw")||b.textContent); done[k]=1;
+    
+    if(k.indexOf("Approve: ")===0){ done["APPROVED: "+k.slice(9)]=1; } });
+  
+  subApproveMarks(ent,function(m){ return !!m.closest(".notes"); }).forEach(function(x){
+    subApproveBtn(x.m,x.txt,!!done[subKey("APPROVED: "+x.txt)]);
+  });
+}
+function subPaintAll(){
+  pane.querySelectorAll("article.entry").forEach(subPaint);
+}
+
+function approveSend(sec,text){
+  var box=document.createElement("div"); box.className="note-edit instruct";
+  box.setAttribute("data-nid",""); box._initial="";
+  obSave(box,sec,"/instruct",text);
+  subPaint(sec.closest(".entry"));
 }
 function noteSection(el){ return el.closest?el.closest(".notes"):null; }
 /* One note's own buttons. A note still in the outbox (data-ob, no id yet) gets none. */
@@ -4116,6 +4562,24 @@ function noteLandingWarnings(forId,nid,j,verb){
   }
 }
 
+function readTokenFromHtml(h){
+  var m=/var NOTE_TOKEN=("(?:[^"\\]|\\.)*");/.exec(h||"");
+  if(!m){ return ""; }
+  try{ var t=JSON.parse(m[1]); return typeof t==="string"?t:""; }catch(e){ return ""; }
+}
+function refreshToken(stale,ok,bad){
+  if(typeof NOTE_TOKEN==="string"&&NOTE_TOKEN&&NOTE_TOKEN!==stale){ ok(NOTE_TOKEN); return; }
+  var left=window.__tokenTries||7, gap=window.__tokenGapMs||3000;
+  function ask(){
+    fetchWithin("/",{cache:"no-store"},FETCH_LOAD_MS,function(r){ return r.text(); })
+      .then(function(h){ var t=readTokenFromHtml(h); if(t){ ok(t); } else{ again(); } },
+            function(){ again(); });
+  }
+  function again(){ if(--left<=0){ bad(); return; } setTimeout(ask,gap); }
+  ask();
+}
+window.__refreshToken=refreshToken;
+
 function notePost(body,onOk,onErr,path,onWait){
   var p=path||"/note", cid=null, settled=false;
   if(CID_ROUTES[p]){ body=Object.assign({},body); if(!body.cid){ body.cid=newCid(); }
@@ -4127,19 +4591,28 @@ function notePost(body,onOk,onErr,path,onWait){
     onOk(j); }
   function err(why){ if(settled){return;} settled=true; onErr(why); }
   
-  fetchWithin(p,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(body)},cid?FETCH_SAVE_MS:FETCH_WRITE_MS,
-    function(r){return r.json().then(function(j){return {s:r.status,j:j};});})
-    .then(function(x){
-      if(x.j&&x.j.pending&&cid){ if(onWait){onWait();} sentWait(cid,ok,err); return; }
-      if(x.j&&x.j.ok){ok(x.j);}
-      else{err((x.j&&x.j.error)||("the server refused it ("+x.s+")"));}})
-    .catch(function(e){
-      if(settled){ if(window.console){console.error(e);} return; }
-      /* The answer was lost, which says nothing about the save: ask what became of it. */
-      if(cid){ if(onWait){onWait();}
-        sentWait(cid,ok,err,"could not reach the reader's server: "+e); }
-      else{ err("could not reach the reader's server: "+e); } });
+  function send(b,retried){
+    fetchWithin(p,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(b)},cid?FETCH_SAVE_MS:FETCH_WRITE_MS,
+      function(r){return r.json().then(function(j){return {s:r.status,j:j};});})
+      .then(function(x){
+        if(x.s===403&&!retried&&typeof b.token==="string"
+           &&/bad or missing token/.test((x.j&&x.j.error)||"")){
+          refreshToken(b.token,function(t){ NOTE_TOKEN=t;
+            send(Object.assign({},b,{token:t}),true); },
+            function(){ err((x.j&&x.j.error)||"refused: bad or missing token"); });
+          return; }
+        if(x.j&&x.j.pending&&cid){ if(onWait){onWait();} sentWait(cid,ok,err); return; }
+        if(x.j&&x.j.ok){ok(x.j);}
+        else{err((x.j&&x.j.error)||("the server refused it ("+x.s+")"));}})
+      .catch(function(e){
+        if(settled){ if(window.console){console.error(e);} return; }
+        /* The answer was lost, which says nothing about the save: ask what became of it. */
+        if(cid){ if(onWait){onWait();}
+          sentWait(cid,ok,err,"could not reach the reader's server: "+e); }
+        else{ err("could not reach the reader's server: "+e); } });
+  }
+  send(body,false);
 }
 
 function noteReload(dom,then){
@@ -4203,8 +4676,18 @@ function obShow(r,state,text,title){
   var b=n.querySelector(".note-b");
   if(b&&b.textContent!==r.text){ b.textContent=r.text; b.setAttribute("data-raw",r.text); }
   nsTag(n,state,text,title);
+  obDedupe();
 }
-function obShowAll(){ obAll().forEach(function(r){ obShow(r); }); }
+
+function obDedupe(){
+  [].slice.call(pane.querySelectorAll(".note[data-ob]:not([data-nid])")).forEach(function(p){
+    var sec=p.parentNode, pb=p.querySelector(".note-b"), t=pb?pb.textContent:"", dup=false;
+    if(sec&&t){ [].slice.call(sec.querySelectorAll(".note[data-nid]")).forEach(function(n){
+      var b=n.querySelector(".note-b"); if(b&&b.textContent===t){ dup=true; } }); }
+    if(dup){ p.setAttribute("data-dup","1"); } else { p.removeAttribute("data-dup"); }
+  });
+}
+function obShowAll(){ obAll().forEach(function(r){ obShow(r); }); obDedupe(); subPaintAll(); }
 /* Into the outbox, the editor closed, the change on screen, and on its way. */
 function obSave(box,sec,path,txt){
   var r={cid:boxCid(box,txt),path:path,doc:sec.getAttribute("data-notes-doc")||"",
@@ -4238,7 +4721,7 @@ function obSend(r){
         setTimeout(function(){ if(OBM[r.cid]){ obSend(r); } },
                    Math.min(30000,2000*Math.pow(2,Math.min(r.tries,4))));
         return; }
-      obDel(r.cid); obRefused(r,why); },r.path);
+      obDel(r.cid); obRefused(r,why); subPaintAll(); },r.path);
 }
 
 function obStale(){
@@ -4818,7 +5301,7 @@ var DIK="claude-orchdoc-reader-docins|";
 function docInsWire(){
   var old=document.getElementById("docins"); if(old){old.remove();}
   pane.style.removeProperty("--docins-h");
-  if(!NOTE_TOKEN||!view||view===PLATE||view===SCRIPTS||view===TODAY||view==="rule"){return;}
+  if(!NOTE_TOKEN||!view||view===PLATE||view===SCRIPTS||view===TODAY||view==="rule"||view==="emails"){return;}
   var d=view, w=document.createElement("div"); w.id="docins"; w.className="docins";
   w.innerHTML='<div class="docins-row"><textarea rows="1" '+
     'placeholder="Instruction for '+d+' - not about any one item"></textarea>'+
@@ -4892,6 +5375,133 @@ function bodyHay(n){
   if(bodyCache[dom]===undefined){ var e=document.getElementById(dom);
     bodyCache[dom]=e?e.textContent.replace(/\s+/g," ").toLowerCase():""; }
   return bodyCache[dom];
+}
+
+var LZ={doc:"",want:{},tries:{},q:[],busy:0,obs:null};
+var LZM={doc:"",term:"",ids:null,asked:"",timer:null};
+function lzIs(e){ return !!(e&&e.hasAttribute&&e.hasAttribute("data-lazy")); }
+function lzWire(){
+  if(LZ.obs){ LZ.obs.disconnect(); LZ.obs=null; }
+  /* `gen` changes on every paint: an answer for the pane before it is not put in this one. */
+  LZ.doc=view; LZ.gen=(LZ.gen||0)+1; LZ.want={}; LZ.tries={}; LZ.q=[];
+  if(LZM.timer){ clearTimeout(LZM.timer); }
+  LZM={doc:view,term:"",ids:null,asked:"",timer:null};
+  var stubs=pane.querySelectorAll("article.entry[data-lazy]");
+  if(!stubs.length||!window.IntersectionObserver){ if(stubs.length){ lzFill(stubs); } return; }
+  LZ.obs=new IntersectionObserver(function(es){
+    var got=[]; es.forEach(function(e){ if(e.isIntersecting){ got.push(e.target); } });
+    if(got.length){ lzFill(got); }
+  },{root:paneScrolls()?pane:null,rootMargin:"1600px 0px 1600px 0px"});
+  stubs.forEach(function(n){ LZ.obs.observe(n); });
+}
+/* Asks for the text of these stubs; `first` puts them ahead of the others (a jump). LZ.want[id]
+   is set while one is queued or on its way, so it is asked for once. */
+function lzFill(els,first){
+  var ids=[];
+  [].slice.call(els).forEach(function(e){
+    if(!lzIs(e)||!e.isConnected||e.getAttribute("data-doc")!==view){ return; }
+    var i=e.getAttribute("data-id"), k=LZ.q.indexOf(i);
+    if(first&&k>=0){ LZ.q.splice(k,1); ids.push(i); }
+    else if(!LZ.want[i]){ ids.push(i); }
+    LZ.want[i]=1; });
+  LZ.q=first?ids.concat(LZ.q):LZ.q.concat(ids);
+  lzPump();
+}
+function lzPump(){
+  while(LZ.busy<2&&LZ.q.length){
+    var slug=view, ids=LZ.q.splice(0,12);
+    LZ.busy++;
+    (function(slug,ids){
+      var gen=LZ.gen;
+      function failed(){
+        if(view!==slug||LZ.gen!==gen){ lzPump(); return; }
+        /* Asked again in a few seconds, up to five times; then the note says it failed. */
+        ids.forEach(function(i){ LZ.tries[i]=(LZ.tries[i]||0)+1; delete LZ.want[i];
+          var e=pane.querySelector(obEntrySel(slug,i)), nt=e&&e.querySelector(".lazy-note");
+          if(nt&&LZ.tries[i]>=5){ nt.textContent="The text of this entry did not load. "+
+            "Scroll away and back, or reload the page, to ask again."; } });
+        var again=ids.filter(function(i){ return LZ.tries[i]<5; });
+        setTimeout(function(){ if(view!==slug||LZ.gen!==gen){ return; }
+          lzFill(again.map(function(i){ return pane.querySelector(obEntrySel(slug,i)); })
+                      .filter(function(e){ return e; })); },3000);
+        lzPump();
+      }
+      fetchWithin("/entries/"+encodeURIComponent(slug)+"?ids="+ids.map(encodeURIComponent).join(","),
+                  {cache:"no-store"},FETCH_LOAD_MS)
+      .then(function(j){ LZ.busy--;
+        if(view!==slug||LZ.gen!==gen){ lzPump(); return; }
+        if(!j||!j.ok){ failed(); return; }
+        try{
+          (j.items||[]).forEach(function(it){ lzPut(slug,it); });
+          (j.missing||[]).forEach(function(i){ var e=pane.querySelector(obEntrySel(slug,i));
+            if(lzIs(e)){ var nt=e.querySelector(".lazy-note");
+              if(nt){ nt.textContent="This entry is no longer in the file."; } }
+            delete LZ.want[i]; });
+          lzAfter();
+        }catch(e){}
+        lzPump(); },
+      function(){ LZ.busy--; failed(); });
+    })(slug,ids);
+  }
+}
+
+function lzPut(slug,it){
+  var old=pane.querySelector(obEntrySel(slug,it.id));
+  if(!lzIs(old)||!it.html){ return; }
+  var t=document.createElement("template"); t.innerHTML=String(it.html).trim();
+  var fresh=t.content.querySelector("article.entry");
+  if(!fresh){ return; }
+  if(it.h){ fresh.setAttribute("data-eh",it.h); }
+  var pr=paneScrolls()?pane.getBoundingClientRect().top:0;
+  var above=old.getBoundingClientRect().bottom<=pr, h0=old.offsetHeight;
+  var oa=pane.style.overflowAnchor; pane.style.overflowAnchor="none";
+  if(old.classList.contains("hid")){ fresh.classList.add("hid"); }
+  old.parentNode.replaceChild(fresh,old);
+  if(LZ.obs){ try{ LZ.obs.unobserve(old); }catch(e){} }
+  if(obs){ try{ obs.unobserve(old); obs.observe(fresh); }catch(e){} }
+  delete bodyCache[fresh.id]; delete LZ.want[it.id];
+  noteWire(fresh); draftRestore(fresh);
+  if(above&&!pin){ nudge(fresh.offsetHeight-h0); }
+  pane.style.overflowAnchor=oa;
+  fresh.classList.toggle("hid",!applyTest(fresh));
+  if(cur===fresh.id){ cur=null; mark(fresh.id); }
+}
+function lzAfter(){ obShowAll(); nsPaint(); markPaint(); }
+/* For the filter: false when stub `e` holds the term in its text, as far as the server says;
+   true while the answer is on its way (apply() runs again when it comes). When /match failed
+   (`LZM.failed`), every stub is SHOWN: a stub the page cannot judge is not hidden, so a failed
+   answer never makes a §99 entry vanish from the filter. */
+function lzMiss(e,term){
+  if(LZM.doc!==view){ LZM={doc:view,term:"",ids:null,asked:"",timer:null,failed:false}; }
+  if(LZM.term===term&&LZM.failed){ return false; }
+  if(LZM.term===term&&LZM.ids){ return !LZM.ids[e.getAttribute("data-id")]; }
+  if(LZM.asked!==term){
+    LZM.asked=term; LZM.failed=false; var slug=view;
+    if(LZM.timer){ clearTimeout(LZM.timer); }
+    LZM.timer=setTimeout(function(){ LZM.timer=null;
+      if(view!==slug||LZM.asked!==term){ return; }
+      function again(){ if((q.value||"").trim().toLowerCase()===term){ apply(); } }
+      function failed(){
+        if(view!==slug||LZM.asked!==term){ return; }
+        LZM.term=term; LZM.ids=null; LZM.failed=true; again(); }
+      fetchWithin("/match/"+encodeURIComponent(slug)+"?q="+encodeURIComponent(term),
+                  {cache:"no-store"},FETCH_LOAD_MS)
+      .then(function(j){
+        if(view!==slug||LZM.asked!==term){ return; }
+        if(!j||!j.ok){ failed(); return; }
+        var m={}; (j.ids||[]).forEach(function(i){ m[i]=1; });
+        LZM.term=term; LZM.ids=m; LZM.failed=false; again(); },
+      failed);
+    },150);
+  }
+  return true;
+}
+/* bodyHay's test, for an entry or a rail row, with a stub asked of the server. */
+function bodyMiss(n,term){
+  var dom=n.classList.contains("entry")?n.id:n.getAttribute("data-goto");
+  var e=dom&&document.getElementById(dom);
+  if(lzIs(e)){ return lzMiss(e,term); }
+  return bodyHay(n).indexOf(term)<0;
 }
 
 function todayRefresh(){
@@ -5052,7 +5662,7 @@ function applyTest(n,term,own){
     if(filt==="starred"&&!starOn(n.getAttribute("data-doc"),n.getAttribute("data-id"))){
       return false;}
     if(own&&o!==own){return false;}
-    if(term&&n.getAttribute("data-hay").indexOf(term)<0&&bodyHay(n).indexOf(term)<0){
+    if(term&&n.getAttribute("data-hay").indexOf(term)<0&&bodyMiss(n,term)){
       return false;}
     return true;
   }
@@ -5195,6 +5805,8 @@ function drift(e,off){
 function jump(dom,off){
   var e=document.getElementById(dom);
   if(!e){return false;}
+  
+  if(lzIs(e)){ lzFill([e],true); }
   off=Math.max(0,off||0);
   if(!paneScrolls()){ setCol("read"); }   /* the pane is display:none in the other columns */
   nudge(drift(e,off));
@@ -5256,7 +5868,7 @@ function load(doc,then,restore){
     b.setAttribute("aria-current",b.getAttribute("data-doc")===doc?"true":"false");});
   function paint(d){
     railE.innerHTML=d.nav; pane.innerHTML=d.body; cur=null;
-    bodyCache={}; starPaint(railE); apply(); spy(); noteWire(pane); draftRestore(pane); docInsWire();
+    bodyCache={}; starPaint(railE); lzWire(); apply(); spy(); noteWire(pane); draftRestore(pane); docInsWire();
     obShowAll(); nsPaint();
     
     if(!restore){pane.scrollTop=0;}
@@ -5360,6 +5972,21 @@ document.addEventListener("click",function(ev){
   if(na){ noteEditor(noteSection(na),"",""); return; }
   var ia=ev.target.closest&&ev.target.closest("[data-instruct-add]");
   if(ia){ instructEditor(noteSection(ia)); return; }
+  var apa=ev.target.closest&&ev.target.closest("[data-approve-all]");
+  if(apa){
+    var asec=noteSection(apa);
+    if(asec&&!apa.disabled){
+      approveSend(asec,"APPROVED: all recommendations.");
+      /* Held for a moment so a double click does not send it twice. */
+      apa.disabled=true; setTimeout(function(){ apa.disabled=false; },1500); }
+    return; }
+  var aps=ev.target.closest&&ev.target.closest("[data-approve-sub]");
+  if(aps){
+    var sent=aps.closest(".entry"), ssec=sent&&sent.querySelector(".notes[data-wired]");
+    var sm=aps.closest(".subap");
+    if(ssec&&sm&&!aps.disabled){
+      approveSend(ssec,sm.getAttribute("data-send")||("APPROVED: "+sm.getAttribute("data-sub"))); }
+    return; }
   var idn=ev.target.closest&&ev.target.closest("[data-instruct-done]");
   if(idn){ var rb=idn.closest(".note-edit");
     /* The entry already shows the instruction; Close only takes the receipt away. */
@@ -5529,6 +6156,7 @@ route(true);
 obAll().forEach(function(r){ obSend(r); });
 })();
 """
+JS = JS.replace("__SUB_APPROVE_SHARED__", SUB_APPROVE_SHARED_JS)
 
 
 LANDING_CSS = r"""
@@ -5796,7 +6424,8 @@ function setBadge(b,cls,label,title){
 function syncDocs(docs){
   var want=Object.keys(docs), byName={}, cur=(location.hash||"").replace(/^#/,"").split("/")[0];
   var btns=[].slice.call(railD.querySelectorAll(".dbtn[data-doc]")).filter(function(b){
-    return b.getAttribute("data-doc").indexOf("__")!==0&&b.getAttribute("data-doc")!=="rule"; });
+    return b.getAttribute("data-doc").indexOf("__")!==0&&b.getAttribute("data-doc")!=="rule"&&
+           b.getAttribute("data-doc")!=="emails"; });
   if(want.join(" ")===btns.map(function(b){ return b.getAttribute("data-doc"); }).join(" ")){
     return; }
   var head=btns.length?btns[0].previousSibling:null;
@@ -5902,7 +6531,9 @@ function tokenFromHtml(h){
   if(!m){ return ""; }
   try{ var t=JSON.parse(m[1]); return typeof t==="string"?t:""; }catch(e){ return ""; }
 }
-function freshToken(ok,bad){
+function freshToken(ok,bad,stale){
+  
+  if(typeof window!=="undefined"&&window.__refreshToken){ window.__refreshToken(stale,ok,bad); return; }
   fetchWithin("/",{cache:"no-store"},FETCH_LOAD_MS,function(r){ return r.text(); })
     .then(function(h){ var t=tokenFromHtml(h); if(t){ ok(t); }else{ bad(); } })
     .catch(function(){ bad(); });
@@ -5917,7 +6548,7 @@ function post(u,body,ok,bad){
       freshToken(function(t){
         NOTE_TOKEN=t;
         postOnce(u,Object.assign({},body,{token:t}),ok,bad);
-      },function(){ bad(why,s); });
+      },function(){ bad(why,s); },body.token);
     }else{ bad(why,s); }
   });
 }
@@ -6140,7 +6771,7 @@ function paintRead(j){
     
     if(j.approve&&j.approve.show){
       
-      var pr0=j.production||{}, apb='<button type="button" class="nbtn" data-script-approve>Approve as Final</button>',
+      var pr0=j.production||{}, apb='<button type="button" class="nbtn" data-script-approve>Approve as __L_FINAL_HTML__</button>',
           pmb=pr0.show_approve_mark?'<button type="button" class="nbtn'+(pr0.approve_mark_default?' primary':'')+
             '" data-script-prod="approve-mark">Approve + Production</button>':'';
       h+=(pr0.approve_mark_default?pmb+apb:apb+pmb)+
@@ -6159,7 +6790,7 @@ function paintRead(j){
     h+='<span class="kb k-approved" data-approved-badge>Approved</span>'; }
   
   if(j.approve&&j.approve.final){
-    h+='<span class="kb k-final" data-final-badge>Final</span>'; }
+    h+='<span class="kb k-final" data-final-badge>__L_FINAL_HTML__</span>'; }
   if(j.production&&j.production.status){
     h+='<span class="kb k-prod" data-prod-status data-prod-state="'+esc(j.production.state||"")+'">'+
        esc(j.production.status)+'</span>'; }
@@ -6205,7 +6836,7 @@ function apOpen(){
     var b='<p>You are approving <b>'+nm+'</b>.</p>';
     if(r.file){ b+='<p>File: <code data-ap-file>'+esc(r.file)+'</code></p>'; }
     b+=(r.folder_before&&r.folder_before!==r.folder_after)?
-       '<p>It moves from <code>'+esc(r.folder_before)+'</code> to Final.</p>':
+       '<p>It moves from <code>'+esc(r.folder_before)+'</code> to __L_FINAL_HTML__.</p>':
        '<p>It is already in <code>'+esc(r.folder_after||r.folder_before)+
        '</code>; its approval is recorded.</p>';
     if(r.app_change==="added"){ b+='<p>It goes into the published version at the next release.</p>'; }
@@ -6329,7 +6960,7 @@ function apConfirm(){
     my.reopen=r.new_id||null;
     refreshNav();
     apPaint("Approved",'<p><span class="se-yes">Approved</span> - <b>'+
-      esc(r.name.replace(/\.md$/i,""))+'</b> is now in <code>'+esc(r.folder_after||"Final")+
+      esc(r.name.replace(/\.md$/i,""))+'</b> is now in <code>'+esc(r.folder_after||__L_FINAL_JS__)+
       '</code>.</p>'+
       (r.changed?'<p class="se-land" data-ap-land>'+landText(r.landing)+'</p>':
        '<p>Nothing needed to change on disk.</p>')+
@@ -6962,6 +7593,8 @@ document.addEventListener("keydown",function(ev){
 });
 })();
 """
+SCRIPTS_JS = (SCRIPTS_JS.replace("__L_FINAL_HTML__", _js_text(LABELS["final"]))
+              .replace("__L_FINAL_JS__", _js_literal(LABELS["final"])))
 
 NOTE_COLOR_JS = ("(function(){var K=%s,D=%s;"
                  % (json.dumps(NOTE_COLOR_KEY), json.dumps(NOTE_COLOR_DEFAULT))) + r"""
@@ -7056,7 +7689,8 @@ mount();
 """
 
 
-def render_page(index, boot_nav, boot_body, active="__plate__", token="", scripts=None):
+def render_page(index, boot_nav, boot_body, active="__plate__", token="", scripts=None,
+                collections=None):
     """The shell, with the cross-doc view already in it so the landing is instant.
     """
     flat = []
@@ -7087,6 +7721,13 @@ def render_page(index, boot_nav, boot_body, active="__plate__", token="", script
         '<button type="button" class="tbtn" data-col-set="%s" aria-pressed="%s">%s</button>'
         % (v, "true" if v == "list" else "false", lab)
         for v, lab in (("docs", "Docs"), ("list", "Entries"), ("read", "Reading")))
+    page_js, extra_js = JS, ""
+    if collections and CVIEW is not None:
+        got = _collection_page_js()
+        if got is None:
+            collections = None
+        else:
+            page_js, extra_js = got
 
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -7123,10 +7764,11 @@ def render_page(index, boot_nav, boot_body, active="__plate__", token="", script
         "<script>%s</script>"
         "</body></html>"
         % (CSS, PERF_JS + THEME_BOOT_JS + SIZE_BOOT_JS + NOTE_BOOT_JS, sizer, themer, mob,
-           render_doc_rail(index, active, scripts), filters, owner_options(index),
+           render_doc_rail(index, active, scripts, collections), filters, owner_options(index),
            boot_nav, boot_body,
            json.dumps(flat, ensure_ascii=False), json.dumps(token or ""),
-           SCRIPTS_JS, JS, COPY_JS, THEME_WIRE_JS, SIZE_WIRE_JS, NOTE_COLOR_JS))
+           SCRIPTS_JS, page_js, COPY_JS, THEME_WIRE_JS, SIZE_WIRE_JS,
+           NOTE_COLOR_JS + extra_js))
 
 
 
@@ -7394,6 +8036,15 @@ class Reader:
         # `ScriptTextIndex`), started by `scripts.warm()`'s caller and on the first search.
         self.script_text = SCRIPTS.ScriptTextIndex(self.scripts) if HAS_SCRIPTS else None
         self.compare = COMPARE.Compare(self.scripts) if HAS_SCRIPTS else None
+        self.cview = CVIEW.Views(
+            workspace,
+            store_factory=(lambda c: SNOTES.Store(collection=c)) if HAS_SCRIPTS else None,
+            compare_factory=(lambda corpus, c: COMPARE.Compare(corpus, collection=c))
+            if HAS_SCRIPTS else None,
+            md=lambda t: md_to_html(t),
+            viewable=lambda rel: resolve_viewable(rel, workspace)[0] is not None,
+            change_body=COMPARE._change_body if HAS_SCRIPTS else None,
+            find_credential=secret_patterns.find_credential) if CVIEW is not None else None
         self.lander = lander
         self.runner = RUNNER.Runner() if HAS_SCRIPTS else None
         self.landing = landing
@@ -7461,7 +8112,7 @@ class Reader:
         scripts = self.scripts_stamp()
         return (tuple(sorted(self.doc_revs().items())),
                 orchdoc._dt.date.today().isoformat(), scripts, self.token,
-                orchdoc.human_name())
+                orchdoc.human_name(), self.cview.stamp() if self.cview is not None else None)
 
     @staticmethod
     def _images_unchanged(seen):
@@ -7469,7 +8120,7 @@ class Reader:
         """
         for url, relp in (seen or {}).items():
             try:
-                p, now, _x = resolve_asset(url)
+                p, now, _x = resolve_media(url)
             except Exception:
                 return False
             if (now if p is not None else None) != relp:
@@ -7514,7 +8165,9 @@ class Reader:
             with _timed("render"):
                 nav, body = render_plate_view(idx, XrefTargets(idx))
                 page = render_page(idx, nav, body, token=self.token,
-                                   scripts=self.scripts_count())
+                                   scripts=self.scripts_count(),
+                                   collections=self.cview.rail() if self.cview is not None
+                                   else None)
             seen = _IMG_SEEN.rec
         finally:
             _IMG_SEEN.rec = None
@@ -7616,6 +8269,15 @@ class Reader:
             return None
         try:
             return p.read_bytes(), ctype
+        except OSError:
+            return None
+
+    def audio(self, rel):
+        p, _relp, ctype = resolve_audio(rel, self.workspace)
+        if p is None:
+            return None
+        try:
+            return p, p.stat().st_size, ctype
         except OSError:
             return None
 
@@ -7948,8 +8610,9 @@ def make_handler(reader):
             with _timed("send"):
                 try:
                     self.wfile.write(raw)
+                    return True
                 except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-                    pass
+                    return False
 
         def _send(self, body, ctype="text/html; charset=utf-8", code=200):
             raw = body.encode("utf-8")
@@ -7969,6 +8632,54 @@ def make_handler(reader):
                 self.send_header(_k, _v)
             self.end_headers()
             self._write_body(raw)
+
+        def _send_audio(self, p, size, ctype):
+            """Read and written 64 KB at a time.
+            """
+            start, end, code = 0, size - 1, 200
+            m = re.match(r"^bytes=(\d*)-(\d*)$", (self.headers.get("Range") or "").strip())
+            if m and (m.group(1) or m.group(2)) \
+                    and not (m.group(1) and m.group(2) and int(m.group(2)) < int(m.group(1))):
+                a, b = m.group(1), m.group(2)
+                if a == "":
+                    start, end = max(size - int(b), 0), size - 1
+                else:
+                    start = int(a)
+                    end = min(int(b), size - 1) if b else size - 1
+                if size == 0 or start > end or start >= size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", "bytes */%d" % size)
+                    self.send_header("Content-Length", "0")
+                    for _k, _v in GATE.SAFE_HEADERS:
+                        self.send_header(_k, _v)
+                    self.end_headers()
+                    return
+                code = 206
+            length = end - start + 1 if size else 0
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            if code == 206:
+                self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+            for _k, _v in GATE.SAFE_HEADERS:
+                self.send_header(_k, _v)
+            self.end_headers()
+            try:
+                with open(p, "rb") as f:
+                    f.seek(start)
+                    left = length
+                    while left > 0:
+                        chunk = f.read(min(65536, left))
+                        if not chunk:
+                            self.close_connection = True
+                            break
+                        if not self._write_body(chunk):
+                            self.close_connection = True
+                            break
+                        left -= len(chunk)
+            except OSError:
+                self.close_connection = True
 
         def _json(self, obj, code=200):
             self._send(json.dumps(obj, ensure_ascii=False), "application/json; charset=utf-8",
@@ -8133,6 +8844,14 @@ def make_handler(reader):
                         return
                     self._send_bytes(got[0], got[1])
                     return
+                if path.startswith("/audio/"):
+                    got = reader.audio(urllib.parse.unquote(path[7:]))
+                    if got is None:
+                        self._send("no such audio in this workspace",
+                                   "text/plain; charset=utf-8", 404)
+                        return
+                    self._send_audio(*got)
+                    return
                 if path.startswith("/revs/"):
                     got = reader.entry_hashes(urllib.parse.unquote(path[len("/revs/"):]))
                     if got is None:
@@ -8162,6 +8881,35 @@ def make_handler(reader):
                                "nav": render_nav_item(it, show_doc=show_doc)}
                     self._json(out)
                     return
+                if path.startswith("/entries/") or path.startswith("/match/"):
+                    many = path.startswith("/entries/")
+                    slug = urllib.parse.unquote(path[len("/entries/" if many else "/match/"):])
+                    q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                    d, idx = reader.entry_context(slug)
+                    if d is None:
+                        self._json({"ok": False, "error": "no such document"}, 404)
+                        return
+                    with _timed("render"):
+                        if not many:
+                            out = {"ok": True, "ids": lazy_match(d, (q.get("q") or [""])[0])}
+                        else:
+                            want = [x for x in ((q.get("ids") or [""])[0]).split(",") if x]
+                            want = want[:LAZY_BATCH_MAX]
+                            by_id = {}
+                            for i in d["entries"]:
+                                by_id.setdefault(i["id"], i)
+                            xref = XrefTargets(idx)
+                            items, missing = [], []
+                            for eid in want:
+                                it = by_id.get(eid)
+                                if it is None:
+                                    missing.append(eid)
+                                    continue
+                                items.append({"id": eid, "h": entry_hash(it),
+                                              "html": render_entry_html(it, xref=xref)})
+                            out = {"ok": True, "items": items, "missing": missing}
+                    self._json(out)
+                    return
                 if path.startswith("/doc/"):
                     slug = path[5:]
                     kept = reader.doc_view_kept(slug)
@@ -8178,8 +8926,15 @@ def make_handler(reader):
                         elif slug in (TODAY_VIEW, "today"):
                             nav, body = render_today_view(idx, xref)
                             obj = {"nav": nav, "body": body, "count": today_count(idx)}
+                        elif slug == "emails":
+                            nav, body = render_emails_view(reader.workspace)
+                            obj = {"nav": nav, "body": body}
                         elif slug == "rule":
                             nav, body = render_rules_view(xref)
+                            obj = {"nav": nav, "body": body}
+                        elif reader.cview is not None and \
+                                urllib.parse.unquote(slug).startswith("c/"):
+                            code, nav, body = reader.cview.page(urllib.parse.unquote(slug))
                             obj = {"nav": nav, "body": body}
                         elif HAS_SCRIPTS and slug in (SCRIPTS_VIEW, "scripts"):
                             nav, body = render_scripts_view(
@@ -8191,7 +8946,7 @@ def make_handler(reader):
                             d = next((d for d in idx if d["slug"] == slug), None)
                             if d is not None:
                                 def _doc_text():
-                                    nav, body = render_doc_view(d, xref)
+                                    nav, body = render_doc_view(d, xref, lazy=True)
                                     return 200, json.dumps(
                                         {"nav": nav, "body": render_today_strip(idx) + body},
                                         ensure_ascii=False)
@@ -8347,6 +9102,9 @@ def make_handler(reader):
                 return
             if path in _SCRIPT_KEYS:
                 self._script_post(path)
+                return
+            if path == "/collection/note":
+                self._collection_note_post()
                 return
             if path == "/full-rewrite/review":
                 self._full_rewrite_post()
@@ -8639,6 +9397,26 @@ def make_handler(reader):
                 self._json({"ok": False, "error": got}, 400)
                 return
             self._json({"ok": True, "note": got, "notes": reader.script_notes.list(f["relroot"])})
+
+        def _collection_note_post(self):
+            """The same gate as every write. The page names the collection by its id and the
+            document by the id this run issued, never by a path; the note goes to
+            the note store (a per-machine file), never into the document. The only
+            write route a collection has: a collection's documents are read-only."""
+            payload, err = _reader_gate(
+                self.headers, self.rfile, reader.token, reader.port,
+                max_body=WHY_MAX_BODY, host=HOST)
+            if err:
+                self._json({"ok": False, "error": err[1]}, err[0])
+                return
+            extra = sorted(set(payload) - {"token", "cid", "id", "text"})
+            if extra or reader.cview is None:
+                self._json({"ok": False, "error": "unexpected field(s) %s - refused" %
+                            ", ".join(extra) if extra else "no collections here"}, 400)
+                return
+            code, out = reader.cview.add_note(payload.get("cid"), payload.get("id"),
+                                              payload.get("text"))
+            self._json(out, code)
 
         def _full_rewrite_post(self):
             """The same gate as every write (token, origin, size).

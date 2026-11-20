@@ -1037,10 +1037,21 @@ def cmd_inject(a):
 
 
 def collect_from_notes():
-    """Rebuild the row records from note frontmatter. Returns (rows, problems)."""
+    """Rebuild the MEMORY.md row records from note frontmatter. Returns (rows, problems).
+
+    A row marked cold ("cold": true on its template occurrence) belongs to Memory2.md, not to
+    MEMORY.md; see `collect_all_from_notes` and `render_cold_block`.
+    """
+    rows, _cold, problems = collect_all_from_notes()
+    return rows, problems
+
+
+def collect_all_from_notes():
+    """Returns (rows, cold_rows, problems): MEMORY.md rows, and the rows marked cold."""
     by_row = collections.defaultdict(dict)
     tpl = {}
     order = {}
+    coldmark = set()
     problems = []
     for fn in sorted(os.listdir(MEMDIR)):
         if not fn.endswith(".md") or fn == "MEMORY.md":
@@ -1072,6 +1083,8 @@ def collect_from_notes():
                 if rn in tpl and tpl[rn] != o["row"]:
                     problems.append("row %r has two different templates" % rn)
                 tpl[rn] = o["row"]
+                if o.get("cold"):
+                    coldmark.add(rn)
             for e in o.get("ext", []):        # links to files outside the memory dir
                 ep = int(e["pos"])
                 if ep in by_row[rn]:
@@ -1080,6 +1093,7 @@ def collect_from_notes():
                 by_row[rn][ep] = {"pos": ep, "title": e.get("title", ""),
                                   "target": e["target"]}
     rows = []
+    cold_rows = []
     unordered = [rn for rn in by_row if rn not in order]
     if unordered:
         problems.append("row(s) with no `order`: %s" % ", ".join(sorted(unordered)[:5]))
@@ -1098,9 +1112,10 @@ def collect_from_notes():
             problems.append("row %r has position(s) %s the template has no slot for"
                             % (rn, ",".join(str(x) for x in extra)))
             continue
-        rows.append({"row": rn, "template": tpl[rn],
-                     "links": [by_row[rn][p] for p in sorted(by_row[rn])]})
-    return rows, problems
+        rec = {"row": rn, "template": tpl[rn],
+               "links": [by_row[rn][p] for p in sorted(by_row[rn])]}
+        (cold_rows if rn in coldmark else rows).append(rec)
+    return rows, cold_rows, problems
 
 
 def hand_rows(rows, disk_text, table):
@@ -1121,6 +1136,7 @@ def hand_rows(rows, disk_text, table):
     back = dict(table.get("assigned", {}))
     back.update(table.get("retired", {}))
     pat = re.compile(r"^" + re.escape(CODE_DIR) + r"/(\d+)\.md$")
+    cold = cold_text()
     out, anchor = [], None
     for dr in disk:
         links = []
@@ -1132,14 +1148,65 @@ def hand_rows(rows, disk_text, table):
         if any(t in known for t in targets):
             anchor = next(t for t in targets if t in known)
             continue
-        if any(t.endswith(".md") and "/" not in t and os.path.isfile(os.path.join(MEMDIR, t))
-               for t in targets):
+        notes = [t for t in targets
+                 if t.endswith(".md") and "/" not in t and os.path.isfile(os.path.join(MEMDIR, t))]
+        if notes and not all("(%s)" % t in cold for t in notes):
             out.append(({"row": "hand", "template": dr["template"], "links": links}, anchor))
     return out
 
 
 COLD_FILE = "Memory2.md"     # the cold-storage overflow index; a note listed there is parked on purpose
 _NOT_NOTES = ("MEMORY.md", "MEMORY-CODES.md", COLD_FILE)
+MEMORY_CHAR_LIMIT = 24000
+
+
+def cold_text():
+    """Memory2.md's text, or "" when it is absent."""
+    try:
+        return io.open(os.path.join(MEMDIR, COLD_FILE), encoding="utf-8", errors="replace").read()
+    except Exception:
+        return ""
+
+
+COLD_BEGIN = "<!-- GENERATED:cold-rows begin"
+COLD_END = "<!-- GENERATED:cold-rows end -->"
+
+
+def render_cold_block(cold_rows):
+    """The generated lines of Memory2.md: one line per row marked cold, in `order`, links as
+    plain filenames (Memory2.md is not code-pathed) with their hooks."""
+    head = (COLD_BEGIN + " by memory_index.py build from each note's memory_index field"
+            ' ("cold":true); do not hand-edit between the markers. To re-promote a row,'
+            ' remove "cold" from its template occurrence and build. -->')
+    body = render_rows(cold_rows) if cold_rows else ""
+    return NL.join([head] + ([body] if body else []) + [COLD_END])
+
+
+def splice_cold(text, cold_rows):
+    """Memory2.md text with its generated block replaced by a fresh render. Everything outside
+    the two markers is kept byte for byte. Returns None when the markers are missing, so a
+    build never guesses where to write."""
+    crlf = chr(13) + NL
+    nl = crlf if crlf in text else NL
+    t = text.replace(crlf, NL)
+    i = t.find(COLD_BEGIN)
+    j = t.find(COLD_END)
+    if i < 0 or j < i:
+        return None
+    new = t[:i] + render_cold_block(cold_rows) + t[j + len(COLD_END):]
+    return new.replace(NL, nl)
+
+
+def cold_drift(cold_rows, text=None):
+    """None when Memory2.md's generated block is current, else a short reason."""
+    if text is None:
+        text = cold_text()
+    if not text:
+        return "Memory2.md is missing" if cold_rows else None
+    fresh = splice_cold(text, cold_rows)
+    if fresh is None:
+        return "Memory2.md has no generated block markers" if cold_rows else None
+    return None if fresh == text else "Memory2.md's generated block differs from a fresh build"
 
 
 def unlisted_notes(rows):
@@ -1201,7 +1268,7 @@ def cmd_build(a):
 
 
 def _cmd_build(a):
-    rows, problems = collect_from_notes()
+    rows, cold_rows, problems = collect_all_from_notes()
     src = a.out if (a.out and os.path.isfile(a.out)) else MEMFILE
     try:
         disk_text = io.open(src, encoding="utf-8", errors="replace").read()
@@ -1213,14 +1280,21 @@ def _cmd_build(a):
         for r, _a in extras:
             print("[carry] hand row kept, no note index builds it: %s"
                   % ", ".join(l["target"] for l in r["links"]), file=sys.stderr)
-    report_unlisted(rows, lambda s: print(s, file=sys.stderr))
+    report_unlisted(rows + cold_rows, lambda s: print(s, file=sys.stderr))
     codes = None
     table = None
     if a.codes:
         codes, table = assign_codes(rows, load_code_table())
-        if a.out or a.pointers or a.supplement:
-            save_code_table(table)
     out = render_rows(rows, codes, style=a.style)
+    size = len(out + NL)
+    if size > MEMORY_CHAR_LIMIT:
+        print("[REFUSE] the built MEMORY.md is %d characters; the limit is %d (Claude Code "
+              "loads only the first 25,000). Nothing was written. Move rarely needed rows to "
+              "%s (remove the note's memory_index field and list the note there), then build "
+              "again." % (size, MEMORY_CHAR_LIMIT, COLD_FILE), file=sys.stderr)
+        return 3
+    if a.codes and (a.out or a.pointers or a.supplement):
+        save_code_table(table)
     if a.codes and a.pointers:
         n, gone = write_pointers(codes, a.pointers, table["retired"])
         print("wrote %d pointer file(s) to %s%s"
@@ -1267,6 +1341,16 @@ def _cmd_build(a):
         print("wrote %s  (%d rows, %d bytes, %s line endings)"
               % (a.out, len(rows), len(blob.encode("utf-8")),
                  "CRLF" if eol == "\r\n" else "LF"), file=sys.stderr)
+        cpath = os.path.join(os.path.dirname(os.path.abspath(a.out)), COLD_FILE)
+        if os.path.isfile(cpath):
+            old = io.open(cpath, encoding="utf-8", newline="").read()
+            new = splice_cold(old, cold_rows)
+            if new is None:
+                print("[warn] %s has no generated block markers; %d cold row(s) not written"
+                      % (cpath, len(cold_rows)), file=sys.stderr)
+            elif new != old:
+                io.open(cpath, "w", encoding="utf-8", newline="").write(new)
+                print("wrote %s  (%d cold row(s))" % (cpath, len(cold_rows)), file=sys.stderr)
     else:
         sys.stdout.write(out + NL)
     return 0
@@ -1275,7 +1359,7 @@ def _cmd_build(a):
 def cmd_check(a):
     """Does the generated view match the file on disk?
     """
-    rows, problems = collect_from_notes()
+    rows, cold_rows, problems = collect_all_from_notes()
     for p in problems:
         print("[warn] %s" % p)
     if not rows:
@@ -1288,7 +1372,7 @@ def cmd_check(a):
                                 disk.decode("utf-8", "replace")))
         extras = hand_rows(rows, disk.decode("utf-8", "replace"), load_code_table())
         rows = merge_hand_rows(rows, extras)
-        report_unlisted(rows, print)
+        report_unlisted(rows + cold_rows, print)
         codes = None
         if styled:
             # read-only: the codes a build WOULD give, from the saved table
@@ -1298,7 +1382,12 @@ def cmd_check(a):
         print("style on disk: %s" % ("code paths" if styled else "filenames"))
         print("on disk  %6d bytes" % len(disk))
         print("fresh    %6d bytes" % len(fresh))
+        cd = cold_drift(cold_rows)
+        if cd:
+            print("[DRIFT] %s. Rebuild with `build --out <MEMORY.md>`." % cd)
         if disk == fresh:
+            if cd:
+                return 1
             print()
             print("[OK] MEMORY.md is exactly what the notes generate right now.")
             return 0

@@ -65,10 +65,64 @@ def citable_repos():
         try:
             import orchdoc                           # heavy: only loaded when needed
             found += list(orchdoc.citable_repos())
-        except Exception:                            # noqa: BLE001 - the workspace still works
-            pass
+        except Exception as ex:                      # noqa: BLE001 - the workspace still works
+            _REPOS["citable_error"] = "%s: %s" % (type(ex).__name__, str(ex)[:160])
+        if _distinct(found) < MIN_CITABLE:
+            _REPOS["citable_short"] = _distinct(found)
+            for r in _glob_repos(_main_checkout_root()):
+                if not any(_same(r, f) for f in found):
+                    found.append(r)
+            if _distinct(found) < MIN_CITABLE:
+                return found
         _REPOS["citable"] = found
     return _REPOS["citable"]
+
+
+# The real machine has about 80 repos one or two levels under the main checkout (about 265
+# with linked worktrees). When discovery fails, orchdoc still returns its roots (the calling
+# tree and the main checkout) and its external repos (the skills marketplace and the memory
+# clone), so a failed call from a worktree gives up to 5 distinct paths with this workspace.
+# 20 is well above that and well below a real list.
+MIN_CITABLE = 20
+
+
+def _distinct(paths):
+    return len({os.path.normcase(str(p)) for p in paths})
+
+
+def _main_checkout_root():
+    """The checkout that holds the sibling repos: the main one, even when run from a worktree."""
+    try:
+        p = subprocess.run(["git", "-C", str(WORKSPACE), "rev-parse", "--git-common-dir"],
+                           capture_output=True, text=True, timeout=15, creationflags=flags())
+        common = (p.stdout or "").strip()
+        if p.returncode == 0 and common:
+            return (pathlib.Path(WORKSPACE) / common).resolve().parent
+    except Exception:                                # noqa: BLE001
+        pass
+    return pathlib.Path(WORKSPACE)
+
+
+def _glob_repos(root):
+    """Repo roots one or two levels under `root`, skipping node_modules.
+    """
+    out = []
+    try:
+        kids = list(pathlib.Path(root).iterdir())
+    except Exception:                                # noqa: BLE001
+        return out
+    for d in kids:
+        try:
+            if d.name == "node_modules" or not d.is_dir():
+                continue
+            if (d / ".git").exists():
+                out.append(d)
+            for g in d.glob("*/.git"):
+                if "node_modules" not in g.parts:
+                    out.append(g.parent)
+        except Exception:                            # noqa: BLE001
+            pass
+    return out
 
 
 def _same(a, b):
@@ -104,6 +158,8 @@ def known_repos():
             if name and name.lower() not in seen:
                 seen.add(name.lower())
                 out.append((pathlib.Path(r), name))
+        if "citable" not in _REPOS:
+            return out
         _REPOS["known"] = out
     return _REPOS["known"]
 

@@ -1,0 +1,11 @@
+{
+  "collections": [
+    {
+      "id": "notes",
+      "name": "Notes",
+      "root": "notes",
+      "glob": "**/*.md",
+      "skip_dirs": ["archive"]
+    }
+  ]
+}

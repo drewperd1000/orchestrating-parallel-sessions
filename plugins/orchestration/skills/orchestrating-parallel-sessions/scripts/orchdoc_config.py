@@ -89,6 +89,9 @@ KEYS = {
     "doc_folders": ("Folders, relative to the workspace and separated by commas, whose "
                     "Markdown and text files the Reader lists for review under Documents.",
                     "ORCHDOC_DOC_FOLDERS"),
+    "emails_folder": ("The folder, relative to the workspace, holding the email series the "
+                      "Reader's Emails view shows (one sub-folder per series). Default "
+                      "app-orchestration-o910/emails.", "ORCHDOC_EMAILS_FOLDER"),
     "work_notes_dir": ("The folder, relative to the workspace, where each lane keeps its "
                        "working notes.", "ORCHDOC_WORK_NOTES_DIR"),
     "reader_own_docs": ("A list of orchestrator ids whose documents a click in the Reader writes "
@@ -103,7 +106,7 @@ SESSION_SCOPED = {"me"}
 
 VALID = {"launch_mode": ("manual", "hybrid")}
 
-OPTIONAL = {"prefixes", "pre_label_prefixes", "doc_folders", "work_notes_dir", "artifact_re",
+OPTIONAL = {"prefixes", "pre_label_prefixes", "doc_folders", "emails_folder", "work_notes_dir", "artifact_re",
             "reader_port", "reader_own_docs"}
 
 

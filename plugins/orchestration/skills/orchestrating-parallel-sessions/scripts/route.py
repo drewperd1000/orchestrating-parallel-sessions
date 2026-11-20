@@ -140,6 +140,11 @@ def _canon(text):
     return out
 
 
+class Inherited(str):
+    """A signal's text that came from the doc's declared SUBJECT, not from the doc itself.
+    """
+
+
 def _subject_aliases(text):
     """A doc that declares a SUBJECT inherits that subject's whole vocabulary, at query time.
 
@@ -343,7 +348,7 @@ def harvest():
             (2, _fm_field(t, "description")),
             (2, _fm_field(t, "name").replace("-", " ")),
             (3, declared_tags(whole, p)),
-            (3, _subject_aliases(t)),
+            (3, Inherited(_subject_aliases(t))),
             (3, " ".join(CANONICAL_RE.findall(t))),
             (2, _facet_aliases(t)),
             (1, " ".join(re.findall(r"^#{1,3}\s+(.+)$", t, re.M)[:6])),
@@ -364,7 +369,7 @@ def harvest():
             (3, p.stem.replace("_", " ")),
             (2, " ".join(t.split("\n")[:6])),
             (3, declared_tags(whole, p)),
-            (3, _subject_aliases(t)),
+            (3, Inherited(_subject_aliases(t))),
             (2, _facet_aliases(t)),
         ], canonical=_canon(t), extra=_declared_extras(whole, p))
 
@@ -376,7 +381,7 @@ def harvest():
                 (3, p.stem.replace("-", " ").replace("_", " ")),
                 (1, " ".join(re.findall(r"^#{1,2}\s+(.+)$", t, re.M)[:4])),
                 (3, declared_tags(whole, p)),
-                (3, _subject_aliases(t)),
+                (3, Inherited(_subject_aliases(t))),
                 (2, _facet_aliases(t)),
                 (1, t.split("\n\n")[1][:200] if "\n\n" in t else ""),
             ], canonical=_canon(t), extra=_declared_extras(whole, p))
@@ -392,20 +397,38 @@ def harvest():
             (3, p.parent.name.replace("-", " ")),
             (2, _fm_field(t, "description")),
             (3, declared_tags(whole, p)),
-            (3, _subject_aliases(t)),
+            (3, Inherited(_subject_aliases(t))),
             (2, _facet_aliases(t)),
         ], canonical=_canon(t), extra=_declared_extras(whole, p))
 
     # word index per artifact: {stemmed word -> max signal weight}
     for a in arts.values():
-        wmap = {}
-        for w, text in a["signals"]:
-            for word in WORD_RE.findall((text or "").lower()):
-                s = stem(word)
-                if wmap.get(s, 0) < w:
-                    wmap[s] = w
-        a["words"] = wmap
+        index_words(a)
     return list(arts.values())
+
+
+def index_words(a):
+    """Fill `words` (stem -> max signal weight), `own_stems` (stems from any signal that is not
+    Inherited) and `name_stems` on one artifact."""
+    wmap, own = {}, set()
+    for w, text in a["signals"]:
+        for word in WORD_RE.findall((text or "").lower()):
+            s = stem(word)
+            if wmap.get(s, 0) < w:
+                wmap[s] = w
+            if not isinstance(text, Inherited):
+                own.add(s)
+    a["words"] = wmap
+    a["own_stems"] = own
+    a["name_stems"] = _name_stems(a)
+
+
+def _name_stems(a):
+    p = a["path"]
+    name = p.parent.name if a.get("kind") == "skill" else p.stem
+    if name.startswith("test_"):
+        return set()
+    return {stem(w) for w in WORD_RE.findall(name.lower().replace("-", " ").replace("_", " "))}
 
 
 def sot_in_query(domain, qset, score=None, best=0):
@@ -441,10 +464,12 @@ def rank(arts, toks):
     for sc, matched, a in raw:
         canon = 1 if (any(s in a.get("canonical", set()) for s in matched)
                       or sot_in_query(a.get("sot"), qset, sc, best)) else 0
-        scored.append((canon, sc, len(matched), a))
-    scored.sort(key=lambda x: (-x[0], -x[1], -x[2]))
-    hits = [(s, a) for _c, s, _m, a in scored if s >= 7]
-    weak = [(s, a) for _c, s, _m, a in scored if 4 <= s < 7]
+        named = len(set(matched) & a.get("name_stems", set()))
+        own = len(set(matched) & a.get("own_stems", set(a["words"])))
+        scored.append((canon, sc, len(matched), named, own, a))
+    scored.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], -x[4]))
+    hits = [(s, a) for _c, s, _m, _n, _o, a in scored if s >= 7]
+    weak = [(s, a) for _c, s, _m, _n, _o, a in scored if 4 <= s < 7]
     return hits, weak, df
 
 

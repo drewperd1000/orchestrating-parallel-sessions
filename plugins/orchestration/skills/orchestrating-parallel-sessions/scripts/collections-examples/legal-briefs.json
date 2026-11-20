@@ -1,0 +1,27 @@
+{
+  "collections": [
+    {
+      "id": "briefs",
+      "name": "Legal briefs",
+      "root": "briefs",
+      "glob": "**/*.md",
+      "skip_dirs": ["archive"],
+      "version_rule": {
+        "type": "name-pattern",
+        "pattern": "^(?P<name>[A-Za-z0-9-]+) v(?P<ver>[1-9]\\d*) (?P<author>associate|partner)\\.md$",
+        "author_roles": {"associate": "draft", "partner": "rewrite"}
+      },
+      "stages": [
+        {"id": "draft", "folder": "1-drafting", "label": "Drafting"},
+        {"id": "review", "folder": "2-partner-review", "label": "Partner review"},
+        {"id": "final", "folder": "3-filed", "label": "Filed", "approved": true},
+        {"id": "gone", "folder": "4-withdrawn", "label": "Withdrawn", "hidden": true}
+      ],
+      "kinds": [
+        {"id": "draft", "label": "associate draft"},
+        {"id": "rewrite", "label": "partner edit"}
+      ],
+      "final_rule": {"header_field": "Signed-Off-By", "value_prefix": ""}
+    }
+  ]
+}

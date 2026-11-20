@@ -168,6 +168,8 @@ def _do(lines, eid, op):
             return None
         return "%s is already %s here, so it was not changed again" % (
             eid, (cur or "closed").upper())
+    if eid[:1] == "Q" and (status or "").upper() == STATUS_FOR["done"]:
+        orchdoc.tick_reply_boxes(lines, e["line"] - 1, orchdoc._entry_end(e))
     why = orchdoc.apply_resolve(lines, eid, status, op.get("ruling") or "", op.get("depends"),
                                 False, op.get("who") or WHO, stamp)
     if why:
@@ -176,7 +178,8 @@ def _do(lines, eid, op):
     e = _find(lines, eid, live_only=True)
     if e is None:
         return "%s could not be found again after the change" % eid
-    if orchdoc.has_open_subitems(e["body"], orchdoc.follows_stopsign_convention(ents)):
+    if orchdoc.archive_holds(e["body"], orchdoc.follows_stopsign_convention(ents),
+                             eid) is not None:
         return None                       # stays where it is: see the module note
     return orchdoc._move_to_completed(lines, eid, status, "")
 
